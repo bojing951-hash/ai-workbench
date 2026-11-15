@@ -441,7 +441,7 @@
   },
   "containerImage": "ai-workbench-runtime:2.2@sha256:41725418634a86cc2d6018793233aa42143ffcdad08bd8e4e4ec4b6229e64e5d",
   "abZeroInterference": {
-    "statement": "本轮未对 A/B 发起 API 请求、进程操作、文件/分支修改、推送或测试；所有运行只针对 W 项目/隔离克隆。A/B 登记信息仅保留，未读取其运行状态。",
+    "statement": "本轮未对 A/B 发起项目级 API 请求、进程操作、文件/分支/推送；未读取其工作区、运行详情或研发状态。Web 状态页/`/api/state` 仅被动包含已有登记信息，未据此操作。",
     "candidateInitialCopyExcludes": [
       "data/",
       "projects/",

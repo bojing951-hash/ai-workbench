@@ -1,7 +1,7 @@
 # AI Workbench v2.2 自主研发可靠性收口报告
 
 - 执行日期：2026-11-15（Asia/Hong_Kong）
-- 范围：**仅 AI Workbench 自身**；未访问/操作 A、B 项目（无 A/B API 请求、无进程操作、无文件/分支/推送操作）
+- 范围：**仅 AI Workbench 自身**；未对 A/B 发起项目级请求、无进程操作、无文件/分支/推送操作；未读取/修改其工作区或研发状态。Web 状态页与 `/api/state` 仅被动包含已有登记信息（未据此操作）。
 - 版本：v2.2.0（分支 `v2.2.0`）
 - 最终 Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/4（未合并）
 - CI：https://github.com/bojing951-hash/ai-workbench/actions/runs/43724113873（success，head `e295c63`）
@@ -94,7 +94,7 @@ Loop `loop_mwhwhz3z34912b0f`（W 隔离克隆，3 个真实任务，queue 模式
 - **非 GLM 预算耗尽**：DeepSeek 缓存折算预算仅剩 72,312，后续 DSH 任务被单任务 cap 中止；这是 Agent 自主完成率低的原因。下一轮需用户决定是否增加非 GLM 预算，或默认使用 GLM Agent。
 - **Claude Code 在较大仓库任务上偶发无进展**（读取大量文件后不结束）：已记录，未用 bypass/danger-full-access 绕过。
 - **容器 Agent 网络最小授权**未实现 egress allowlist（UNKNOWN）。
-- **A/B 零干扰**：本轮未对 A/B 发起任何请求/进程/文件/分支/推送操作；candidate 副本排除 `projects/`、`data/`，结构上无法访问 A/B。无法在不访问 A/B 的前提下做更细粒度证明，因此该结论基于操作记录而非读取 A/B 状态。
+- **A/B 零干扰**：本轮未对 A/B 发起项目级请求、进程/文件/分支/推送操作；未读取其运行详情或研发状态；candidate 初始副本排除 `projects/`、`data/`、`.env`、`.git`。无法在不访问 A/B 的前提下做更细粒度证明，因此该结论基于操作记录而非读取 A/B 状态。
 
 ## 4. 任务四：工作台自主开发自身（候选流程）
 
