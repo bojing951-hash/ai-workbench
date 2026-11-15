@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { PolicyError } from './policy.js';
+import { detectIsolationCapabilities, isolationModeForProject } from './isolation.js';
 import { VERSION } from './orchestrator.js';
 import { assertSafeWriteRequest, isAllowedHost, redactForResponse, resolveWithin, WriteRateLimiter } from './security.js';
 
@@ -72,6 +73,8 @@ function mapErrorStatus(err) {
 }
 
 export function createApp({ config, store, orchestrator, loops = null }) {
+  let isolationCache = null;
+  const isolation = () => { if (!isolationCache) isolationCache = detectIsolationCapabilities(); return isolationCache; };
   const webDir = path.join(config.paths.root, 'web');
   const maxBody = Number(config.security?.maxBodyBytes || MAX_BODY);
   // P0-5：API 身份认证。优先使用显式 Token；否则每次启动生成随机 Token，
@@ -292,6 +295,11 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       }
     }
 
+    const reconcileMatch = pathname.match(/^\/api\/runs\/([^/]+)\/reconcile$/);
+    if (reconcileMatch && method === 'POST') {
+      return sendJson(res, 200, { ok: true, data: orchestrator.reconcileRun(reconcileMatch[1]) });
+    }
+
     const taskRetryMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/retry-verification$/);
     if (taskRetryMatch && method === 'POST') {
       return sendJson(res, 200, { ok: true, data: await orchestrator.retryVerification(taskRetryMatch[1]) });
@@ -348,6 +356,11 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         if (action === 'resume') return sendJson(res, 200, { ok: true, data: await loops.resume(loopId, { retryCurrent: !!body.retryCurrent }) });
         if (action === 'cancel') return sendJson(res, 200, { ok: true, data: await loops.cancel(loopId, body.reason || '人工取消') });
       }
+    }
+
+    if (pathname === '/api/isolation' && method === 'GET') {
+      const caps = isolation();
+      return sendJson(res, 200, { ok: true, data: { ...caps, projectModes: store.listProjects().map((p) => ({ id: p.id, name: p.name, mode: isolationModeForProject(config, p) })) } });
     }
 
     if (pathname === '/api/budget' && method === 'GET') {

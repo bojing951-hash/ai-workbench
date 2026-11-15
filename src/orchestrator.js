@@ -1488,6 +1488,15 @@ export class Orchestrator {
     const run = this.store.getRun(task.run_id);
     const project = this.store.getProject(task.project_id);
     if (!run || !project) throw new PolicyError('RUN_NOT_FOUND', '运行或项目不存在');
+    if (!this._verificationLocks) this._verificationLocks = new Set();
+    if (this._verificationLocks.has(task.id)) throw new PolicyError('VERIFICATION_IN_PROGRESS', '该任务已有验证重试在进行中，拒绝并发重复验证（防止审计/提交竞态）');
+    const isolationMode = isolationModeForProject(this.config, project);
+    let isolationWarning = '';
+    if (isolationMode !== 'restricted') {
+      if (!this._isolationCaps) this._isolationCaps = detectIsolationCapabilities();
+      isolationWarning = assertIsolationForProject(this.config, project, this._isolationCaps).warning;
+    }
+    this._verificationLocks.add(task.id);
     const worktree = task.worktree_path;
     const baseCommit = task.base_commit || (await gitops.currentHead(worktree));
     const logDir = this.logsDir(run.id, task.id);
@@ -1579,7 +1588,7 @@ export class Orchestrator {
       await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
       const headCommit = await gitops.currentHead(worktree);
       const verification = {
-        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand,
+        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
         auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
         auditScore: audit.score, independence: audit.independence, agent: lastAttempt?.agent_kind || '',
         verificationRetry: true,
@@ -1595,7 +1604,42 @@ export class Orchestrator {
       this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
       this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'audit_error', level: 'error', message: reason });
       return { ok: false, reason };
+    } finally {
+      this._verificationLocks.delete(task.id);
     }
+  }
+
+  /**
+   * 恢复因并发/中断导致的任务状态竞态：当任务已有 commit + verification.commit +
+   * 最近一次审计 PASS 时，原子恢复为 passed 并重新走 finalize，避免把真实通过误判为失败。
+   */
+  reconcileRun(runId) {
+    const run = this.store.getRun(runId);
+    if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
+    if (!['paused', 'failed', 'interrupted', 'running'].includes(run.status)) {
+      throw new PolicyError('RUN_STATE_INVALID', `运行状态 ${run.status} 不允许 reconcile`);
+    }
+    const tasks = this.store.listTasks({ runId });
+    const reconciled = [];
+    for (const task of tasks) {
+      if (task.status === 'passed') continue;
+      if (task.status !== 'blocked' && task.status !== 'failed') continue;
+      const audits = this.store.listAudits(task.id) || [];
+      const passAudit = [...audits].reverse().find((a) => String(a.verdict || '').toLowerCase() === 'pass' && a.verification_status === 'PASS');
+      let verification = task.verification_json;
+      for (let i = 0; i < 3 && typeof verification === 'string'; i += 1) {
+        try { verification = JSON.parse(verification); } catch { verification = null; }
+      }
+      const commit = task.head_commit || verification?.commit;
+      if (!passAudit || !commit || verification?.commit !== commit) continue;
+      this.store.updateTask(task.id, { status: TaskStatus.PASSED, blocked_reason: '', head_commit: commit, verification_json: verification });
+      this.emit({ runId: run.id, projectId: run.project_id, taskId: task.id, type: 'task_reconciled', message: `任务状态按已有证据恢复为 passed（commit ${commit.slice(0, 8)}，审计 ${passAudit.provider} PASS）`, data: { commit, auditId: passAudit.id } });
+      reconciled.push(task.id);
+    }
+    if (!reconciled.length) return { ok: false, reason: '没有可恢复的任务（需要 commit + verification.commit + PASS 审计同时存在）' };
+    this.store.updateRun(run.id, { status: RunStatus.RUNNING, stop_reason: '', current_task_id: '' });
+    this.kick(run.id);
+    return { ok: true, reconciled, runId: run.id };
   }
 
   // ============================================================

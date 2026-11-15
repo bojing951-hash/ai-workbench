@@ -174,6 +174,11 @@ export function buildConfig(overrides = {}) {
       maxBodyBytes: int(env.MAX_BODY_BYTES, 2 * 1024 * 1024),
       writeRateLimitPerMinute: int(env.WRITE_RATE_LIMIT_PER_MINUTE, 120),
     },
+    isolation: {
+      mode: env.ISOLATION_MODE || 'restricted',
+      dockerBin: env.DOCKER_BIN || 'docker',
+      testImage: env.ISOLATION_TEST_IMAGE || '',
+    },
     policy: {
       neverMerge: true,
       allowForcePush: false,
