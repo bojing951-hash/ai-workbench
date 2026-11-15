@@ -12,7 +12,9 @@
 >
 > 当前真实阻塞：**独立审计 Provider 资源不足**。DeepSeek 非 GLM 预算剩余 **9,869 / 3,000,000**，而任务审计预估（8,000）+ 安全保留（2,000）已超过剩余；v2.4 的 Provider-aware 预检会在**编码前**安全阻塞新任务并保存检查点，而不是无审计直接 PASS。已授权的 GLM 预算豁免仍然有效，但 Coding Agent 用 GLM 时审计不能同族自审。
 >
-> 独立 Supervisor 已实现并实际验证：SIGKILL Workbench 后自动拉起、恢复受管 run/loop、继续完成真实任务；健康无响应故障自动重启。24h 验收可在预算授权后由该 Supervisor 持久化执行。
+ > 独立 Supervisor 已实现并实际验证：SIGKILL Workbench 后自动拉起、恢复受管 run/loop、继续完成真实任务；健康无响应故障自动重启。24h 验收可在预算授权后由该 Supervisor 持久化执行。
+>
+> 已创建并尝试启动一个**预冻结的 24h 验收项目**：`proj_mwi146ob721765e6` / `loop_mwi146ofabcdd6a2`（5 个冻结任务，Supervisor 托管）。任务 1 在**编码前**被 Provider-aware 预检阻塞并保存检查点：`独立审计资源预算不足：Provider=deepseek，剩余 9869，审计预估 8000 + 保留 2000`；loop 安全暂停，未执行 24h。这是真实的资源授权阻塞，不是伪造的 24h 结果。
 
 ## 1. 独立 Supervisor（第一阶段）
 
@@ -53,14 +55,15 @@
   - 审计 Provider 不可用/不同族冲突/预算不足（预估 audit tokens + minReserve）时，在**写代码前**阻塞任务并保存检查点；
   - 不会因 DeepSeek 预算耗尽而误把无审计任务标记 PASS；也不会用同模型自审。
 - 当前真实状态：DeepSeek 剩余 9,869，审计预估 8,000 + 保留 2,000 已超；因此新任务在编码前被安全阻塞。**未擅自提升任何非 GLM 授权**。
-- 全局费用：¥30.10 / ¥30（GLM 豁免；非 GLM 上限按授权）；GLM 真实用量继续单列记录。
+- 全局实际费用：**¥30.10**，其中 **GLM 豁免 ¥23.76**（真实记录、不受内部费用上限），**非 GLM 受预算 ¥6.34 / ¥30**（剩余费用额度 ¥23.66）；非 GLM Token 预算剩余 9,869。GLM 真实 tokens 3,615,355 单列。
+- 24h 项目/loop：`proj_mwi146ob721765e6` / `loop_mwi146ofabcdd6a2`，已暂停在编码前检查点；恢复条件=用户授权独立审计预算/新增独立 Provider。
 
 ## 5. 测试与证据
 
 - `npm test`：**206/206**（v2.1 186 全保留 + v2.2 12 + v2.3 4 + v2.4 4）。
 - v2.3 加速无人监督验收：5/5 任务、100% Agent 自主、0 人工干预、2/2 故障恢复、5/5 独立审计 PASS（24m22s，**不是 24h**）。
 - v2.4 Supervisor 真实恢复：1 个受管任务在 SIGKILL 后自动完成；健康无响应自动重启；证据见上。
-- 24h 验收：**NOT VERIFIED**（预算阻塞 + 未执行完整窗口）；未伪造未来结果。
+- 24h 验收：**NOT VERIFIED**（预算阻塞 + 未执行完整窗口）。预冻结 24h 项目已启动并在编码前安全暂停于审计资源检查点；未伪造未来结果。
 
 ## 6. 未解决阻塞
 
@@ -72,7 +75,12 @@
 | A/B 授权/控制权 | 不涉及 | 本轮禁止访问/操作 |
 | Supervisor 自身被 SIGKILL | 依赖 launchd/systemd | 需宿主进程管理器；普通后台运行不自动拉起 Supervisor |
 
-## 7. 交付
+## 7. 候选版本验证
+
+- 候选 `cand_mwi14g4s_kg2i`（独立副本/数据/端口，初始排除 data/projects/.env/.git）：离线测试 **PASS 206**、隔离实例冒烟 **PASS v2.4.0**、真实 E2E **awaiting_acceptance / LOCAL_VERIFIED**。
+- 证据：`demo/evidence/upgrade-1794758986200.json`。
+
+## 8. 交付
 
 - 源码/分支：`v2.4.0`
 - Supervisor：`supervisor/`（launchd/systemd 模板、README、状态/日志）

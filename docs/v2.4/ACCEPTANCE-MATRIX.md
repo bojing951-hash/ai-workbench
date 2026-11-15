@@ -15,7 +15,7 @@
 | 失败分类/有界重试/备选 Agent/新会话 | PASS | failure_class、候选过滤、主 Agent 新会话；v2.3 实测 |
 | Provider-aware 审计资源预检 | PASS | 编码前阻塞；无独立审计不 PASS；测试 |
 | GLM 授权豁免，非 GLM 预算不削弱 | PASS | 真实身份分账；深剩余 9,869；未提升授权 |
-| 24 小时无人监督验收 | **NOT VERIFIED / BLOCKED** | 未执行完整 24h；审计预算不足；标记 `24H_AUTONOMY_NOT_VERIFIED` |
+| 24 小时无人监督验收 | **NOT VERIFIED / BLOCKED** | 预冻结项目 `proj_mwi146ob721765e6`/loop `loop_mwi146ofabcdd6a2` 已启动；任务1编码前因审计预算 9869<8000+2000 暂停；未执行 24h，标记 `24H_AUTONOMY_NOT_VERIFIED` |
 | 24h 内 Agent 自主完成率（加速验收） | PASS（5/5，100%） | v2.3 证据；非 24h |
 | 人工代码干预 | PASS（0 次加速验收） | v2.3 证据；v2.4 supervisor 任务无人工代码 |
 | Docker 执行安全 | PASS（v2.2 证据）/ UNKNOWN egress | 容器测试/Agent 真实运行；egress 未实现 |
