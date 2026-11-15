@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import { commandExists, execCapture } from '../runner.js';
 import { ensureDir } from '../util.js';
+import { buildAgentEnv, resolveAgentPermission } from '../security.js';
 import { estimateCostCny } from '../pricing.js';
 
 export const meta = {
@@ -41,12 +42,18 @@ export async function check(config) {
  * @param {string} [ctx.logPath]
  */
 export async function run(ctx) {
-  const { config, prompt, cwd, sessionId = '', timeoutMs, maxTokens = 0, signal = null, onEvent = null, logPath = '' } = ctx;
+  const { config, project = null, prompt, cwd, sessionId = '', timeoutMs, maxTokens = 0, signal = null, onEvent = null, logPath = '' } = ctx;
   const dsh = config.agents.dsh;
   if (!commandExists(dsh.bin)) {
     return { ok: false, error: `DSH CLI 不可用：${dsh.bin}`, agentKind: 'dsh', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, durationMs: 0, logPath };
   }
   ensureDir(dsh.home);
+  let permission;
+  try {
+    permission = resolveAgentPermission(config, 'dsh', project);
+  } catch (err) {
+    return { ok: false, error: err.message, agentKind: 'dsh', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, durationMs: 0, logPath, permissionBlocked: true };
+  }
 
   const local = new AbortController();
   let overBudget = false;
@@ -60,7 +67,7 @@ export async function run(ctx) {
     'headless',
     '--json',
     '--permission-mode',
-    dsh.permissionMode,
+    permission.mode,
     '--approval-policy',
     dsh.approvalPolicy,
   ];
@@ -121,13 +128,7 @@ export async function run(ctx) {
   const startedAt = Date.now();
   const res = await execCapture(dsh.bin, args, {
     cwd,
-    env: {
-      ...process.env,
-      DSH_HOME: dsh.home,
-      DEEPSEEK_API_KEY: config.llm.deepseek.apiKey || process.env.DEEPSEEK_API_KEY || '',
-      NO_COLOR: '1',
-      CI: '1',
-    },
+    env: buildAgentEnv({ config, agentId: 'dsh', homeDir: ctx.agentHome }),
     timeoutMs: timeoutMs || dsh.timeoutMs,
     stdin: prompt,
     logPath,
@@ -158,6 +159,9 @@ export async function run(ctx) {
     text: finalText,
     error,
     agentKind: 'dsh',
+    canRunShell: permission.allowShell,
+    costReported: false,
+    costSource: 'estimated',
     sessionId: newSessionId,
     exitCode: res.code,
     timedOut: res.timedOut,
