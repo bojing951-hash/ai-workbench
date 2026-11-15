@@ -23,6 +23,7 @@ import {
 import { estimateCostCny } from './pricing.js';
 import * as gitops from './git.js';
 import { execShell } from './runner.js';
+import { assertIsolationForProject, detectIsolationCapabilities, isolationModeForProject } from './isolation.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
@@ -33,7 +34,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {

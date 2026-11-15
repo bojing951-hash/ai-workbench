@@ -1149,6 +1149,7 @@ const DOM_IDS = [
   'budgetWidget',
   'budgetTokensValue',
   'budgetTokensBar',
+  'budgetGlmValue',
   'budgetCostValue',
   'budgetCostBar',
   'auditPill',
@@ -2078,6 +2079,7 @@ function renderBudget(budget) {
   const data = budget || {};
   if (!app.state) {
     if (dom.budgetTokensValue) dom.budgetTokensValue.textContent = '—';
+    if (dom.budgetGlmValue) dom.budgetGlmValue.textContent = '—';
     if (dom.budgetCostValue) dom.budgetCostValue.textContent = '—';
     if (dom.budgetTokensBar) dom.budgetTokensBar.style.width = '0%';
     if (dom.budgetCostBar) dom.budgetCostBar.style.width = '0%';
@@ -2106,6 +2108,11 @@ function renderBudget(budget) {
   if (dom.budgetTokensValue) {
     dom.budgetTokensValue.textContent = `${fmtTokens(budgetUsed)} / ${fmtTokens(maxTokens)} · ${fmtPercent(tokensPercent)}`;
     dom.budgetTokensValue.title = `预算折算已用 ${fmtTokens(budgetUsed)} / 上限 ${fmtTokens(maxTokens)} tokens；原始用量 ${fmtTokens(usedTokens)}（缓存读取按 ${data.cacheTokenWeight ?? 0.1} 折算）`;
+  }
+  if (dom.budgetGlmValue) {
+    const glm = data.glm || {};
+    dom.budgetGlmValue.textContent = `${fmtTokens(toNumber(glm.tokens))} · ${fmtCostCny(toNumber(glm.costCny), maxCost)}（不受预算）`;
+    dom.budgetGlmValue.title = `GLM 真实用量：输入 ${fmtTokens(toNumber(glm.tokensIn))} · 输出 ${fmtTokens(toNumber(glm.tokensOut))} · 缓存 ${fmtTokens(toNumber(glm.tokensCache))}；真实费用 ${fmtCostCny(toNumber(glm.costCny), maxCost)}；不计入工作台 token/费用上限`;
   }
   if (dom.budgetCostValue) {
     dom.budgetCostValue.textContent = `${fmtCostCny(usedCost, maxCost)} / ¥${fmtCost(maxCost)} · ${fmtPercent(costPercent)}`;

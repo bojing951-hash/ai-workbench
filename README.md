@@ -21,6 +21,13 @@
 - **多项目接入**：W（自身）/ A（Global Opportunity Engine，只读+沙箱分支）/ B（Investment Agent，READ_ONLY，权威树禁止写入）。
 - 详细 v2 报告：[docs/v2/PHASE0-AUDIT.md](docs/v2/PHASE0-AUDIT.md)、[P0 审计](docs/v2/P0-AUDIT.md)、[安全整改](docs/v2/SECURITY-REMEDIATION.md)、[验收矩阵](docs/v2/ACCEPTANCE-MATRIX.md)、[自我升级](docs/v2/UPGRADE.md)。
 
+## 0.1 v2.1 新增（持续自主研发）
+
+- **持续自主研发循环**：Planner 识别真实缺口 → 单任务开发/测试/独立审计/修复 → 内部验收 → 更新项目基线 → 自动下一轮；无任务/失败/授权阻塞时停止，不制造任务。W 已连续完成 3 轮真实任务（API/UI/CLI），支持中断恢复。
+- **GLM 预算授权**：GLM 真实 token/cache/费用完整记录且不受工作台内部预算上限；DeepSeek/OpenAI 仍受原预算；API/UI 按 provider 分开统计。
+- **执行隔离**：Docker/sandbox 能力实际探测；本机不可用时使用受限独立运行环境并将内核级隔离标记 BLOCKED，要求强隔离的项目 fail-closed。
+- 报告：[v2.1 工程报告](docs/v2.1/REPORT.md)、[v2.1 验收矩阵](docs/v2.1/ACCEPTANCE-MATRIX.md)、[隔离](docs/v2.1/ISOLATION.md)。
+
 ## 1. 核心能力
 
 | 能力 | 实现 |
