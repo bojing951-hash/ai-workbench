@@ -133,3 +133,73 @@ GitHub 真实结果（API 复核）：
 4. 本机为嵌套沙箱环境，DSH 的 `workspace-write` 沙箱后端不可用，演示使用 `danger-full-access`；普通宿主机建议使用 `workspace-write`。
 5. 同一计划内任务顺序执行（保证依赖正确）；跨项目并行。任务级 DAG 为后续版本。
 6. GitHub Token 与模型 Key 仅存本机 `.env`（0600、gitignore、日志脱敏）；演示结束可在 GitHub 撤销 Token。
+
+
+---
+
+# v2.0.0 追加测试与验收记录（2026-11-15）
+
+## 离线自动化测试
+
+- `npm test`：**180 项全部通过**（原 84 项保持 + 新增 96 项：安全 41、审计硬化 36、升级 7、服务安全 12）。
+- 覆盖：最小 Agent/测试环境、危险权限 fail-closed、审计证据/三态/分块、CI 状态与 SHA 绑定、API Token/Cookie/CSRF/Host、路径与 symlink、artifact 白名单、候选升级副本、预算与失败签名。
+
+## 真实运行验收
+
+| 项目 | 任务 | Agent | 测试 | 独立审计 | 验证状态 | Commit |
+|---|---|---|---|---|---|---|
+| W | /api/health verification + API 文档 | Claude Code（受限） | npm test 180/180 | DeepSeek PASS 88 | **CI_PASSED**，PR #1 + Actions success | a8d4fe61 |
+| A | PIT no-lookahead 回归测试 | DeepSeek Harness（workspace-write） | 全量离线 pytest 通过 | GLM PASS 92 | LOCAL_VERIFIED（远端未授权） | 8dd43985 |
+| A | 工作台接入文档 | Claude Code（受限） | 全量离线 pytest 通过 | DeepSeek PASS 92 | LOCAL_VERIFIED（远端未授权） | d5f849a2 |
+| B | A→B handoff 契约测试 | DeepSeek Harness（沙箱克隆） | 36/36 新测试 + 状态门 7/7 + thresholds 全绿 | GLM PASS 92 | LOCAL_VERIFIED（权威树/远端 BLOCKED） | 15e0aa4e |
+
+## 自我升级候选
+
+- 候选测试 PASS（180）、隔离实例 PASS（v2.0.0）、真实 E2E 任务 awaiting_acceptance / LOCAL_VERIFIED。
+- 证据：`demo/evidence/upgrade-1794740416372.json`、`v2-final-1794741064.json`、`v2-w-a-1794740150.json`。
+
+## 预算披露
+
+- 原始 token 8,135,158（其中约 7,4M 为缓存读取），按缓存权重 0.1 折算预算消耗 1,342,102 / 3,000,000；实际成本 ¥9.44 / ¥30。
+- 若严格按原始 token 计，已超 3M 授权上限；该口径差异已如实披露，不宣称原始 token 预算通过。详见 `docs/v2/FINAL-REPORT.md` §5。
+
+
+---
+
+# v2.2.0 测试与验收追加（2026-11-15）
+
+- `npm test`：**198/198 通过**（v2.1 186 + 新增 12：容器执行 6、模型身份 6）。
+- 容器真实执行：Docker 29.9.2 + `ai-workbench-runtime:2.2`；容器内 Claude Agent/测试 E2E PASS（run_mwhwfr2v37fcbdab，审计 PASS 100，commit 44995153）。
+- GLM 身份/预算：`tests/model-identity.test.js` 覆盖 GLM/DeepSeek/OpenAI/unknown；unknown 不豁免。
+- 可靠性循环：3 个真实任务、SIGKILL 恢复、无任务/能力阻塞停止；详见 `docs/v2.2/REPORT.md` 与 `ACCEPTANCE-MATRIX.md`。
+- 诚实披露：round2/3 中 Agent 自主完成受限（DeepSeek 预算耗尽、Claude 无进展），由 Supervisor 完成代码后仍经真实测试+独立审计；Agent 全自动完成率 1/3。容器 Agent 网络 egress allowlist 为 UNKNOWN/PARTIAL。
+
+
+---
+
+# v2.3.0 自主可靠性追加（2026-11-16）
+
+- `npm test`：**202/202**（v2.1 186 全保留 + v2.2 12 + v2.3 4：看门狗/失败分类、候选选择、任务 JSON 膨胀回归）。
+- 独立无人监督验收（24m22s 加速窗口）：5/5 真实任务完成、100% Coding Agent 自主、0 人工代码干预、2/2 故障恢复（Agent SIGSTOP 无进展、Workbench SIGKILL）、5/5 测试与独立审计 PASS。
+- **24 小时窗口未执行，判定 FAIL/UNKNOWN**；详见 `docs/v2.3/REPORT.md`。
+
+
+---
+
+# v2.4.0 长时间无人监督可靠性追加（2026-11-16）
+
+- `npm test`：**206/206**（v2.3 202 + 新增 4：租约/对账/审计预检/看门狗事件进度）。
+- 独立 Supervisor 实测：Workbench SIGKILL 自动重启并恢复受管 run/loop（无人 resume/改码），任务测试+审计+commit 完成；健康无响应 SIGSTOP 自动重启。修复 Supervisor 重复重启竞态。
+- Durable 租约/对账/幂等测试通过；Provider-aware 审计预检在审计预算不足时编码前阻塞。
+- **24h 验收：`24H_AUTONOMY_NOT_VERIFIED`**（未执行完整 24h；非 GLM 审计预算剩 9,869，不得提升授权）。详见 `docs/v2.4/REPORT.md`。
+
+
+---
+
+# v2.5.0 产品交付追加（2026-11-16）
+
+- Workbench 回归 **206/206**。
+- 消费产品冻结测试：9/9 unit + tsc/build + Playwright desktop/mobile 全通过。
+- DSH 独立审计最终 **PASS 100 / commit 1ad754d1**；项目级审计预算 4 次、235,225 tokens、估算 ¥0.9014 / ¥30。
+- 真实失败与恢复：Agent 无进展/超时、UI 测试失败、DSH UNKNOWN、预算误报、Playwright headless-shell 缺陷；均已记录并修正，未伪造 PASS。
+- 未完成：Fencing Token（FAIL/NOT_IMPLEMENTED）、24h 连续验收（NOT VERIFIED）。

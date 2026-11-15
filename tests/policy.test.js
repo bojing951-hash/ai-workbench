@@ -32,12 +32,16 @@ function auditOf(criteria, extra = {}) {
   return { score: 100, criteria, findings: [], required_fixes: [], summary: 'ok', ...extra };
 }
 
+function withEvidence(criteria) {
+  return criteria.map((c) => ({ ...c, evidence: c.evidence || 'src/verified.js:1' }));
+}
+
 describe('finalizeAuditVerdict：全部验收标准 pass 才 pass', () => {
   it('全部 criteria pass 且无 high finding -> pass', () => {
-    const audit = auditOf([
+    const audit = auditOf(withEvidence([
       { criterion: '接口 /health 返回 ok', status: 'pass', evidence: 'src/server.js:20' },
-      { criterion: '默认端口 4477', status: 'pass' },
-    ]);
+      { criterion: '默认端口 4477', status: 'pass', evidence: 'src/config.js:8' },
+    ]));
     const final = finalizeAuditVerdict(audit, ['接口 /health 返回 ok', '默认端口 4477']);
     assert.equal(final.verdict, 'pass');
     assert.equal(final.highFindings.length, 0);
@@ -54,8 +58,9 @@ describe('finalizeAuditVerdict：全部验收标准 pass 才 pass', () => {
     ]);
     const final = finalizeAuditVerdict(audit, ['验收 A', '验收 B']);
     assert.equal(final.verdict, 'fail');
+    assert.equal(final.status, 'UNKNOWN');
     assert.equal(final.criteria[1].status, 'unproven');
-    assert.ok(final.requiredFixes.some((f) => f.includes('未满足验收标准：验收 B')));
+    assert.ok(final.requiredFixes.some((f) => f.includes('未证实验收标准：验收 B')));
     assert.ok(final.requiredFixes.join('\n').includes('无测试覆盖'));
   });
 
@@ -71,7 +76,7 @@ describe('finalizeAuditVerdict：全部验收标准 pass 才 pass', () => {
 
   it('high finding 即使全部验收标准 pass 也判 fail，并带文件/行号', () => {
     const audit = auditOf(
-      [{ criterion: '验收 A', status: 'pass' }],
+      withEvidence([{ criterion: '验收 A', status: 'pass' }]),
       {
         findings: [
           { severity: 'high', file: 'src/auth.js', line: 12, issue: 'Authorization 头未校验' },
@@ -118,7 +123,7 @@ describe('finalizeAuditVerdict：全部验收标准 pass 才 pass', () => {
 
   it('criteria 按原文 trim 匹配；非法 status 归一为 unproven；大写 PASS 归一为 pass', () => {
     const audit = auditOf([
-      { criterion: '  验收 A  ', status: 'PASS' },
+      { criterion: '  验收 A  ', status: 'PASS', evidence: 'src/a.js:1 assertion passed' },
       { criterion: '验收 B', status: 'maybe' },
     ]);
     // 注意：原实现用严格 trim 相等匹配 + 下标兜底，这里同时覆盖两种路径
@@ -129,9 +134,9 @@ describe('finalizeAuditVerdict：全部验收标准 pass 才 pass', () => {
   });
 
   it('非数值 score 时按 verdict 回退（pass=100 / fail=0），数值 score 保留', () => {
-    assert.equal(finalizeAuditVerdict(auditOf([{ criterion: 'A', status: 'pass' }], { score: 'n/a' }), ['A']).score, 100);
+    assert.equal(finalizeAuditVerdict(auditOf(withEvidence([{ criterion: 'A', status: 'pass' }]), { score: 'n/a' }), ['A']).score, 100);
     assert.equal(finalizeAuditVerdict(auditOf([{ criterion: 'A', status: 'fail' }], { score: undefined }), ['A']).score, 0);
-    assert.equal(finalizeAuditVerdict(auditOf([{ criterion: 'A', status: 'pass' }], { score: 87 }), ['A']).score, 87);
+    assert.equal(finalizeAuditVerdict(auditOf(withEvidence([{ criterion: 'A', status: 'pass' }]), { score: 87 }), ['A']).score, 87);
   });
 
   it('审计返回结构缺失（null / 空对象）时不抛异常且判 fail', () => {
