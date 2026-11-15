@@ -21,9 +21,10 @@
 |---|---|---|
 | 成功接入工作台（只读配置） | PASS | proj_mwhnn83x45a46175；Phase 0 报告 |
 | 能读取真实研发状态 | PASS | architecture/research-v2 @5c055cc 快照；测试命令实测 |
-| Claude Code 执行真实任务 | BLOCKED | A 的 Claude 任务在受限模式下挂起/超时（已留痕）；改用 DSH 执行同一任务，Claude 真实任务由 W 项目满足 |
-| Coding Agent 真实任务 | PASS（本地） | DSH 生成 tests/test_pit_lookahead.py，全量离线测试通过（95s/重试 455s） |
-| 独立审计 | UNKNOWN | 首次 GLM 审计返回空内容（已提高 max tokens 后重试中）；若最终失败则标 UNKNOWN，不伪造 |
+| Claude Code 执行真实任务 | PASS（本地） | run_mwhq4k6he623c53c：Claude 新增 docs/WORKBENCH_INTEGRATION.md，全量 pytest 通过，DeepSeek 独立审计 PASS 92，commit d5f849a2 |
+| Coding Agent 真实任务（DSH） | PASS（本地） | run_mwho4kn5bdd916ca：DSH 生成 tests/test_pit_lookahead.py，全量离线 pytest 通过，GLM 独立审计 PASS 92，commit 8dd43985 |
+| 独立审计 | PASS（GLM / DeepSeek 各一） | 审计空返回问题通过提高 max tokens 修复；两次审计均 PASS 并绑定 worktree tree hash |
+| 不破坏既有功能 | PASS | 仅新增测试/文档；既有测试文件未修改；全量 pytest 通过 |
 | 不破坏既有功能 | PASS | 仅新增测试文件；既有测试文件未修改；全量套件通过 |
 | A→B 交接兼容 | PASS（只读核对） | HANDOFF_SCHEMA v1.0 与 B 接收面文档/测试存在；本环境未执行真实联调（会写 output，按 B 纪律禁止） |
 | 远端 PR / CI | BLOCKED | A 本地分支领先远端 main 100+ 提交；未授权推送；未推送、未开 PR |
@@ -35,8 +36,9 @@
 | 成功接入（只读） | PASS | proj_mwhnn856d30828ae；隔离克隆 `projects/v2/investment-agent` |
 | 保留原有研发检查点 | PASS（只读核对） | Phase 0：R35 0f53463 基线；本地 R36 ee4fbb6 未推送，不追踪不覆盖 |
 | 不与现有研发进程冲突 | PASS | READ_ONLY 结论；未触碰权威树/agent-loop/LIVE |
-| DeepSeek Harness 在授权工作区推进任务 | UNKNOWN/BLOCKED | 沙箱隔离克隆任务待执行；权威树写入 BLOCKED（无写授权/无锁） |
-| 原有测试/研究纪律有效 | PASS（只读复跑） | 状态门 7/7、thresholds G1-G4 全绿；干净 clone 157/157 |
+| DeepSeek Harness 在授权工作区推进任务 | PASS（沙箱隔离克隆） | run_mwhpvzw61979a6d2：DSH 新增 tests/test_workbench_handoff_contract.py（36/36 通过），commit 15e0aa4e；状态门 7/7 + thresholds 全绿；GLM 独立审计 PASS 92 |
+| 原有测试/研究纪律有效 | PASS（门禁）/ UNKNOWN（全量套件环境） | 状态门 7/7、thresholds G1-G4 全绿；全量 157 套件在 Workbench 隔离 worktree 中执行出现环境相关失败（缺原始数据/环境，非代码回归），如实记录，不冒充通过；干净 clone 基线 157/157 由 Phase 0 独立验证 |
+| 远端推送/权威树写入 | BLOCKED | 未推送、未合并、未写权威树 |
 | 不触碰 LIVE/公开推送/付费 | PASS | 零写入权威树、零推送、零付费 API |
 
 ## 4. 整体系统

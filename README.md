@@ -6,7 +6,7 @@
 任务规划 → 编码 → 测试 → 独立模型审计 → 失败修复 → 逐任务推进 → 推送分支 / 创建草稿 PR / 运行 GitHub Actions，
 整个过程可暂停、可中断、可恢复，并实时显示在 Web 界面中。**工作台永不合并主分支，合并由你人工决定。**
 
-![工作台：双 Agent 任务流水线、独立审计、GitHub PR 与 Actions](docs/images/workbench-phase3-pr-ci.png)
+![工作台 v2.0：CI_PASSED 验证门禁、双 Agent 审计、GitHub PR/CI](docs/images/workbench-v2-w-ci-passed.png)
 
 ---
 
