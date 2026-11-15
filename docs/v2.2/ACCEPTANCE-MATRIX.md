@@ -21,6 +21,6 @@
 | Git checkout/分支更新失败不继续 | PASS | 代码校验 rev-parse + checkout 退出码，失败暂停；未制造真实失败环境（逻辑+单测路径） |
 | 候选版本独立 DB/配置/端口，不访问 A/B | PASS | candidate 副本排除 data/projects/.env/.git；独立数据目录/端口；候选测试+实例+真实 E2E |
 | 稳定控制器未被替换 | PASS | 候选流程只读验证，未替换运行进程 |
-| Draft PR、不合并、不部署 | PASS（待最终 PR 编号） | 仅 draft PR；无 merge/deploy |
+| Draft PR、不合并、不部署 | PASS | PR #4 draft/open，CI success（e295c63）；无 merge/deploy |
 | A/B 代码/研发状态/工作区/进程保持不变 | PASS（基于操作记录） | 本轮未访问/操作 A/B；candidate 结构排除 projects/data；未读取 A/B 状态做二次证明 |
 | 失败不被掩盖 | PASS | Agent 自主率 1/3、网络策略 UNKNOWN、DeepSeek 预算耗尽均如实记录 |

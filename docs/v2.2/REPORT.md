@@ -3,8 +3,10 @@
 - 执行日期：2026-11-15（Asia/Hong_Kong）
 - 范围：**仅 AI Workbench 自身**；未访问/操作 A、B 项目（无 A/B API 请求、无进程操作、无文件/分支/推送操作）
 - 版本：v2.2.0（分支 `v2.2.0`）
+- 最终 Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/4（未合并）
+- CI：https://github.com/bojing951-hash/ai-workbench/actions/runs/43724113873（success，head `e295c63`）
 - 测试：**198/198**（v2.1 的 186 项全部保留，新增 12 项）
-- GitHub：v2.2 Draft PR #4（draft，**未合并 main、未部署生产**）
+- GitHub：v2.2 Draft PR #4（draft，**未合并 main、未部署生产**），CI success `e295c63`
 
 ## 1. 任务一：真正的执行环境隔离
 
