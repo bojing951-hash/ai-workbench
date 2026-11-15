@@ -179,7 +179,15 @@ export function createApp({ config, store, orchestrator }) {
     }
 
     if (pathname === '/api/health' && method === 'GET') {
-      return sendJson(res, 200, { ok: true, version: VERSION, at: new Date().toISOString() });
+      return sendJson(res, 200, {
+        ok: true,
+        version: VERSION,
+        at: new Date().toISOString(),
+        verification: {
+          ciRequiredByDefault: true,
+          note: '远端验收需要 CI_PASSED 且绑定 commit SHA；本地验收需显式确认',
+        },
+      });
     }
 
     if (pathname === '/api/state' && method === 'GET') {

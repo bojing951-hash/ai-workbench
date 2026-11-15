@@ -30,7 +30,8 @@
     policy: {neverMerge, autoPush, protectedPaths, maxAttempts, allowUnsafeAgentPermissions}
   }
   ```
-- `GET /api/health` → `{ok, version}`
+- `GET /api/health` → `{ok, version, verification}`
+  - `verification: {ciRequiredByDefault: true, note}` — 与 `/api/state` 中的 verification 同义：默认要求远端 CI 通过才可验收（`ciRequiredByDefault`），`note` 为验收策略说明字符串。
 
 ## 项目
 
