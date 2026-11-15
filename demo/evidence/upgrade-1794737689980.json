@@ -1,0 +1,30 @@
+{
+  "type": "self-upgrade-candidate-validation",
+  "at": "2026-11-15T10:14:49.980Z",
+  "candidateId": "cand_mwhoh8p2_nv5a",
+  "candidateDir": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhoh8p2_nv5a",
+  "sourceRoot": "/Users/cast/Downloads/开发工作台",
+  "tests": {
+    "ok": true,
+    "code": 0,
+    "durationMs": 4521,
+    "logPath": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhoh8p2_nv5a/candidate-tests.log"
+  },
+  "smoke": {
+    "ok": true,
+    "httpStatus": 200,
+    "version": "1.0.0",
+    "projects": 0,
+    "agents": [
+      "dsh",
+      "claude",
+      "custom"
+    ],
+    "dataDir": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhoh8p2_nv5a/candidate-data",
+    "port": 65335
+  },
+  "realE2E": null,
+  "passed": true,
+  "stableInstanceUnaffected": true,
+  "note": "候选版本验证通过后才允许创建升级 PR；当前脚本不自动替换运行实例、不合并主分支。"
+}

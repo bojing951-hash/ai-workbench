@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureDir, parseDotenv, toBool } from './util.js';
+import { ensureDir, parseDotenv, parseList, toBool } from './util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const WORKBENCH_ROOT = path.resolve(__dirname, '..');
@@ -83,6 +83,12 @@ export function buildConfig(overrides = {}) {
       maxAttempts: int(env.MAX_ATTEMPTS, 2),
       maxAgentConcurrency: int(env.MAX_AGENT_CONCURRENCY, 2),
       minReserveTokens: int(env.MIN_RESERVE_TOKENS, 20_000),
+      // 缓存读取 token 按较低权重计入预算（原始用量仍完整展示；权重用于硬上限保护）
+      cacheTokenWeight: Number(env.CACHE_TOKEN_WEIGHT ?? 0.1),
+      maxTokensPerRun: int(env.MAX_TOKENS_PER_RUN, 900_000),
+      maxCostCnyPerRun: Number(env.MAX_COST_CNY_PER_RUN ?? 12),
+      runWallClockMs: int(env.RUN_WALL_CLOCK_MS, 6 * 60 * 60 * 1000),
+      maxConcurrentTasksPerProject: 1,
     },
     agents: {
       default: str(env.DEFAULT_AGENT, 'auto'),
@@ -102,12 +108,17 @@ export function buildConfig(overrides = {}) {
         apiKey: str(env.CLAUDE_API_KEY, env.GLM_API_KEY || ''),
         model: str(env.CLAUDE_MODEL, env.GLM_AUDIT_MODEL || ''),
         timeoutMs: int(env.CLAUDE_TIMEOUT_MS, 600_000),
+        // P0-1：默认不再 bypass 权限，只允许读/写/搜索工具，禁用 shell 与网络工具
+        permissionMode: str(env.CLAUDE_PERMISSION_MODE, 'acceptEdits'),
+        allowedTools: str(env.CLAUDE_ALLOWED_TOOLS, 'Read,Edit,Write,Glob,Grep,LS'),
+        disallowedTools: str(env.CLAUDE_DISALLOWED_TOOLS, 'Bash,WebFetch,WebSearch,Task,NotebookEdit'),
         label: 'Claude Code',
       },
       custom: {
         bin: str(env.CUSTOM_AGENT_BIN, ''),
         args: str(env.CUSTOM_AGENT_ARGS, ''),
         label: str(env.CUSTOM_AGENT_LABEL, '自定义 Agent'),
+        envAllowlist: str(env.CUSTOM_AGENT_ENV_ALLOWLIST, ''),
       },
     },
     llm: {
@@ -128,10 +139,14 @@ export function buildConfig(overrides = {}) {
       },
     },
     audit: {
-      // auto: 有 OPENAI_API_KEY 用 GPT，否则用 GLM；报告会标注实际 provider
+      // auto: 优先选择与编码模型不同族的审计模型；报告会标注实际 provider
       provider: str(env.AUDIT_PROVIDER, 'auto'),
       timeoutMs: int(env.AUDIT_TIMEOUT_MS, 300_000),
       maxDiffChars: int(env.AUDIT_MAX_DIFF_CHARS, 70_000),
+      maxTokens: int(env.AUDIT_MAX_TOKENS, 12_000),
+      requireIndependent: toBool(env.AUDIT_REQUIRE_INDEPENDENT, true),
+      allowSameFamily: toBool(env.AUDIT_ALLOW_SAME_FAMILY, false),
+      maxChunks: int(env.AUDIT_MAX_CHUNKS, 6),
     },
     planner: {
       // 规划器与审计器分离：默认 DeepSeek，便宜且中文好
@@ -146,6 +161,14 @@ export function buildConfig(overrides = {}) {
       createPr: toBool(env.GITHUB_CREATE_PR, true),
       push: toBool(env.GITHUB_PUSH, true),
       autoCreateRepo: toBool(env.GITHUB_AUTO_CREATE_REPO, true),
+    },
+    security: {
+      allowUnsafeAgentPermissions: toBool(env.WORKBENCH_ALLOW_UNSAFE_AGENT, false),
+      apiToken: str(env.WORKBENCH_API_TOKEN, ''),
+      allowedHosts: parseList(env.WORKBENCH_ALLOWED_HOSTS),
+      testEnvAllowlist: parseList(env.TEST_ENV_ALLOWLIST),
+      maxBodyBytes: int(env.MAX_BODY_BYTES, 2 * 1024 * 1024),
+      writeRateLimitPerMinute: int(env.WRITE_RATE_LIMIT_PER_MINUTE, 120),
     },
     policy: {
       neverMerge: true,
