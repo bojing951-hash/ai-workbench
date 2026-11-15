@@ -352,6 +352,75 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       return sendJson(res, 200, { ok: true, data: orchestrator.budget() });
     }
 
+    // 只读：按 provider 拆分用量。响应体在本路由内显式归一化，
+    // 保证 byProvider/glm/nonGlm 的字段形状与 docs/API.md 可逐字段核对。
+    if (pathname === '/api/usage/providers' && method === 'GET') {
+      const snapshot = orchestrator.budget();
+      const num = (value) => Number(value) || 0;
+      // byProvider：每个 provider 统一为 {tokensIn,tokensOut,tokensCache,tokens,costCny}；
+      // tokens 明确定义为 tokensIn + tokensOut + tokensCache（原始用量，不做预算折算）。
+      const byProvider = {};
+      for (const [name, agg] of Object.entries(snapshot.byProvider || {})) {
+        const tokensIn = num(agg?.tokensIn);
+        const tokensOut = num(agg?.tokensOut);
+        const tokensCache = num(agg?.tokensCache);
+        byProvider[name] = {
+          tokensIn,
+          tokensOut,
+          tokensCache,
+          tokens: tokensIn + tokensOut + tokensCache,
+          costCny: num(agg?.costCny),
+        };
+      }
+      // glm 单列：无调用时也返回稳定的零值结构，便于前端与审计逐字段核对。
+      const glm = byProvider.glm || { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 };
+      // nonGlm：剔除预算豁免 provider（默认仅 glm）后汇总；names 列出被汇总的 provider。
+      const exempt = new Set((snapshot.exemptProviders || ['glm']).map((name) => String(name).toLowerCase()));
+      const nonGlm = { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0, names: [] };
+      for (const [name, agg] of Object.entries(byProvider)) {
+        if (exempt.has(name.toLowerCase())) continue;
+        nonGlm.tokensIn += agg.tokensIn;
+        nonGlm.tokensOut += agg.tokensOut;
+        nonGlm.tokensCache += agg.tokensCache;
+        nonGlm.tokens += agg.tokens;
+        nonGlm.costCny += agg.costCny;
+        nonGlm.names.push(name);
+      }
+      // budget：约束口径。本路由按 byProvider 与 exemptProviders/cacheTokenWeight 直接汇总，
+      // 因此 GLM 排除与缓存折算逻辑可在同一处代码核对；usedTokens/usedCostCny 为约束口径用量。
+      const weight = num(snapshot.cacheTokenWeight ?? 0.1);
+      let weightedTokens = 0;
+      let weightedCost = 0;
+      for (const [name, agg] of Object.entries(byProvider)) {
+        if (exempt.has(name.toLowerCase())) continue;
+        weightedTokens += agg.tokensIn + agg.tokensOut + agg.tokensCache * weight;
+        weightedCost += agg.costCny;
+      }
+      const maxTokens = num(snapshot.maxTokens);
+      const maxCostCny = num(snapshot.maxCostCny);
+      const budget = {
+        maxTokens,
+        usedTokens: Math.round(weightedTokens),
+        remainingTokens: Math.max(0, maxTokens - weightedTokens),
+        maxCostCny,
+        usedCostCny: Number(weightedCost.toFixed(4)),
+        remainingCostCny: Math.max(0, maxCostCny - weightedCost),
+        cacheTokenWeight: weight,
+        tokensPercent: maxTokens > 0 ? Math.min(100, Math.round((weightedTokens / maxTokens) * 1000) / 10) : 0,
+        costPercent: maxCostCny > 0 ? Math.min(100, Math.round((weightedCost / maxCostCny) * 1000) / 10) : 0,
+      };
+      return sendJson(res, 200, {
+        ok: true,
+        data: {
+          byProvider,
+          glm,
+          nonGlm,
+          budget,
+          note: 'GLM 用量完整记录并在 glm 单列，不受工作台内部 token/费用上限约束；nonGlm 汇总其余非豁免 provider，budget 为其预算约束口径的用量与余量（缓存 token 按 cacheTokenWeight 折算）；byProvider 为各 provider 的原始 tokens/cost 明细。',
+        },
+      });
+    }
+
     return sendError(res, 404, 'NOT_FOUND', `未知接口：${method} ${pathname}`);
   }
 
