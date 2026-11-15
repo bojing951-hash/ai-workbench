@@ -162,3 +162,14 @@ GitHub 真实结果（API 复核）：
 
 - 原始 token 8,135,158（其中约 7,4M 为缓存读取），按缓存权重 0.1 折算预算消耗 1,342,102 / 3,000,000；实际成本 ¥9.44 / ¥30。
 - 若严格按原始 token 计，已超 3M 授权上限；该口径差异已如实披露，不宣称原始 token 预算通过。详见 `docs/v2/FINAL-REPORT.md` §5。
+
+
+---
+
+# v2.2.0 测试与验收追加（2026-11-15）
+
+- `npm test`：**198/198 通过**（v2.1 186 + 新增 12：容器执行 6、模型身份 6）。
+- 容器真实执行：Docker 29.9.2 + `ai-workbench-runtime:2.2`；容器内 Claude Agent/测试 E2E PASS（run_mwhwfr2v37fcbdab，审计 PASS 100，commit 44995153）。
+- GLM 身份/预算：`tests/model-identity.test.js` 覆盖 GLM/DeepSeek/OpenAI/unknown；unknown 不豁免。
+- 可靠性循环：3 个真实任务、SIGKILL 恢复、无任务/能力阻塞停止；详见 `docs/v2.2/REPORT.md` 与 `ACCEPTANCE-MATRIX.md`。
+- 诚实披露：round2/3 中 Agent 自主完成受限（DeepSeek 预算耗尽、Claude 无进展），由 Supervisor 完成代码后仍经真实测试+独立审计；Agent 全自动完成率 1/3。容器 Agent 网络 egress allowlist 为 UNKNOWN/PARTIAL。

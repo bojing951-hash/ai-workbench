@@ -28,6 +28,13 @@
 - **执行隔离**：Docker/sandbox 能力实际探测；本机不可用时使用受限独立运行环境并将内核级隔离标记 BLOCKED，要求强隔离的项目 fail-closed。
 - 报告：[v2.1 工程报告](docs/v2.1/REPORT.md)、[v2.1 验收矩阵](docs/v2.1/ACCEPTANCE-MATRIX.md)、[隔离](docs/v2.1/ISOLATION.md)。
 
+## 0.2 v2.2 新增（自主研发可靠性收口）
+
+- **真正容器执行隔离**：Docker 适配器 + 运行时镜像；minimal worktree mount、cap-drop、no-new-privileges、只读 rootfs、network none(测试)、非 root、pids/memory/cpu 限制、超时清理；Docker 不可用 fail-closed。真实容器内 Claude Agent + 容器测试 E2E PASS。
+- **GLM 预算按实际模型身份**：只有 known GLM 豁免；Claude Code 使用 OpenAI/Anthropic/DeepSeek 端点不豁免；unknown 永不豁免；DeepSeek/OpenAI 原预算不变；四类供应商回归测试。
+- **持续研发可靠性**：3 个真实任务、SIGKILL 中断恢复、循环完成判定、幂等/不重复 commit、Git 基线校验、UNKNOWN 不推进、无任务/阻塞正确停止。
+- 报告：[v2.2 报告](docs/v2.2/REPORT.md)、[验收矩阵](docs/v2.2/ACCEPTANCE-MATRIX.md)、[容器隔离](docs/v2.2/CONTAINER-ISOLATION.md)、[GLM 身份](docs/v2.2/GLM-IDENTITY.md)。
+
 ## 1. 核心能力
 
 | 能力 | 实现 |
