@@ -59,6 +59,20 @@
 - `POST /api/runs/:id/ci-refresh`（刷新 GitHub Actions 状态）
 - run 详情新增：`verification_status`（LOCAL_VERIFIED/CI_PENDING/CI_PASSED/CI_FAILED）、`verified_sha`、`ci_status`、`ci_url`、`approvals[]`
 
+## Provider 用量（v2.1）
+
+- `GET /api/usage/providers` → `{ok:true,data:{byProvider,glm,nonGlm,budget,note}}`
+  - GLM 调用不受工作台内部 token/费用上限（用户授权），但真实 tokens/cache/cost 完整记录并在 `glm` 单列；
+  - DeepSeek/OpenAI 等仍受原预算约束；`budget` 字段给出约束口径的用量与余量。
+
+## 研发循环（v2.1）
+
+- `GET /api/loops?projectId=` → 循环列表（status/round/maxRounds/history/stopReason）
+- `POST /api/projects/:id/loops` body `{goal,maxRounds,mode:"plan"|"queue",queue?,contractFiles?}` → 创建并启动循环
+- `GET /api/loops/:id`、`POST /api/loops/:id/pause|resume|cancel`
+- `GET /api/state` 新增 `loops` 字段。
+- 循环每轮使用单任务 run；通过内部验证后自动进入下一轮；无真实任务/达到上限/失败/授权阻塞时停止，不制造任务。
+
 ## 审批中心
 
 - `GET /api/approvals?status=pending|all` → 待人工审批项（CI 闸门、远端推送等）

@@ -166,6 +166,24 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS loops (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  goal TEXT NOT NULL,
+  mode TEXT DEFAULT 'plan',
+  status TEXT NOT NULL DEFAULT 'running',
+  round INTEGER DEFAULT 0,
+  max_rounds INTEGER DEFAULT 3,
+  queue_json TEXT DEFAULT '[]',
+  history_json TEXT DEFAULT '[]',
+  contract_files_json TEXT DEFAULT '[]',
+  current_run_id TEXT DEFAULT '',
+  last_run_id TEXT DEFAULT '',
+  stop_reason TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS approvals (
   id TEXT PRIMARY KEY,
   run_id TEXT DEFAULT '',
@@ -186,6 +204,7 @@ CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id, attempt_no);
 CREATE INDEX IF NOT EXISTS idx_audits_task ON audits(task_id);
 CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+CREATE INDEX IF NOT EXISTS idx_loops_project ON loops(project_id, status);
 `;
 
 function parseRow(row, jsonFields = {}) {
@@ -245,6 +264,8 @@ export class Store {
       attempts: [
         ['cost_reported', 'INTEGER DEFAULT 0'],
         ['cost_source', "TEXT DEFAULT 'estimated'"],
+        ['provider', "TEXT DEFAULT ''"],
+        ['model', "TEXT DEFAULT ''"],
       ],
       audits: [
         ['verification_status', "TEXT DEFAULT ''"],
@@ -261,6 +282,14 @@ export class Store {
           /* 列已存在 */
         }
       }
+    }
+    // 旧记录回填 provider（用于按模型族分开统计；不改动金额/用量）
+    try {
+      this.db.exec("UPDATE attempts SET provider='glm' WHERE (provider IS NULL OR provider='') AND agent_kind='claude'");
+      this.db.exec("UPDATE attempts SET provider='deepseek' WHERE (provider IS NULL OR provider='') AND agent_kind IN ('dsh','planning','deepseek')");
+      this.db.exec("UPDATE attempts SET provider='unknown' WHERE provider IS NULL OR provider=''");
+    } catch {
+      /* ignore */
     }
   }
 
@@ -650,8 +679,8 @@ export class Store {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,cost_reported,cost_source,duration_ms,log_path,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,cost_reported,cost_source,provider,model,duration_ms,log_path,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         a.id,
@@ -672,6 +701,8 @@ export class Store {
         a.costCny || 0,
         a.costReported ? 1 : 0,
         a.costSource || (a.costReported ? 'vendor' : 'estimated'),
+        a.provider || '',
+        a.model || '',
         a.durationMs || 0,
         a.logPath || '',
         now,
@@ -699,13 +730,15 @@ export class Store {
       cost_cny: patch.cost_cny ?? patch.costCny ?? cur.cost_cny,
       cost_reported: patch.cost_reported ?? patch.costReported ?? cur.cost_reported,
       cost_source: patch.cost_source ?? patch.costSource ?? cur.cost_source,
+      provider: patch.provider ?? cur.provider,
+      model: patch.model ?? cur.model,
       duration_ms: patch.duration_ms ?? patch.durationMs ?? cur.duration_ms,
       log_path: patch.log_path ?? patch.logPath ?? cur.log_path,
     };
     const merged = { ...cur, ...normalized };
     this.db
       .prepare(
-        `UPDATE attempts SET session_id=?, exit_code=?, status=?, error=?, feedback=?, tokens_in=?, tokens_out=?, tokens_cache=?, cost_cny=?, cost_reported=?, cost_source=?, duration_ms=?, log_path=?, updated_at=? WHERE id=?`,
+        `UPDATE attempts SET session_id=?, exit_code=?, status=?, error=?, feedback=?, tokens_in=?, tokens_out=?, tokens_cache=?, cost_cny=?, cost_reported=?, cost_source=?, provider=?, model=?, duration_ms=?, log_path=?, updated_at=? WHERE id=?`,
       )
       .run(
         merged.session_id || '',
@@ -719,6 +752,8 @@ export class Store {
         merged.cost_cny || 0,
         merged.cost_reported ? 1 : 0,
         merged.cost_source || 'estimated',
+        merged.provider || '',
+        merged.model || '',
         merged.duration_ms || 0,
         merged.log_path || '',
         nowIso(),
@@ -885,16 +920,46 @@ export class Store {
   }
 
   usageTotals() {
-    const attempts = this.db.prepare('SELECT COALESCE(SUM(tokens_in),0) a, COALESCE(SUM(tokens_out),0) b, COALESCE(SUM(tokens_cache),0) c, COALESCE(SUM(cost_cny),0) d FROM attempts').get();
-    const audits = this.db.prepare('SELECT COALESCE(SUM(tokens_in),0) a, COALESCE(SUM(tokens_out),0) b, COALESCE(SUM(cost_cny),0) c FROM audits').get();
-    const tokens = Number(attempts.a) + Number(attempts.b) + Number(attempts.c) + Number(audits.a) + Number(audits.b);
-    return {
-      tokens,
-      tokensIn: Number(attempts.a) + Number(audits.a),
-      tokensOut: Number(attempts.b) + Number(audits.b),
-      tokensCache: Number(attempts.c),
-      costCny: Number(attempts.d) + Number(audits.c),
+    const attemptRows = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM attempts GROUP BY provider`).all();
+    const auditRows = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost FROM audits GROUP BY provider`).all();
+    const byProvider = {};
+    const ensure = (name) => {
+      const key = name || 'unknown';
+      if (!byProvider[key]) byProvider[key] = { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 };
+      return byProvider[key];
     };
+    for (const r of attemptRows) {
+      const agg = ensure(r.provider || 'unknown');
+      agg.tokensIn += Number(r.tin);
+      agg.tokensOut += Number(r.tout);
+      agg.tokensCache += Number(r.tc);
+      agg.costCny += Number(r.cost);
+    }
+    for (const r of auditRows) {
+      const agg = ensure(r.provider || 'unknown');
+      agg.tokensIn += Number(r.tin);
+      agg.tokensOut += Number(r.tout);
+      // 审计缓存 token 无法精确取得时按 0 计，不冒充
+      agg.costCny += Number(r.cost);
+    }
+    for (const agg of Object.values(byProvider)) agg.tokens = agg.tokensIn + agg.tokensOut + agg.tokensCache;
+    const total = Object.values(byProvider).reduce((acc, a) => {
+      acc.tokensIn += a.tokensIn; acc.tokensOut += a.tokensOut; acc.tokensCache += a.tokensCache; acc.tokens += a.tokens; acc.costCny += a.costCny;
+      return acc;
+    }, { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 });
+    return { ...total, byProvider };
+  }
+
+  usageForProject(projectId) {
+    const attemptRows = this.db.prepare(`SELECT a.provider, COALESCE(SUM(a.tokens_in),0) tin, COALESCE(SUM(a.tokens_out),0) tout, COALESCE(SUM(a.tokens_cache),0) tc, COALESCE(SUM(a.cost_cny),0) cost FROM attempts a JOIN runs r ON r.id=a.run_id WHERE r.project_id=? GROUP BY a.provider`).all(projectId);
+    const auditRows = this.db.prepare(`SELECT au.provider, COALESCE(SUM(au.tokens_in),0) tin, COALESCE(SUM(au.tokens_out),0) tout, COALESCE(SUM(au.cost_cny),0) cost FROM audits au JOIN runs r ON r.id=au.run_id WHERE r.project_id=? GROUP BY au.provider`).all(projectId);
+    const byProvider = {};
+    const ensure = (name) => { const k = name || 'unknown'; if (!byProvider[k]) byProvider[k] = { tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0 }; return byProvider[k]; };
+    for (const r of attemptRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.tokensCache+=Number(r.tc); a.costCny+=Number(r.cost); }
+    for (const r of auditRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.costCny+=Number(r.cost); }
+    for (const a of Object.values(byProvider)) a.tokens=a.tokensIn+a.tokensOut+a.tokensCache;
+    const total = Object.values(byProvider).reduce((acc,a)=>{acc.tokensIn+=a.tokensIn;acc.tokensOut+=a.tokensOut;acc.tokensCache+=a.tokensCache;acc.tokens+=a.tokens;acc.costCny+=a.costCny;return acc;},{tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0});
+    return { ...total, byProvider };
   }
 
   activeRunForProject(projectId, excludeRunId = '') {
@@ -933,6 +998,33 @@ export class Store {
       .prepare('UPDATE approvals SET status=?, details_json=?, decided_at=?, decided_by=?, updated_at=? WHERE id=?')
       .run(merged.status, JSON.stringify(merged.details_json || {}), merged.decided_at || '', merged.decided_by || '', nowIso(), id);
     return this.getApproval(id);
+  }
+
+  createLoop(l) {
+    const now = nowIso();
+    this.db.prepare('INSERT INTO loops (id,project_id,goal,mode,status,round,max_rounds,queue_json,history_json,contract_files_json,current_run_id,last_run_id,stop_reason,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(l.id, l.projectId, l.goal, l.mode || 'plan', l.status || 'running', 0, l.maxRounds || 3, JSON.stringify(l.queue || []), JSON.stringify([]), JSON.stringify(l.contractFiles || []), '', '', '', now, now);
+    return this.getLoop(l.id);
+  }
+
+  getLoop(id) {
+    return parseRow(this.db.prepare('SELECT * FROM loops WHERE id=?').get(id), { queue_json: [], history_json: [], contract_files_json: [] });
+  }
+
+  listLoops({ projectId = '', status = '' } = {}) {
+    const where = []; const params = [];
+    if (projectId) { where.push('project_id=?'); params.push(projectId); }
+    if (status) { where.push('status=?'); params.push(status); }
+    return this.db.prepare(`SELECT * FROM loops ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT 100`).all(...params)
+      .map((r) => parseRow(r, { queue_json: [], history_json: [], contract_files_json: [] }));
+  }
+
+  updateLoop(id, patch) {
+    const cur = this.getLoop(id); if (!cur) return null;
+    const m = { ...cur, ...patch };
+    this.db.prepare('UPDATE loops SET status=?,round=?,max_rounds=?,queue_json=?,history_json=?,contract_files_json=?,current_run_id=?,last_run_id=?,stop_reason=?,updated_at=? WHERE id=?')
+      .run(m.status, m.round, m.max_rounds, JSON.stringify(m.queue_json || []), JSON.stringify(m.history_json || []), JSON.stringify(m.contract_files_json || []), m.current_run_id || '', m.last_run_id || '', m.stop_reason || '', nowIso(), id);
+    return this.getLoop(id);
   }
 
   setMeta(key, value) {

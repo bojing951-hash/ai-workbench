@@ -85,6 +85,9 @@ export function buildConfig(overrides = {}) {
       minReserveTokens: int(env.MIN_RESERVE_TOKENS, 20_000),
       // 缓存读取 token 按较低权重计入预算（原始用量仍完整展示；权重用于硬上限保护）
       cacheTokenWeight: Number(env.CACHE_TOKEN_WEIGHT ?? 0.1),
+      // 用户明确授权：GLM 模型不受工作台内部 token/费用上限约束；但仍完整记录真实用量与费用
+      glmUnlimited: true,
+      exemptProviders: ['glm'],
       maxTokensPerRun: int(env.MAX_TOKENS_PER_RUN, 900_000),
       maxCostCnyPerRun: Number(env.MAX_COST_CNY_PER_RUN ?? 12),
       runWallClockMs: int(env.RUN_WALL_CLOCK_MS, 6 * 60 * 60 * 1000),

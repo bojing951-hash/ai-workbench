@@ -18,6 +18,7 @@ import { openStore } from '../src/db.js';
 import { EventBus } from '../src/bus.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { startServer } from '../src/server.js';
+import { LoopManager } from '../src/loop.js';
 import { checkAllAgents } from '../src/agents/index.js';
 import { auditProviderStatus } from '../src/auditors/index.js';
 import { formatCny, formatTokens } from '../src/pricing.js';
@@ -26,6 +27,7 @@ const config = getConfig();
 const store = openStore(config.paths.dbPath);
 const bus = new EventBus();
 const orchestrator = new Orchestrator({ config, store, bus });
+const loops = new LoopManager({ config, store, bus, orchestrator });
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -61,8 +63,10 @@ async function main() {
       },
     };
     const recovered = orchestrator.recoverOrphans();
+    const recoveredLoops = loops.recover();
+    if (recoveredLoops.length) console.log(`[recover] ${recoveredLoops.length} 个研发循环已标记中断，可在界面恢复`);
     if (recovered.recoveredRuns.length) console.log(`[recover] ${recovered.recoveredRuns.length} 个中断运行已标记，可在界面恢复`);
-    const server = await startServer({ config: serveConfig, store, orchestrator });
+    const server = await startServer({ config: serveConfig, store, orchestrator, loops });
     const shutdown = () => {
       console.log('\n正在关闭工作台…');
       server.close(() => {

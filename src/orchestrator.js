@@ -111,6 +111,8 @@ export class Orchestrator {
       attemptNo: 0,
       stage: source,
       agentKind: source,
+      provider: provider || 'unknown',
+      model: model || '',
       sessionId: '',
       prompt: '',
       status: 'completed',
@@ -128,39 +130,72 @@ export class Orchestrator {
     return attempt;
   }
 
-  usage() {
-    const raw = this.store.usageTotals();
-    return this.weightUsage(raw);
-  }
-
   weightUsage(raw) {
-    const cache = Number(raw.tokensCache || 0);
+    const exempt = new Set(this.config.budget.exemptProviders || ['glm']);
     const weight = Number(this.config.budget.cacheTokenWeight ?? 0.1);
+    const byProvider = raw.byProvider || {};
+    let budgetTokens = 0;
+    let budgetCostCny = 0;
+    for (const [name, agg] of Object.entries(byProvider)) {
+      if (exempt.has(String(name).toLowerCase())) continue;
+      budgetTokens += Number(agg.tokensIn || 0) + Number(agg.tokensOut || 0) + Number(agg.tokensCache || 0) * weight;
+      budgetCostCny += Number(agg.costCny || 0);
+    }
+    const glm = byProvider.glm || { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 };
+    const nonGlm = Object.entries(byProvider).reduce((acc, [name, agg]) => {
+      if (exempt.has(String(name).toLowerCase())) return acc;
+      acc.tokensIn += Number(agg.tokensIn || 0);
+      acc.tokensOut += Number(agg.tokensOut || 0);
+      acc.tokensCache += Number(agg.tokensCache || 0);
+      acc.costCny += Number(agg.costCny || 0);
+      acc.names.push(name);
+      return acc;
+    }, { tokensIn: 0, tokensOut: 0, tokensCache: 0, costCny: 0, names: [] });
+    nonGlm.tokens = nonGlm.tokensIn + nonGlm.tokensOut + nonGlm.tokensCache;
     return {
       ...raw,
-      // budgetTokens = 输入/输出/缓存写入 + 缓存读取 × 权重；原始 tokens 仍完整保留用于展示
-      budgetTokens: Number(raw.tokensIn || 0) + Number(raw.tokensOut || 0) + cache * weight,
+      byProvider,
+      budgetTokens,
+      budgetCostCny,
+      glmUnlimited: this.config.budget.glmUnlimited !== false,
+      exemptProviders: [...exempt],
+      glm,
+      nonGlm,
       cacheTokenWeight: weight,
     };
+  }
+
+  usage() {
+    return this.weightUsage(this.store.usageTotals());
+  }
+
+  weightProjectUsage(raw) {
+    return this.weightUsage(raw);
   }
 
   budget() {
     const used = this.usage();
     const cfg = this.config.budget;
-    const effectiveUsed = Number(used.budgetTokens || used.tokens || 0);
+    const effectiveUsed = Number(used.budgetTokens || 0);
     return {
       maxTokens: cfg.maxTotalTokens,
       usedTokens: used.tokens,
       usedBudgetTokens: Math.round(effectiveUsed),
       cacheTokenWeight: used.cacheTokenWeight,
+      glmUnlimited: used.glmUnlimited,
+      exemptProviders: used.exemptProviders,
+      glm: used.glm,
+      nonGlm: used.nonGlm,
+      byProvider: used.byProvider,
       maxCostCny: cfg.maxCostCny,
       usedCostCny: Number(used.costCny.toFixed(4)),
-      remainingTokens: Math.max(0, cfg.maxTotalTokens - effectiveUsed),
-      remainingCostCny: Math.max(0, cfg.maxCostCny - used.costCny),
+      usedBudgetCostCny: Number(used.budgetCostCny.toFixed(4)),
+      remainingTokens: used.glmUnlimited ? Math.max(0, cfg.maxTotalTokens - effectiveUsed) : Math.max(0, cfg.maxTotalTokens - effectiveUsed),
+      remainingCostCny: Math.max(0, cfg.maxCostCny - used.budgetCostCny),
       tokensPercent: Math.min(100, Math.round((effectiveUsed / cfg.maxTotalTokens) * 1000) / 10),
-      costPercent: Math.min(100, Math.round((used.costCny / cfg.maxCostCny) * 1000) / 10),
+      costPercent: Math.min(100, Math.round((used.budgetCostCny / cfg.maxCostCny) * 1000) / 10),
       breakdown: used,
-      note: '预算按 cacheTokenWeight 对缓存读取折算；原始 token 与成本同时展示',
+      note: 'GLM 模型按用户授权不受工作台 token/费用上限约束，但真实用量与费用完整记录并单列；其余模型仍受原预算（缓存按权重折算）约束',
     };
   }
 
@@ -316,12 +351,7 @@ export class Orchestrator {
     if (busy) {
       throw new PolicyError('PROJECT_BUSY', `项目已有未完成的运行（${busy.id}，状态 ${busy.status}），同一项目同一时间只允许一个写入运行；请先恢复或取消它`);
     }
-    const projectUsageRaw = this.store.usageForProject(project.id);
-    const projectCache = Number(projectUsageRaw.tokensCache || 0);
-    const projectUsage = {
-      ...projectUsageRaw,
-      budgetTokens: Number(projectUsageRaw.tokens || 0) - projectCache + projectCache * Number(this.config.budget.cacheTokenWeight ?? 0.1),
-    };
+    const projectUsage = this.weightProjectUsage(this.store.usageForProject(project.id));
     assertProjectBudget({
       config: this.config,
       project,
@@ -465,12 +495,7 @@ export class Orchestrator {
           assertRunWallClock(run, this.config.budget.runWallClockMs);
           this.assertBudget(8_000);
           const project = this.store.getProject(run.project_id);
-          const projectUsageRaw = this.store.usageForProject(run.project_id);
-          const projectCache = Number(projectUsageRaw.tokensCache || 0);
-          const projectUsage = {
-            ...projectUsageRaw,
-            budgetTokens: Number(projectUsageRaw.tokens || 0) - projectCache + projectCache * Number(this.config.budget.cacheTokenWeight ?? 0.1),
-          };
+          const projectUsage = this.weightProjectUsage(this.store.usageForProject(run.project_id));
           assertProjectBudget({
             config: this.config,
             project,
@@ -551,9 +576,7 @@ export class Orchestrator {
         if (signal.aborted) throw new PolicyError('RUN_ABORTED', '运行已被取消');
         const currentRun = this.store.getRun(run.id) || run;
         assertRunWallClock(currentRun, this.config.budget.runWallClockMs);
-        const puRaw = this.store.usageForProject(project.id);
-        const puCache = Number(puRaw.tokensCache || 0);
-        const pu = { ...puRaw, budgetTokens: Number(puRaw.tokens || 0) - puCache + puCache * Number(this.config.budget.cacheTokenWeight ?? 0.1) };
+        const pu = this.weightProjectUsage(this.store.usageForProject(project.id));
         assertProjectBudget({
           config: this.config, project, run: currentRun,
           totals: pu, estimatedTokens: 10_000, estimatedCostCny: 0.05,
@@ -632,6 +655,8 @@ export class Orchestrator {
           costCny: agentResult.costCny || 0,
           costReported: !!agentResult.costReported,
           costSource: agentResult.costSource || (agentResult.costReported ? 'vendor' : 'estimated'),
+          provider: agentResult.provider || (agentId === 'claude' ? 'glm' : agentId === 'dsh' ? 'deepseek' : 'unknown'),
+          model: agentResult.model || '',
           durationMs: agentResult.durationMs || 0,
           logPath: agentResult.logPath || '',
         });

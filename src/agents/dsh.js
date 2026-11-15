@@ -159,6 +159,8 @@ export async function run(ctx) {
     text: finalText,
     error,
     agentKind: 'dsh',
+    provider: 'deepseek',
+    model: 'deepseek',
     canRunShell: permission.allowShell,
     costReported: false,
     costSource: 'estimated',

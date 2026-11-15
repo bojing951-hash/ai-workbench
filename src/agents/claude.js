@@ -148,6 +148,8 @@ export async function run(ctx) {
     text: String(data.result || ''),
     error,
     agentKind: 'claude',
+    provider: 'glm',
+    model: cc.model || 'glm',
     canRunShell: false,
     costReported,
     costSource: costReported ? 'vendor' : 'estimated',

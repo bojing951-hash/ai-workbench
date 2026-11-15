@@ -38,7 +38,7 @@ export const RunStatus = Object.freeze({
 export function remainingBudget(config, spent = {}) {
   const usedTokens = Number(spent.budgetTokens ?? spent.tokens ?? 0);
   const tokens = config.budget.maxTotalTokens - usedTokens;
-  const costCny = config.budget.maxCostCny - Number(spent.costCny || 0);
+  const costCny = config.budget.maxCostCny - Number(spent.budgetCostCny ?? spent.costCny ?? 0);
   return { tokens, costCny };
 }
 

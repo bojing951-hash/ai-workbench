@@ -71,7 +71,7 @@ function mapErrorStatus(err) {
   return 400;
 }
 
-export function createApp({ config, store, orchestrator }) {
+export function createApp({ config, store, orchestrator, loops = null }) {
   const webDir = path.join(config.paths.root, 'web');
   const maxBody = Number(config.security?.maxBodyBytes || MAX_BODY);
   // P0-5：API 身份认证。优先使用显式 Token；否则每次启动生成随机 Token，
@@ -323,6 +323,31 @@ export function createApp({ config, store, orchestrator }) {
       });
     }
 
+    if (pathname === '/api/loops' && method === 'GET') {
+      const projectId = url.searchParams.get('projectId') || '';
+      return sendJson(res, 200, { ok: true, data: loops ? loops.list(projectId) : [] });
+    }
+
+    const projectLoopsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/loops$/);
+    if (projectLoopsMatch && method === 'POST') {
+      if (!loops) throw new PolicyError('LOOP_UNAVAILABLE', '研发循环模块未启用');
+      const body = await readBody(req, maxBody);
+      return sendJson(res, 201, { ok: true, data: await loops.create({ ...body, projectId: projectLoopsMatch[1] }) });
+    }
+
+    const loopMatch = pathname.match(/^\/api\/loops\/([^/]+)(?:\/(pause|resume|cancel))?$/);
+    if (loopMatch) {
+      if (!loops) throw new PolicyError('LOOP_UNAVAILABLE', '研发循环模块未启用');
+      const [, loopId, action] = loopMatch;
+      if (!action && method === 'GET') return sendJson(res, 200, { ok: true, data: loops.get(loopId) });
+      if (action && method === 'POST') {
+        const body = await readBody(req, maxBody).catch(() => ({}));
+        if (action === 'pause') return sendJson(res, 200, { ok: true, data: await loops.pause(loopId, body.reason || '人工暂停') });
+        if (action === 'resume') return sendJson(res, 200, { ok: true, data: await loops.resume(loopId, { retryCurrent: !!body.retryCurrent }) });
+        if (action === 'cancel') return sendJson(res, 200, { ok: true, data: await loops.cancel(loopId, body.reason || '人工取消') });
+      }
+    }
+
     if (pathname === '/api/budget' && method === 'GET') {
       return sendJson(res, 200, { ok: true, data: orchestrator.budget() });
     }
@@ -385,8 +410,8 @@ export function createApp({ config, store, orchestrator }) {
   return server;
 }
 
-export function startServer({ config, store, orchestrator, logger = console }) {
-  const server = createApp({ config, store, orchestrator });
+export function startServer({ config, store, orchestrator, loops = null, logger = console }) {
+  const server = createApp({ config, store, orchestrator, loops });
   return new Promise((resolve, reject) => {
     server.on('error', reject);
     server.listen(config.server.port, config.server.host, () => {
