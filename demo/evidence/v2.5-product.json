@@ -6,7 +6,7 @@
     "releaseBranch": "release/v0.1.0",
     "releaseTag": "v0.1.0",
     "codeCommit": "1ad754d1",
-    "docsCommit": "96bff5e",
+    "docsCommit": "5d60c97",
     "bundle": "demo/evidence/consumption-decision-lab-v0.1.0.bundle",
     "screenshots": [
       "demo/evidence/cdl-home.png",
@@ -102,5 +102,28 @@
   "fencing": {
     "status": "NOT_IMPLEMENTED",
     "note": "项目/run SQLite 租约与恢复对账已实现；Fencing Token 尚未实现，未声称完成"
+  },
+  "cost": {
+    "coding": {
+      "agent": "Claude Code/GLM 5.3",
+      "attempts": 15,
+      "tokens": 1956679,
+      "costCny": 16.5881736,
+      "source": "vendor"
+    },
+    "audit": {
+      "provider": "DeepSeek Harness CLI",
+      "calls": 4,
+      "tokens": 235225,
+      "costCny": 0.9014279904,
+      "source": "estimated",
+      "budgetCny": 30,
+      "budgetUsedCny": 0.9014279904
+    },
+    "totalModelCostCny": 17.4896015904,
+    "planningCostCny": 0,
+    "testingCostCny": 0,
+    "repairAttribution": "UNKNOWN",
+    "otherProjectsBudgetChanged": false
   }
 }
