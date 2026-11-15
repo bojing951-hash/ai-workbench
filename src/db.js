@@ -276,6 +276,7 @@ export class Store {
         ['failure_class', "TEXT DEFAULT ''"],
       ],
       audits: [
+        ['budget_scope', "TEXT DEFAULT 'global'"],
         ['verification_status', "TEXT DEFAULT ''"],
         ['evidence_hash', "TEXT DEFAULT ''"],
         ['diff_hash', "TEXT DEFAULT ''"],
@@ -810,8 +811,8 @@ export class Store {
   createAudit(a) {
     this.db
       .prepare(
-        `INSERT INTO audits (id,run_id,task_id,attempt_no,provider,model,provider_known,provider_source,verdict,score,criteria_json,findings_json,required_fixes_json,summary,tokens_in,tokens_out,cost_cny,raw_path,verification_status,evidence_hash,diff_hash,independence,created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO audits (id,run_id,task_id,attempt_no,provider,model,provider_known,provider_source,budget_scope,verdict,score,criteria_json,findings_json,required_fixes_json,summary,tokens_in,tokens_out,cost_cny,raw_path,verification_status,evidence_hash,diff_hash,independence,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         a.id,
@@ -822,6 +823,7 @@ export class Store {
         a.model || '',
         a.providerKnown ? 1 : 0,
         a.providerSource || '',
+        a.budgetScope || 'global',
         a.verdict,
         a.score || 0,
         JSON.stringify(a.criteria || []),
@@ -956,7 +958,8 @@ export class Store {
 
   usageTotals() {
     const attemptRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM attempts GROUP BY provider`).all();
-    const auditRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost FROM audits GROUP BY provider`).all();
+    const auditRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_in ELSE 0 END),0) tin, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_out ELSE 0 END),0) tout, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN cost_cny ELSE 0 END),0) cost FROM audits GROUP BY provider`).all();
+    const scoped = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost FROM audits WHERE budget_scope='project_audit' GROUP BY provider`).all();
     const byProvider = {};
     const ensure = (name) => {
       const key = name || 'unknown';
@@ -983,7 +986,14 @@ export class Store {
       acc.tokensIn += a.tokensIn; acc.tokensOut += a.tokensOut; acc.tokensCache += a.tokensCache; acc.tokens += a.tokens; acc.costCny += a.costCny;
       return acc;
     }, { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 });
-    return { ...total, byProvider };
+    const projectAudit = scoped.reduce((acc, r) => { acc.tokensIn += Number(r.tin); acc.tokensOut += Number(r.tout); acc.tokens += Number(r.tin) + Number(r.tout); acc.costCny += Number(r.cost); return acc; }, { tokensIn: 0, tokensOut: 0, tokens: 0, costCny: 0 });
+    return { ...total, byProvider, projectAudit };
+  }
+
+  auditBudgetUsage(projectId) {
+    const rows = this.db.prepare("SELECT COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost, COUNT(*) calls FROM audits a JOIN runs r ON r.id=a.run_id WHERE r.project_id=? AND a.budget_scope='project_audit'").all(projectId);
+    const r = rows[0] || {};
+    return { tokens: Number(r.tin || 0) + Number(r.tout || 0), costCny: Number(r.cost || 0), calls: Number(r.calls || 0) };
   }
 
   usageForProject(projectId) {

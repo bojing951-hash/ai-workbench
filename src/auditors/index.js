@@ -15,6 +15,7 @@ import {
   summarizeUsage,
 } from '../policy.js';
 import { truncate } from '../util.js';
+import { runDshAudit, dshAuditAvailable } from './dsh.js';
 
 export const AUDIT_PROVIDERS = [
   { name: 'openai', label: 'OpenAI GPT' },
@@ -197,10 +198,17 @@ export async function runAudit({
   coderFamily = '',
   versionInfo = {},
   signal = null,
+  worktree = '',
+  commit = '',
 }) {
   const acceptance = Array.isArray(task.acceptance_json) ? task.acceptance_json : [];
   if (acceptance.length === 0) {
     throw new PolicyError('AUDIT_NO_CRITERIA', '任务没有验收标准，无法进行独立审计');
+  }
+  const forcedDsh = String(project?.audit_provider || '').toLowerCase() === 'dsh' || String(config.audit?.provider || '').toLowerCase() === 'dsh';
+  if (forcedDsh) {
+    if (!worktree) throw new PolicyError('AUDIT_WORKSPACE_MISSING', 'DSH 审计需要只读工作区');
+    return runDshAudit({ config, project, task, acceptance, diff, diffStat, testResult, repoFiles, versionInfo, worktree, commit, coderFamily, signal });
   }
   const providerInfo = resolveAuditProvider(config, { coderFamily });
   if (!providerInfo.provider) {

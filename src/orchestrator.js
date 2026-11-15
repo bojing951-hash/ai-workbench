@@ -28,6 +28,7 @@ import { resolveAgentIdentity, resolveLlmIdentity, isExemptIdentity } from './mo
 import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
+import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
 import { AsyncSemaphore } from './semaphore.js';
 import * as gh from './github.js';
@@ -187,8 +188,9 @@ export class Orchestrator {
     const effectiveUsed = Number(used.budgetTokens || 0);
     return {
       maxTokens: cfg.maxTotalTokens,
-      usedTokens: used.tokens,
+      usedTokens: used.tokens + Number(used.projectAudit?.tokens || 0),
       usedBudgetTokens: Math.round(effectiveUsed),
+      projectAudit: used.projectAudit || { tokens: 0, costCny: 0 },
       cacheTokenWeight: used.cacheTokenWeight,
       glmUnlimited: used.glmUnlimited,
       exemptProviders: used.exemptProviders,
@@ -196,7 +198,7 @@ export class Orchestrator {
       nonGlm: used.nonGlm,
       byProvider: used.byProvider,
       maxCostCny: cfg.maxCostCny,
-      usedCostCny: Number(used.costCny.toFixed(4)),
+      usedCostCny: Number((used.costCny + Number(used.projectAudit?.costCny || 0)).toFixed(4)),
       usedBudgetCostCny: Number(used.budgetCostCny.toFixed(4)),
       remainingTokens: used.glmUnlimited ? Math.max(0, cfg.maxTotalTokens - effectiveUsed) : Math.max(0, cfg.maxTotalTokens - effectiveUsed),
       remainingCostCny: Math.max(0, cfg.maxCostCny - used.budgetCostCny),
@@ -366,6 +368,7 @@ export class Orchestrator {
         container_agent_network: input.containerAgentNetwork || input.container_agent_network || '',
         low_budget_finalize: input.lowBudgetFinalize === true || input.low_budget_finalize === true,
         supervisor_managed: input.supervisorManaged === true || input.supervisor_managed === true,
+        audit_budget: input.auditBudget || input.audit_budget || {},
         agent_fallback: parseList(input.agentFallback || input.agent_fallback),
         agent_stall_timeout_ms: Number(input.agentStallTimeoutMs || input.agent_stall_timeout_ms || 0) || undefined,
       },
@@ -412,6 +415,7 @@ export class Orchestrator {
     if (patch.agentFallback !== undefined || patch.agent_fallback !== undefined) configPatch.agent_fallback = parseList(patch.agentFallback ?? patch.agent_fallback);
     if (patch.lowBudgetFinalize !== undefined || patch.low_budget_finalize !== undefined) configPatch.low_budget_finalize = patch.lowBudgetFinalize === true || patch.low_budget_finalize === true;
     if (patch.supervisorManaged !== undefined || patch.supervisor_managed !== undefined) configPatch.supervisor_managed = patch.supervisorManaged === true || patch.supervisor_managed === true;
+    if (patch.auditBudget !== undefined || patch.audit_budget !== undefined) configPatch.audit_budget = patch.auditBudget ?? patch.audit_budget;
     if (patch.publish !== undefined) configPatch.publish = !!patch.publish;
     if (Object.keys(configPatch).length) mapped.config_json = { ...(project.config_json || {}), ...configPatch };
     return this.store.updateProject(projectId, mapped);
@@ -633,6 +637,15 @@ export class Orchestrator {
    * 避免写完代码才发现无法独立审计（也不得同模型自审）。
    */
   auditResourcePreflight(project, coderFamily) {
+    if (this.isDshAuditProject(project)) {
+      if (!dshAuditAvailable(this.config)) throw new PolicyError('AUDIT_RESOURCE_UNAVAILABLE', 'DSH CLI 不可用，无法进行 DSH 独立审计；任务在编码前阻塞');
+      if (coderFamily && modelFamily('deepseek', 'deepseek') === coderFamily) throw new PolicyError('AUDIT_RESOURCE_UNAVAILABLE', 'DSH 审计与 Coding Agent 同族，拒绝自审');
+      const estimate = Number(project?.config_json?.audit_resource_estimate_tokens || 4000);
+      const budgetStatus = this.auditBudgetStatus(project);
+      if (budgetStatus.remainingCostCny <= 0 || budgetStatus.remainingTokens <= 0) throw new PolicyError('AUDIT_RESOURCE_UNAVAILABLE', `DSH 独立审计预算已耗尽：费用 ${budgetStatus.usedCostCny.toFixed(4)}/${budgetStatus.maxCostCny}，tokens ${budgetStatus.usedTokens}/${budgetStatus.maxTokens}；任务在编码前阻塞并保存检查点`);
+      if (budgetStatus.remainingCostCny < 0.20 || budgetStatus.remainingTokens < estimate) throw new PolicyError('AUDIT_RESOURCE_UNAVAILABLE', `DSH 独立审计预算不足以预估调用（剩余 ¥${budgetStatus.remainingCostCny.toFixed(2)}，剩余 tokens ${budgetStatus.remainingTokens}，预估 ${estimate}）；接近上限，停止发起可能超额调用并保存检查点`);
+      return { provider: 'dsh', model: 'deepseek', exempt: false, estimate, source: 'dsh-cli', budgetStatus };
+    }
     const resolution = resolveAuditProvider(this.config, { coderFamily });
     if (!resolution.provider) throw new PolicyError('AUDIT_RESOURCE_UNAVAILABLE', `没有可用的独立审计 Provider：${resolution.reason || 'unknown'}；任务在编码前阻塞并保存检查点`);
     const spec = this.config.llm?.[resolution.provider.name] || {};
@@ -653,6 +666,18 @@ export class Orchestrator {
       }
     }
     return { provider: identity.provider, model: identity.model || spec.model || '', exempt, estimate };
+  }
+
+  isDshAuditProject(project) {
+    return String(project?.audit_provider || '').toLowerCase() === 'dsh';
+  }
+
+  auditBudgetStatus(project) {
+    const cfg = project?.config_json?.audit_budget || {};
+    const maxCost = Number(cfg.max_cost_cny ?? 30);
+    const maxTokens = Number(cfg.max_tokens ?? 2_000_000);
+    const used = this.store.auditBudgetUsage(project.id);
+    return { maxCostCny: maxCost, maxTokens, usedCostCny: used.costCny, usedTokens: used.tokens, calls: used.calls, remainingCostCny: Math.max(0, maxCost - used.costCny), remainingTokens: Math.max(0, maxTokens - used.tokens) };
   }
 
   // ============================================================
@@ -1115,7 +1140,7 @@ export class Orchestrator {
         const actualAuditProvider = auditIdentity.known ? auditIdentity.provider : 'unknown';
         const auditRow = this.store.createAudit({
           id: newId('aud'), runId: run.id, taskId: task.id, attemptNo,
-          provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: auditIdentity.source, model: audit.model,
+          provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: auditIdentity.source, budgetScope: this.isDshAuditProject(project) ? 'project_audit' : 'global', model: audit.model,
           verdict: audit.verdict, score: audit.score,
           criteria: audit.criteria, findings: audit.findings, requiredFixes: audit.requiredFixes,
           summary: audit.summary,
@@ -1890,14 +1915,14 @@ export class Orchestrator {
       const audit = await this.deps.runAudit({
         config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },
         diff, diffStat, testResult, repoFiles, coderFamily, contextFiles,
-        versionInfo: { baseCommit, worktreeHash: testedHash, testedHash },
+        versionInfo: { baseCommit, worktreeHash: testedHash, testedHash }, worktree, commit: '',
       });
       const auditStatus = audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL');
       const auditIdentity = resolveLlmIdentity({ config: this.config, provider: audit.provider });
       const actualAuditProvider = auditIdentity.known ? auditIdentity.provider : 'unknown';
       const auditRow = this.store.createAudit({
         id: newId('aud'), runId: run.id, taskId: task.id, attemptNo: Number(task.attempt || 0) + 1,
-        provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: auditIdentity.source, model: audit.model, verdict: audit.verdict, score: audit.score,
+        provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: auditIdentity.source, budgetScope: this.isDshAuditProject(project) ? 'project_audit' : 'global', model: audit.model, verdict: audit.verdict, score: audit.score,
         criteria: audit.criteria, findings: audit.findings, requiredFixes: audit.requiredFixes,
         summary: audit.summary, tokensIn: audit.usage?.input || 0, tokensOut: audit.usage?.output || 0,
         costCny: audit.costCny || 0, verificationStatus: auditStatus, evidenceHash: testedHash,
@@ -1917,7 +1942,6 @@ export class Orchestrator {
         return { ok: false, reason, auditStatus };
       }
       this.store.updateTask(task.id, { status: TaskStatus.COMMITTING });
-      const planBranch = `wb/plan-${run.id.slice(-6)}`;
       const commitMessage = [
         `feat(task-${task.seq}): ${task.title}`, '',
         ...(task.acceptance_json || []).map((a) => `- 验收：${a}`), '',
@@ -1925,10 +1949,15 @@ export class Orchestrator {
         `测试：${safeCommand} 通过（指纹 ${testedHash.slice(0, 12)}）`,
         '生成：AI 开发工作台 v2.0',
       ].join('\n');
-      const commit = await gitops.commitAll(worktree, commitMessage);
-      const committedTree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
-      if (commit.empty || committedTree !== testedHash) throw new PolicyError('COMMIT_FINGERPRINT_MISMATCH', '提交与测试/审计版本不一致');
-      await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
+      let commit;
+      if (provisionalCommit) {
+        commit = provisionalCommit;
+      } else {
+        commit = await gitops.commitAll(worktree, commitMessage);
+        const committedTree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
+        if (commit.empty || committedTree !== testedHash) throw new PolicyError('COMMIT_FINGERPRINT_MISMATCH', '提交与测试/审计版本不一致');
+        await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
+      }
       const headCommit = await gitops.currentHead(worktree);
       const verification = {
         baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
