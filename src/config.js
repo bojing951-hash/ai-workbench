@@ -83,6 +83,8 @@ export function buildConfig(overrides = {}) {
       maxAttempts: int(env.MAX_ATTEMPTS, 2),
       maxAgentConcurrency: int(env.MAX_AGENT_CONCURRENCY, 2),
       minReserveTokens: int(env.MIN_RESERVE_TOKENS, 20_000),
+      // 缓存读取 token 按较低权重计入预算（原始用量仍完整展示；权重用于硬上限保护）
+      cacheTokenWeight: Number(env.CACHE_TOKEN_WEIGHT ?? 0.1),
       maxTokensPerRun: int(env.MAX_TOKENS_PER_RUN, 900_000),
       maxCostCnyPerRun: Number(env.MAX_COST_CNY_PER_RUN ?? 12),
       runWallClockMs: int(env.RUN_WALL_CLOCK_MS, 6 * 60 * 60 * 1000),
@@ -141,6 +143,7 @@ export function buildConfig(overrides = {}) {
       provider: str(env.AUDIT_PROVIDER, 'auto'),
       timeoutMs: int(env.AUDIT_TIMEOUT_MS, 300_000),
       maxDiffChars: int(env.AUDIT_MAX_DIFF_CHARS, 70_000),
+      maxTokens: int(env.AUDIT_MAX_TOKENS, 12_000),
       requireIndependent: toBool(env.AUDIT_REQUIRE_INDEPENDENT, true),
       allowSameFamily: toBool(env.AUDIT_ALLOW_SAME_FAMILY, false),
       maxChunks: int(env.AUDIT_MAX_CHUNKS, 6),

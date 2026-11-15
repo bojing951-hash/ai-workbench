@@ -171,7 +171,7 @@ async function callAuditOnce({ config, provider, prompt, acceptance, signal }) {
     model: provider.model,
     system: AUDIT_SYSTEM,
     messages: [{ role: 'user', content: prompt }],
-    maxTokens: 3500,
+    maxTokens: config.audit.maxTokens || 12000,
     temperature: 0,
     timeoutMs: config.audit.timeoutMs,
     signal,

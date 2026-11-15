@@ -36,7 +36,8 @@ export const RunStatus = Object.freeze({
 });
 
 export function remainingBudget(config, spent = {}) {
-  const tokens = config.budget.maxTotalTokens - Number(spent.tokens || 0);
+  const usedTokens = Number(spent.budgetTokens ?? spent.tokens ?? 0);
+  const tokens = config.budget.maxTotalTokens - usedTokens;
   const costCny = config.budget.maxCostCny - Number(spent.costCny || 0);
   return { tokens, costCny };
 }
@@ -237,7 +238,7 @@ export function assertProjectBudget({ config, project, run, totals, estimatedTok
     Number(runBudget.maxTokens || config.budget.maxTokensPerRun || Infinity),
     config.budget.maxTotalTokens,
   );
-  const usedTokens = Number(totals?.tokens || 0);
+  const usedTokens = Number(totals?.budgetTokens ?? totals?.tokens ?? 0);
   if (usedTokens + estimatedTokens > maxTokens) {
     throw new PolicyError('PROJECT_BUDGET_EXCEEDED', `项目/运行 token 预算超限（${usedTokens} + ${estimatedTokens} > ${maxTokens}）`);
   }

@@ -290,6 +290,11 @@ export function createApp({ config, store, orchestrator }) {
       }
     }
 
+    const taskRetryMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/retry-verification$/);
+    if (taskRetryMatch && method === 'POST') {
+      return sendJson(res, 200, { ok: true, data: await orchestrator.retryVerification(taskRetryMatch[1]) });
+    }
+
     const taskMatch = pathname.match(/^\/api\/tasks\/([^/]+)$/);
     if (taskMatch && method === 'GET') {
       const detail = orchestrator.taskDetail(taskMatch[1]);

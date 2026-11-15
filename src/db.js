@@ -872,8 +872,14 @@ export class Store {
       .prepare(`SELECT COALESCE(SUM(au.tokens_in),0) a, COALESCE(SUM(au.tokens_out),0) b, COALESCE(SUM(au.cost_cny),0) c
                 FROM audits au JOIN runs r ON r.id = au.run_id WHERE r.project_id = ?`)
       .get(projectId);
+    const tokensIn = Number(attempts.a) + Number(audits.a);
+    const tokensOut = Number(attempts.b) + Number(audits.b);
+    const tokensCache = Number(attempts.c);
     return {
-      tokens: Number(attempts.a) + Number(attempts.b) + Number(attempts.c) + Number(audits.a) + Number(audits.b),
+      tokens: tokensIn + tokensOut + tokensCache,
+      tokensIn,
+      tokensOut,
+      tokensCache,
       costCny: Number(attempts.d) + Number(audits.c),
     };
   }

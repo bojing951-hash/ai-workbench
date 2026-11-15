@@ -33,7 +33,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '1.0.0';
+const VERSION = '2.0.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
@@ -129,22 +129,38 @@ export class Orchestrator {
   }
 
   usage() {
-    return this.store.usageTotals();
+    const raw = this.store.usageTotals();
+    return this.weightUsage(raw);
+  }
+
+  weightUsage(raw) {
+    const cache = Number(raw.tokensCache || 0);
+    const weight = Number(this.config.budget.cacheTokenWeight ?? 0.1);
+    return {
+      ...raw,
+      // budgetTokens = 输入/输出/缓存写入 + 缓存读取 × 权重；原始 tokens 仍完整保留用于展示
+      budgetTokens: Number(raw.tokensIn || 0) + Number(raw.tokensOut || 0) + cache * weight,
+      cacheTokenWeight: weight,
+    };
   }
 
   budget() {
     const used = this.usage();
     const cfg = this.config.budget;
+    const effectiveUsed = Number(used.budgetTokens || used.tokens || 0);
     return {
       maxTokens: cfg.maxTotalTokens,
       usedTokens: used.tokens,
+      usedBudgetTokens: Math.round(effectiveUsed),
+      cacheTokenWeight: used.cacheTokenWeight,
       maxCostCny: cfg.maxCostCny,
       usedCostCny: Number(used.costCny.toFixed(4)),
-      remainingTokens: Math.max(0, cfg.maxTotalTokens - used.tokens),
+      remainingTokens: Math.max(0, cfg.maxTotalTokens - effectiveUsed),
       remainingCostCny: Math.max(0, cfg.maxCostCny - used.costCny),
-      tokensPercent: Math.min(100, Math.round((used.tokens / cfg.maxTotalTokens) * 1000) / 10),
+      tokensPercent: Math.min(100, Math.round((effectiveUsed / cfg.maxTotalTokens) * 1000) / 10),
       costPercent: Math.min(100, Math.round((used.costCny / cfg.maxCostCny) * 1000) / 10),
       breakdown: used,
+      note: '预算按 cacheTokenWeight 对缓存读取折算；原始 token 与成本同时展示',
     };
   }
 
@@ -277,6 +293,7 @@ export class Orchestrator {
     if (patch.allowedTestCommands !== undefined || patch.allowed_test_commands !== undefined) configPatch.allowed_test_commands = parseList(patch.allowedTestCommands ?? patch.allowed_test_commands);
     if (patch.testEnvAllowlist !== undefined || patch.test_env_allowlist !== undefined) configPatch.test_env_allowlist = parseList(patch.testEnvAllowlist ?? patch.test_env_allowlist);
     if (patch.agentPermission !== undefined || patch.agent_permission !== undefined) configPatch.agent_permission = patch.agentPermission ?? patch.agent_permission;
+    if (patch.testTimeoutMs !== undefined || patch.test_timeout_ms !== undefined) configPatch.test_timeout_ms = Number(patch.testTimeoutMs ?? patch.test_timeout_ms);
     if (patch.publish !== undefined) configPatch.publish = !!patch.publish;
     if (Object.keys(configPatch).length) mapped.config_json = { ...(project.config_json || {}), ...configPatch };
     return this.store.updateProject(projectId, mapped);
@@ -299,7 +316,12 @@ export class Orchestrator {
     if (busy) {
       throw new PolicyError('PROJECT_BUSY', `项目已有未完成的运行（${busy.id}，状态 ${busy.status}），同一项目同一时间只允许一个写入运行；请先恢复或取消它`);
     }
-    const projectUsage = this.store.usageForProject(project.id);
+    const projectUsageRaw = this.store.usageForProject(project.id);
+    const projectCache = Number(projectUsageRaw.tokensCache || 0);
+    const projectUsage = {
+      ...projectUsageRaw,
+      budgetTokens: Number(projectUsageRaw.tokens || 0) - projectCache + projectCache * Number(this.config.budget.cacheTokenWeight ?? 0.1),
+    };
     assertProjectBudget({
       config: this.config,
       project,
@@ -443,11 +465,17 @@ export class Orchestrator {
           assertRunWallClock(run, this.config.budget.runWallClockMs);
           this.assertBudget(8_000);
           const project = this.store.getProject(run.project_id);
+          const projectUsageRaw = this.store.usageForProject(run.project_id);
+          const projectCache = Number(projectUsageRaw.tokensCache || 0);
+          const projectUsage = {
+            ...projectUsageRaw,
+            budgetTokens: Number(projectUsageRaw.tokens || 0) - projectCache + projectCache * Number(this.config.budget.cacheTokenWeight ?? 0.1),
+          };
           assertProjectBudget({
             config: this.config,
             project,
             run,
-            totals: this.store.usageForProject(run.project_id),
+            totals: projectUsage,
             estimatedTokens: 8_000,
             estimatedCostCny: 0.05,
           });
@@ -523,9 +551,12 @@ export class Orchestrator {
         if (signal.aborted) throw new PolicyError('RUN_ABORTED', '运行已被取消');
         const currentRun = this.store.getRun(run.id) || run;
         assertRunWallClock(currentRun, this.config.budget.runWallClockMs);
+        const puRaw = this.store.usageForProject(project.id);
+        const puCache = Number(puRaw.tokensCache || 0);
+        const pu = { ...puRaw, budgetTokens: Number(puRaw.tokens || 0) - puCache + puCache * Number(this.config.budget.cacheTokenWeight ?? 0.1) };
         assertProjectBudget({
           config: this.config, project, run: currentRun,
-          totals: this.store.usageForProject(project.id), estimatedTokens: 10_000, estimatedCostCny: 0.05,
+          totals: pu, estimatedTokens: 10_000, estimatedCostCny: 0.05,
         });
         this.store.updateTask(task.id, { status: TaskStatus.CODING, attempt: attemptNo });
 
@@ -562,11 +593,9 @@ export class Orchestrator {
         let agentResult;
         try {
           const remaining = this.budget().remainingTokens;
-          const perTaskTokens = Math.min(
-            this.config.budget.maxTokensPerTask,
-            Math.max(15_000, remaining - 25_000),
-            Number(project.budget_json?.max_tokens_per_task || Infinity),
-          );
+          const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
+          const perTaskCap = projectTaskCap > 0 ? projectTaskCap : this.config.budget.maxTokensPerTask;
+          const perTaskTokens = Math.min(perTaskCap, Math.max(15_000, remaining - 25_000));
           agentResult = await this.deps.runAgent(agentId, {
             config: this.config,
             project,
@@ -666,7 +695,7 @@ export class Orchestrator {
         this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_started', message: `运行测试：${safeCommand}`, data: { command: safeCommand, testedHash } });
         const testRes = await execShell(safeCommand, {
           cwd: worktree,
-          timeoutMs: this.config.policy.testTimeoutMs,
+          timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
           logPath: path.join(logDir, `attempt-${attemptNo}-test.log`),
           env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandboxHome, 'test-home') }),
         });
@@ -1399,6 +1428,131 @@ export class Orchestrator {
       data: { verifiedSha, verification, localOnly: verification === 'LOCAL_VERIFIED' },
     });
     return updated;
+  }
+
+  /**
+   * 仅重试"验证/审计"阶段：复用已存在的任务 worktree，不重新调用 Coding Agent。
+   * 用于审计模型暂时不可用/审计空返回等场景；仍执行真实测试、独立审计与提交。
+   */
+  async retryVerification(taskId) {
+    const task = this.store.getTask(taskId);
+    if (!task) throw new PolicyError('TASK_NOT_FOUND', `任务不存在：${taskId}`);
+    if (!task.worktree_path || !fs.existsSync(task.worktree_path)) {
+      throw new PolicyError('WORKTREE_MISSING', '任务工作副本不存在，无法仅重试验证；请重新排队执行任务');
+    }
+    if (![TaskStatus.BLOCKED, TaskStatus.FAILED, TaskStatus.AUDITING, TaskStatus.TESTING].includes(task.status)) {
+      throw new PolicyError('TASK_STATE_INVALID', `任务当前状态为 ${task.status}，不能仅重试验证`);
+    }
+    const run = this.store.getRun(task.run_id);
+    const project = this.store.getProject(task.project_id);
+    if (!run || !project) throw new PolicyError('RUN_NOT_FOUND', '运行或项目不存在');
+    const worktree = task.worktree_path;
+    const baseCommit = task.base_commit || (await gitops.currentHead(worktree));
+    const logDir = this.logsDir(run.id, task.id);
+    ensureDir(logDir);
+    const sandboxHome = tmpHomeFor(this.config, run.id, task.id);
+    const protectedPaths = protectPathsForProject(project, this.config);
+    this.store.updateRun(run.id, { status: RunStatus.RUNNING, stop_reason: '', current_task_id: task.id });
+    this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'verification_retry_started', message: '复用现有工作副本，仅重试测试与独立审计' });
+    try {
+      await gitops.stageAll(worktree);
+      const testedHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
+      this.store.updateTask(task.id, { status: TaskStatus.TESTING, verification_json: { baseCommit, testedHash, verificationRetry: true } });
+      const testCommand = this.resolveTaskTestCommand(project, task);
+      const safeCommand = assertSafeTestCommand(testCommand, project);
+      this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_started', message: `运行测试：${safeCommand}`, data: { command: safeCommand, testedHash } });
+      const testRes = await execShell(safeCommand, {
+        cwd: worktree, timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
+        logPath: path.join(logDir, `verify-${Date.now()}-test.log`),
+        env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandboxHome, 'test-home') }),
+      });
+      const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr };
+      this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
+      await gitops.stageAll(worktree);
+      const afterHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
+      if (afterHash !== testedHash) throw new PolicyError('FINGERPRINT_MISMATCH', '测试期间工作树内容发生变化');
+      if (testRes.code !== 0) {
+        const reason = `测试失败（exit=${testRes.code}）：${tailLines(testRes.stdout || testRes.stderr || '', 40)}`;
+        this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason });
+        this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
+        this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_failed', level: 'warn', message: reason });
+        return { ok: false, reason };
+      }
+      this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_passed', message: `测试通过（重试验证，${Math.round(testRes.durationMs / 1000)}s）`, data: { testedHash } });
+
+      const fileEntries = await gitops.stagedFiles(worktree, baseCommit);
+      const changedFiles = fileEntries.map((f) => f.file);
+      const violations = protectedViolations(changedFiles, protectedPaths);
+      if (violations.length) {
+        await enforceProtectedPaths(worktree, violations);
+        throw new PolicyError('PROTECTED_PATH_VIOLATION', `受保护路径被修改：${violations.join(', ')}`);
+      }
+      const diff = await gitops.stagedDiff(worktree, baseCommit, { maxChars: 1_000_000 });
+      const diffStat = await gitops.diffStat(worktree, baseCommit);
+      const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
+      const lastAttempt = this.store.listAttempts(task.id).filter((a) => a.stage === 'coding').slice(-1)[0];
+      const coderFamily = coderFamilyFor(lastAttempt?.agent_kind || task.agent_kind || 'dsh', this.config);
+      this.store.updateTask(task.id, { status: TaskStatus.AUDITING });
+      this.assertBudget(8_000);
+      const audit = await this.deps.runAudit({
+        config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },
+        diff, diffStat, testResult, repoFiles, coderFamily,
+        versionInfo: { baseCommit, worktreeHash: testedHash, testedHash },
+      });
+      const auditStatus = audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL');
+      const auditRow = this.store.createAudit({
+        id: newId('aud'), runId: run.id, taskId: task.id, attemptNo: Number(task.attempt || 0) + 1,
+        provider: audit.provider, model: audit.model, verdict: audit.verdict, score: audit.score,
+        criteria: audit.criteria, findings: audit.findings, requiredFixes: audit.requiredFixes,
+        summary: audit.summary, tokensIn: audit.usage?.input || 0, tokensOut: audit.usage?.output || 0,
+        costCny: audit.costCny || 0, verificationStatus: auditStatus, evidenceHash: testedHash,
+        diffHash: hashText(diff), independence: audit.independence?.independent ? 'independent' : 'same-family',
+      });
+      this.store.addRunUsage(run.id, { tokens: summarizeUsage(audit.usage || {}).total, costCny: audit.costCny || 0 });
+      this.emit({
+        runId: run.id, projectId: project.id, taskId: task.id,
+        type: auditStatus === 'PASS' ? 'audit_passed' : auditStatus === 'UNKNOWN' ? 'audit_unknown' : 'audit_failed',
+        level: auditStatus === 'PASS' ? 'info' : 'warn', message: auditSummaryText({ ...audit, status: auditStatus }),
+        data: { provider: audit.provider, model: audit.model, status: auditStatus, criteria: audit.criteria, requiredFixes: audit.requiredFixes, unknownReasons: audit.unknownReasons },
+      });
+      if (auditStatus !== 'PASS') {
+        const reason = auditStatus === 'UNKNOWN' ? `审计 UNKNOWN：${(audit.unknownReasons || []).join('；')}` : `审计未通过：${(audit.requiredFixes || []).slice(0, 4).join('；')}`;
+        this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason });
+        this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
+        return { ok: false, reason, auditStatus };
+      }
+      this.store.updateTask(task.id, { status: TaskStatus.COMMITTING });
+      const planBranch = `wb/plan-${run.id.slice(-6)}`;
+      const commitMessage = [
+        `feat(task-${task.seq}): ${task.title}`, '',
+        ...(task.acceptance_json || []).map((a) => `- 验收：${a}`), '',
+        `审计：${audit.provider}/${audit.model} PASS（得分 ${audit.score}）`,
+        `测试：${safeCommand} 通过（指纹 ${testedHash.slice(0, 12)}）`,
+        '生成：AI 开发工作台 v2.0',
+      ].join('\n');
+      const commit = await gitops.commitAll(worktree, commitMessage);
+      const committedTree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
+      if (commit.empty || committedTree !== testedHash) throw new PolicyError('COMMIT_FINGERPRINT_MISMATCH', '提交与测试/审计版本不一致');
+      await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
+      const headCommit = await gitops.currentHead(worktree);
+      const verification = {
+        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand,
+        auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
+        auditScore: audit.score, independence: audit.independence, agent: lastAttempt?.agent_kind || '',
+        verificationRetry: true,
+      };
+      this.store.updateTask(task.id, { status: TaskStatus.PASSED, head_commit: headCommit, verification_json: verification, blocked_reason: '', result_json: { ...verification, criteria: audit.criteria } });
+      await gitops.removeWorktree(project.local_path, worktree).catch(() => {});
+      this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'task_passed', message: `任务通过（仅重试验证）：${task.title}（commit ${headCommit.slice(0, 8)}，审计 ${audit.provider} PASS）`, data: { commit: headCommit, planBranch, auditStatus, testedHash } });
+      this.kick(run.id);
+      return { ok: true, commit: headCommit };
+    } catch (err) {
+      const reason = redact(`验证重试失败：${err?.message || err}`, this.config);
+      this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason });
+      this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
+      this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'audit_error', level: 'error', message: reason });
+      return { ok: false, reason };
+    }
   }
 
   // ============================================================

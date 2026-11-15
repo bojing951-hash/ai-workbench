@@ -262,7 +262,8 @@ export class WriteRateLimiter {
 }
 
 export function tmpHomeFor(config, runId, taskId) {
-  const dir = path.join(config.paths.dataDir, 'sandboxes', runId || 'run', taskId || 'task', 'home');
+  // 必须放在宿主临时目录（不在 Git 仓库内），否则项目测试会把"临时目录"误判为在仓库中
+  const dir = path.join(os.tmpdir(), 'ai-workbench-sandboxes', runId || 'run', taskId || 'task', 'home');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

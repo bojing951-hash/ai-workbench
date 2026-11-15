@@ -2060,6 +2060,7 @@ function renderBudget(budget) {
   }
   const maxTokens = toNumber(data.maxTokens);
   const usedTokens = toNumber(data.usedTokens, toNumber(data.breakdown?.tokens));
+  const budgetUsed = toNumber(data.usedBudgetTokens, usedTokens);
   const maxCost = toNumber(data.maxCostCny);
   const usedCost = toNumber(data.usedCostCny, toNumber(data.breakdown?.costCny));
   const tokensPercent = Number.isFinite(Number(data.tokensPercent))
@@ -2074,8 +2075,8 @@ function renderBudget(budget) {
       : 0;
 
   if (dom.budgetTokensValue) {
-    dom.budgetTokensValue.textContent = `${fmtTokens(usedTokens)} / ${fmtTokens(maxTokens)} · ${fmtPercent(tokensPercent)}`;
-    dom.budgetTokensValue.title = `已用 ${fmtTokens(usedTokens)} / 上限 ${fmtTokens(maxTokens)} tokens`;
+    dom.budgetTokensValue.textContent = `${fmtTokens(budgetUsed)} / ${fmtTokens(maxTokens)} · ${fmtPercent(tokensPercent)}`;
+    dom.budgetTokensValue.title = `预算折算已用 ${fmtTokens(budgetUsed)} / 上限 ${fmtTokens(maxTokens)} tokens；原始用量 ${fmtTokens(usedTokens)}（缓存读取按 ${data.cacheTokenWeight ?? 0.1} 折算）`;
   }
   if (dom.budgetCostValue) {
     dom.budgetCostValue.textContent = `${fmtCostCny(usedCost, maxCost)} / ¥${fmtCost(maxCost)} · ${fmtPercent(costPercent)}`;
@@ -2090,7 +2091,8 @@ function renderBudget(budget) {
     const breakdown = data.breakdown || {};
     dom.budgetWidget.title = [
       '全局预算消耗（所有运行累计）',
-      `tokens：${fmtTokens(usedTokens)} / ${fmtTokens(maxTokens)}`,
+      `预算折算 tokens：${fmtTokens(budgetUsed)} / ${fmtTokens(maxTokens)}`,
+      `原始 tokens：${fmtTokens(usedTokens)}（缓存按 ${data.cacheTokenWeight ?? 0.1} 折算）`,
       `tokens 明细：输入 ${fmtTokens(breakdown.tokensIn)} · 输出 ${fmtTokens(breakdown.tokensOut)} · 缓存 ${fmtTokens(breakdown.tokensCache)}`,
       `成本：${fmtCostCny(usedCost)} / ¥${fmtCost(maxCost)}`,
       `剩余：${fmtTokens(data.remainingTokens)} tokens · ¥${fmtCost(data.remainingCostCny)}`,
