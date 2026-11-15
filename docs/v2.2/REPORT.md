@@ -4,7 +4,7 @@
 - 范围：**仅 AI Workbench 自身**；未访问/操作 A、B 项目（无 A/B API 请求、无进程操作、无文件/分支/推送操作）
 - 版本：v2.2.0（分支 `v2.2.0`）
 - 测试：**198/198**（v2.1 的 186 项全部保留，新增 12 项）
-- GitHub：v2.2 Draft PR（见最终交付），**未合并 main、未部署生产**
+- GitHub：v2.2 Draft PR #4（draft，**未合并 main、未部署生产**）
 
 ## 1. 任务一：真正的执行环境隔离
 
@@ -96,9 +96,9 @@ Loop `loop_mwhwhz3z34912b0f`（W 隔离克隆，3 个真实任务，queue 模式
 
 ## 4. 任务四：工作台自主开发自身（候选流程）
 
-- 稳定控制器未替换；候选目录独立、独立数据目录/端口；候选副本排除 `data/`、`projects/`、`.env`、`.git`，不能访问 A/B。
-- 离线候选测试 PASS（198）；隔离实例冒烟 PASS（version=2.2.0）；真实 E2E 任务 awaiting_acceptance / LOCAL_VERIFIED。
-- 最终证据（最终提交后重跑）：见 `demo/evidence/upgrade-*.json` 与最终 PR。
+- 稳定控制器未替换；候选目录独立、独立数据目录/端口；候选副本**初始**排除 `data/`、`projects/`、`.env`、`.git`，不能访问 A/B。候选运行后自身创建的 `projects/phase1-taskvault` 与 `data/` 是候选实例的 demo 数据，不是从稳定工作台或 A/B 复制。
+- 最终候选：`cand_mwhx9uwz_l3gw`；离线测试 PASS（198）；隔离实例冒烟 PASS（version=2.2.0）；真实 E2E 任务 awaiting_acceptance / LOCAL_VERIFIED。
+- 证据：`demo/evidence/upgrade-1794752525090.json`、`demo/evidence/v2.2-final-1794752580.json`。
 - 未自动合并/部署。
 
 ## 5. 交付与恢复

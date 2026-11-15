@@ -1,0 +1,462 @@
+{
+  "type": "v2.2-final",
+  "at": "2026-11-15T14:23:00.220217+00:00",
+  "version": "2.2.0",
+  "tests": {
+    "total": 198,
+    "pass": 198,
+    "new": 12
+  },
+  "budget": {
+    "maxTokens": 3000000,
+    "usedTokens": 21459273,
+    "usedBudgetTokens": 2927688,
+    "cacheTokenWeight": 0.1,
+    "glmUnlimited": true,
+    "exemptProviders": [
+      "glm"
+    ],
+    "glm": {
+      "tokensIn": 349779,
+      "tokensOut": 168622,
+      "tokensCache": 2001536,
+      "tokens": 2519937,
+      "costCny": 14.348096159999999,
+      "known": true
+    },
+    "nonGlm": {
+      "tokensIn": 857741,
+      "tokensOut": 290875,
+      "tokensCache": 17790720,
+      "costCny": 6.1957564704,
+      "names": [
+        "deepseek"
+      ],
+      "tokens": 18939336
+    },
+    "byProvider": {
+      "deepseek": {
+        "tokensIn": 857741,
+        "tokensOut": 290875,
+        "tokensCache": 17790720,
+        "tokens": 18939336,
+        "costCny": 6.1957564704,
+        "known": true
+      },
+      "glm": {
+        "tokensIn": 349779,
+        "tokensOut": 168622,
+        "tokensCache": 2001536,
+        "tokens": 2519937,
+        "costCny": 14.348096159999999,
+        "known": true
+      }
+    },
+    "maxCostCny": 30,
+    "usedCostCny": 20.5439,
+    "usedBudgetCostCny": 6.1958,
+    "remainingTokens": 72312,
+    "remainingCostCny": 23.8042435296,
+    "tokensPercent": 97.6,
+    "costPercent": 20.7,
+    "breakdown": {
+      "tokensIn": 1207520,
+      "tokensOut": 459497,
+      "tokensCache": 19792256,
+      "tokens": 21459273,
+      "costCny": 20.5438526304,
+      "byProvider": {
+        "deepseek": {
+          "tokensIn": 857741,
+          "tokensOut": 290875,
+          "tokensCache": 17790720,
+          "tokens": 18939336,
+          "costCny": 6.1957564704,
+          "known": true
+        },
+        "glm": {
+          "tokensIn": 349779,
+          "tokensOut": 168622,
+          "tokensCache": 2001536,
+          "tokens": 2519937,
+          "costCny": 14.348096159999999,
+          "known": true
+        }
+      },
+      "budgetTokens": 2927688,
+      "budgetCostCny": 6.1957564704,
+      "glmUnlimited": true,
+      "exemptProviders": [
+        "glm"
+      ],
+      "glm": {
+        "tokensIn": 349779,
+        "tokensOut": 168622,
+        "tokensCache": 2001536,
+        "tokens": 2519937,
+        "costCny": 14.348096159999999,
+        "known": true
+      },
+      "nonGlm": {
+        "tokensIn": 857741,
+        "tokensOut": 290875,
+        "tokensCache": 17790720,
+        "costCny": 6.1957564704,
+        "names": [
+          "deepseek"
+        ],
+        "tokens": 18939336
+      },
+      "cacheTokenWeight": 0.1
+    },
+    "note": "仅当实际模型供应商被识别为 GLM 时豁免工作台 token/费用上限；未知供应商不豁免；其余模型仍受原预算（缓存按权重折算）约束",
+    "identityPolicy": "provider identity: glm(exempt) / deepseek / openai / anthropic / unknown(not exempt)"
+  },
+  "isolation": {
+    "kernelIsolation": "docker",
+    "docker": {
+      "available": true,
+      "engine": "docker",
+      "version": "29.9.2",
+      "reason": ""
+    },
+    "sandboxExec": {
+      "available": false,
+      "engine": "sandbox-exec",
+      "reason": "sandbox-exec: sandbox_apply: Operation not permitted\n"
+    },
+    "container": {
+      "docker": {
+        "available": true,
+        "version": "29.9.2",
+        "reason": ""
+      },
+      "image": {
+        "name": "ai-workbench-runtime:2.2",
+        "available": true,
+        "id": "sha256:41725418634a86cc2d6018793233aa42143ffcdad08bd8e4e4ec4b6229e64e5d",
+        "reason": ""
+      },
+      "testExecution": true,
+      "agentExecution": true,
+      "agentBackends": [
+        "claude"
+      ],
+      "network": {
+        "test": "none",
+        "agent": "bridge"
+      },
+      "security": [
+        "--network none(test)",
+        "--cap-drop ALL",
+        "no-new-privileges",
+        "read-only rootfs",
+        "tmpfs /tmp /run",
+        "minimal worktree mount",
+        "no docker.sock",
+        "non-root host uid",
+        "pids/memory/cpu limits",
+        "--rm + timeout cleanup"
+      ],
+      "note": "Docker 容器执行可用（测试/Claude Agent）"
+    }
+  },
+  "executor": {
+    "isolation": {
+      "platform": "darwin",
+      "kernelIsolation": "docker",
+      "kernelAvailable": true,
+      "docker": {
+        "available": true,
+        "engine": "docker",
+        "version": "29.9.2",
+        "reason": ""
+      },
+      "sandboxExec": {
+        "available": false,
+        "engine": "sandbox-exec",
+        "reason": "sandbox-exec: sandbox_apply: Operation not permitted\n"
+      },
+      "restrictedRuntime": {
+        "available": true,
+        "controls": [
+          "per-run/task 独立 HOME 与 TMPDIR（位于仓库外）",
+          "Agent/测试最小环境变量；不继承 GITHUB_TOKEN/无关模型 Key",
+          "Claude Code 工具白名单；DSH workspace-write；危险权限需显式开关",
+          "测试命令 allowlist；工作副本/产物路径边界校验",
+          "每次运行独立 Git worktree + 计划分支；不同项目独立目录"
+        ],
+        "limitations": [
+          "无内核级文件系统/网络隔离",
+          "DSH/Claude 仍以宿主用户身份运行；无法阻止读取宿主同用户可读文件",
+          "Docker/sandbox-exec 不可用时不能宣称强隔离"
+        ]
+      },
+      "note": "检测到 Docker daemon，可在配置允许时使用容器执行"
+    },
+    "container": {
+      "testExecution": true,
+      "agentExecution": true,
+      "docker": {
+        "available": true,
+        "version": "29.9.2",
+        "reason": ""
+      },
+      "image": {
+        "name": "ai-workbench-runtime:2.2",
+        "available": true,
+        "id": "sha256:41725418634a86cc2d6018793233aa42143ffcdad08bd8e4e4ec4b6229e64e5d",
+        "reason": ""
+      },
+      "agentBackends": [
+        "claude"
+      ],
+      "network": {
+        "test": "none",
+        "agent": "bridge"
+      },
+      "security": [
+        "--network none(test)",
+        "--cap-drop ALL",
+        "no-new-privileges",
+        "read-only rootfs",
+        "tmpfs /tmp /run",
+        "minimal worktree mount",
+        "no docker.sock",
+        "non-root host uid",
+        "pids/memory/cpu limits",
+        "--rm + timeout cleanup"
+      ],
+      "note": "Docker 容器执行可用（测试/Claude Agent）"
+    },
+    "fallback": {
+      "mode": "restricted",
+      "available": true,
+      "note": "容器执行不可用或项目未要求容器时，测试/Agent 在宿主受限独立运行环境执行（独立 HOME/TMPDIR、最小环境变量，无内核级隔离）；项目显式要求 docker 隔离时按 fail-closed 阻塞，不降级提权"
+    },
+    "note": "GET /api/executor 汇报执行能力：isolation 为宿主隔离能力快照，container.testExecution / container.agentExecution 表示在 Docker 容器内执行测试 / Claude Agent 的可用性（Docker daemon 与运行时镜像齐备）。探测复用 /api/isolation 同源实现，不新增依赖。"
+  },
+  "loops": [
+    {
+      "id": "loop_mwhwhz3z34912b0f",
+      "status": "completed",
+      "mode": "queue",
+      "round": 3,
+      "max_rounds": 3,
+      "goal": "按队列完成三个 W 自身可靠性相关开发任务；每轮真实编码/测试/独立审计；完成一轮自动下一轮，达到 3 轮停止。",
+      "stop_reason": "已完成 3 轮",
+      "history_json": [
+        {
+          "round": 1,
+          "runId": "run_mwhwi01gde4682c4",
+          "task": {
+            "title": "[REL-1] 新增 GET /api/executor 执行能力接口",
+            "description": "在 src/server.js 新增 GET /api/executor，返回 isolation 能力与容器 test/agent 执行可用性；更新 docs/API.md。不修改测试。"
+          },
+          "status": "LOCAL_VERIFIED",
+          "commit": "c28b7b2e65b48c0df728f0dc2d6f0453b7cd751a",
+          "branch": "wb/plan-4682c4",
+          "audit": [
+            {
+              "provider": "deepseek",
+              "verdict": "pass",
+              "score": 88
+            }
+          ],
+          "finishedAt": "2026-11-15T14:02:52.585Z"
+        },
+        {
+          "round": 2,
+          "runId": "run_mwhwmmzh2bad58df",
+          "task": {
+            "title": "[REL-2] Web 界面展示执行隔离状态",
+            "description": "在 web/index.html/app.js/styles.css 增加执行隔离状态徽章，从 /api/isolation 读取 Docker/容器/受限运行状态；空状态有提示；不修改测试。"
+          },
+          "status": "LOCAL_VERIFIED",
+          "commit": "733442910c40104199c85c0b838a0d55b5b735d0",
+          "branch": "wb/plan-ad58df",
+          "audit": [
+            {
+              "provider": "glm",
+              "verdict": "pass",
+              "score": 92
+            }
+          ],
+          "finishedAt": "2026-11-15T14:13:12.102Z"
+        },
+        {
+          "round": 3,
+          "runId": "run_mwhwzx0e02815205",
+          "task": {
+            "title": "[REL-3] 新增 CLI isolation 子命令",
+            "description": "在 bin/workbench.js 增加 isolation 子命令，通过 HTTP API 展示隔离能力/容器可用性；更新 docs/USAGE.md。不修改测试。"
+          },
+          "status": "LOCAL_VERIFIED",
+          "commit": "8d773765c029e2542671ea35dc8f2d93fce93207",
+          "branch": "wb/plan-815205",
+          "audit": [
+            {
+              "provider": "glm",
+              "verdict": "pass",
+              "score": 90
+            }
+          ],
+          "finishedAt": "2026-11-15T14:17:51.196Z"
+        }
+      ]
+    },
+    {
+      "id": "loop_mwhx6pz3d6b1c474",
+      "status": "completed",
+      "mode": "queue",
+      "round": 0,
+      "max_rounds": 2,
+      "goal": "G 无有效任务时停止，不制造任务",
+      "stop_reason": "队列已空（没有伪造任务）",
+      "history_json": []
+    },
+    {
+      "id": "loop_mwhx6t32acb5f0a9",
+      "status": "paused",
+      "mode": "queue",
+      "round": 0,
+      "max_rounds": 1,
+      "goal": "H 授权/能力阻塞时正确停止",
+      "stop_reason": "第 1 轮运行 run_mwhx6u0h60a14371 状态为 paused：任务「[BLOCK] 容器 Agent 不支持 DSH 时应阻塞」未通过：项目要求容器 Agent，但当前 Agent dsh 不支持容器执行（仅 Claude Code）；未降级为宿主执行",
+      "history_json": []
+    }
+  ],
+  "loopRuns": [
+    {
+      "loopId": "loop_mwhwhz3z34912b0f",
+      "round": 1,
+      "runId": "run_mwhwi01gde4682c4",
+      "commit": "c28b7b2e65b48c0df728f0dc2d6f0453b7cd751a",
+      "task": "[REL-1] 新增 GET /api/executor 执行能力接口",
+      "status": "LOCAL_VERIFIED",
+      "audit": [
+        {
+          "provider": "deepseek",
+          "verdict": "pass",
+          "score": 88
+        }
+      ]
+    },
+    {
+      "loopId": "loop_mwhwhz3z34912b0f",
+      "round": 2,
+      "runId": "run_mwhwmmzh2bad58df",
+      "commit": "733442910c40104199c85c0b838a0d55b5b735d0",
+      "task": "[REL-2] Web 界面展示执行隔离状态",
+      "status": "LOCAL_VERIFIED",
+      "audit": [
+        {
+          "provider": "glm",
+          "verdict": "pass",
+          "score": 92
+        }
+      ]
+    },
+    {
+      "loopId": "loop_mwhwhz3z34912b0f",
+      "round": 3,
+      "runId": "run_mwhwzx0e02815205",
+      "commit": "8d773765c029e2542671ea35dc8f2d93fce93207",
+      "task": "[REL-3] 新增 CLI isolation 子命令",
+      "status": "LOCAL_VERIFIED",
+      "audit": [
+        {
+          "provider": "glm",
+          "verdict": "pass",
+          "score": 90
+        }
+      ]
+    }
+  ],
+  "containerE2E": {
+    "runId": "run_mwhwfr2v37fcbdab",
+    "status": "awaiting_acceptance",
+    "verification": "LOCAL_VERIFIED",
+    "verifiedSha": "4499515399e91fcf17986893c4d69804671d1573",
+    "tasks": [
+      {
+        "title": "在 Docker 容器隔离环境中用 Claude Code 创建 hello.txt，并通过真实容器测试命令验证内容。",
+        "status": "passed",
+        "commit": "4499515399e91fcf17986893c4d69804671d1573",
+        "audits": [
+          {
+            "provider": "deepseek",
+            "verdict": "pass",
+            "status": "PASS",
+            "score": 100
+          }
+        ]
+      }
+    ]
+  },
+  "candidate": {
+    "type": "self-upgrade-candidate-validation",
+    "at": "2026-11-15T14:22:05.090Z",
+    "candidateId": "cand_mwhx9uwz_l3gw",
+    "candidateDir": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhx9uwz_l3gw",
+    "sourceRoot": "/Users/cast/Downloads/开发工作台",
+    "tests": {
+      "ok": true,
+      "code": 0,
+      "durationMs": 3930,
+      "logPath": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhx9uwz_l3gw/candidate-tests.log"
+    },
+    "smoke": {
+      "ok": true,
+      "httpStatus": 200,
+      "version": "2.2.0",
+      "projects": 0,
+      "agents": [
+        "dsh",
+        "claude",
+        "custom"
+      ],
+      "dataDir": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhx9uwz_l3gw/candidate-data",
+      "port": 58136
+    },
+    "realE2E": {
+      "runId": "run_mwhx9ymad3373c9b",
+      "status": "awaiting_acceptance",
+      "verificationStatus": "LOCAL_VERIFIED",
+      "tasks": [
+        {
+          "seq": 1,
+          "status": "passed",
+          "attempts": 1,
+          "audits": [
+            "pass"
+          ]
+        }
+      ],
+      "stopReason": "部分发布动作待授权：项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR"
+    },
+    "passed": true,
+    "stableInstanceUnaffected": true,
+    "note": "候选版本验证通过后才允许创建升级 PR；当前脚本不自动替换运行实例、不合并主分支。"
+  },
+  "containerImage": "ai-workbench-runtime:2.2@sha256:41725418634a86cc2d6018793233aa42143ffcdad08bd8e4e4ec4b6229e64e5d",
+  "abZeroInterference": {
+    "statement": "本轮未对 A/B 发起 API 请求、进程操作、文件/分支修改、推送或测试；所有运行只针对 W 项目/隔离克隆。A/B 登记信息仅保留，未读取其运行状态。",
+    "candidateInitialCopyExcludes": [
+      "data/",
+      "projects/",
+      ".env",
+      ".git"
+    ],
+    "candidateRuntimeCreatedOnly": [
+      "projects/phase1-taskvault（候选实例自己的 demo 项目）",
+      "data/（候选实例自己的运行数据）"
+    ],
+    "note": "候选目录中的 projects/data 是候选实例运行 E2E 时自行创建，不是从稳定工作台或 A/B 复制；候选启动前副本不含 projects/data。"
+  },
+  "notes": [
+    "GLM 2.52M tokens/¥14.35 单列且不受内部预算；DeepSeek 预算 2.927M/3M 已接近耗尽",
+    "容器 Agent/测试真实运行 PASS；Agent 网络 egress allowlist 未实现=UNKNOWN/PARTIAL",
+    "三轮循环 commit 唯一且均审计 PASS；SIGKILL 恢复；round2/3 由 Supervisor 修复后测试审计（自主率 1/3）"
+  ]
+}
