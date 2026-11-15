@@ -1,0 +1,106 @@
+{
+  "type": "v2.5-product-delivery",
+  "at": "2026-11-15T18:24:54.131Z",
+  "product": {
+    "name": "Consumption Decision Lab",
+    "releaseBranch": "release/v0.1.0",
+    "releaseTag": "v0.1.0",
+    "codeCommit": "1ad754d1",
+    "docsCommit": "96bff5e",
+    "bundle": "demo/evidence/consumption-decision-lab-v0.1.0.bundle",
+    "screenshots": [
+      "demo/evidence/cdl-home.png",
+      "demo/evidence/cdl-profile.png",
+      "demo/evidence/cdl-purchase.png",
+      "demo/evidence/cdl-mobile.png"
+    ]
+  },
+  "workbench": {
+    "version": "2.5.0",
+    "projectId": "proj_mwi251atbd752de4",
+    "loopId": "loop_mwi5mmjf556742e6",
+    "runId": "run_mwi5mngy58722742",
+    "taskId": "task_mwhk2xqm42c6f160",
+    "taskStatus": "passed",
+    "loopStatus": "completed",
+    "audits": [
+      {
+        "id": "aud_mwi3k3vw34c26554",
+        "verdict": "pass",
+        "verification_status": "PASS",
+        "score": 100,
+        "tokens_in": 23578,
+        "tokens_out": 11276,
+        "cost_cny": 0.10645608960000001,
+        "provider_source": "dsh-cli",
+        "budget_scope": "project_audit",
+        "raw_path": "",
+        "created_at": "2026-11-15T17:16:53.037Z"
+      },
+      {
+        "id": "aud_mwi3r4ncf932b560",
+        "verdict": "pass",
+        "verification_status": "PASS",
+        "score": 84,
+        "tokens_in": 23217,
+        "tokens_out": 19590,
+        "cost_cny": 0.12926995200000002,
+        "provider_source": "dsh-cli",
+        "budget_scope": "project_audit",
+        "raw_path": "",
+        "created_at": "2026-11-15T17:22:20.618Z"
+      },
+      {
+        "id": "aud_mwi5lxiq85225c83",
+        "verdict": "fail",
+        "verification_status": "UNKNOWN",
+        "score": 90,
+        "tokens_in": 49154,
+        "tokens_out": 29640,
+        "cost_cny": 0.3158660736000001,
+        "provider_source": "dsh-cli",
+        "budget_scope": "project_audit",
+        "raw_path": "",
+        "created_at": "2026-11-15T18:14:17.330Z"
+      },
+      {
+        "id": "aud_mwi5uzmi8de673ca",
+        "verdict": "pass",
+        "verification_status": "PASS",
+        "score": 100,
+        "tokens_in": 51017,
+        "tokens_out": 27753,
+        "cost_cny": 0.34983587520000003,
+        "provider_source": "dsh-cli",
+        "budget_scope": "project_audit",
+        "raw_path": "",
+        "created_at": "2026-11-15T18:21:19.963Z"
+      }
+    ],
+    "auditBudget": {
+      "tokens": 235225,
+      "costCny": 0.9014279904000001,
+      "calls": 4
+    },
+    "auditBudgetLimit": 30,
+    "auditProvider": "DeepSeek Harness CLI",
+    "note": "DSH uses existing DeepSeek API key; actual usage tracked project-scoped, cost estimated"
+  },
+  "tests": {
+    "unit": "9/9",
+    "build": "PASS",
+    "playwrightDesktop": "PASS",
+    "playwrightMobile": "PASS",
+    "workbench": "206/206"
+  },
+  "constraints": {
+    "aB": "未访问/修改 A/B",
+    "manualProductCode": "0（产品源码全部由 Claude Code/GLM 生成）",
+    "merge": "未合并 Workbench 主分支/未部署",
+    "remoteProductPr": "BLOCKED 产品仓库无远端授权"
+  },
+  "fencing": {
+    "status": "NOT_IMPLEMENTED",
+    "note": "项目/run SQLite 租约与恢复对账已实现；Fencing Token 尚未实现，未声称完成"
+  }
+}

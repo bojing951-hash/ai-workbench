@@ -37,7 +37,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
@@ -416,6 +416,8 @@ export class Orchestrator {
     if (patch.lowBudgetFinalize !== undefined || patch.low_budget_finalize !== undefined) configPatch.low_budget_finalize = patch.lowBudgetFinalize === true || patch.low_budget_finalize === true;
     if (patch.supervisorManaged !== undefined || patch.supervisor_managed !== undefined) configPatch.supervisor_managed = patch.supervisorManaged === true || patch.supervisor_managed === true;
     if (patch.auditBudget !== undefined || patch.audit_budget !== undefined) configPatch.audit_budget = patch.auditBudget ?? patch.audit_budget;
+    if (patch.agentAllowedTools !== undefined || patch.agent_allowed_tools !== undefined) configPatch.agent_allowed_tools = String(patch.agentAllowedTools ?? patch.agent_allowed_tools);
+    if (patch.agentDisallowedTools !== undefined || patch.agent_disallowed_tools !== undefined) configPatch.agent_disallowed_tools = String(patch.agentDisallowedTools ?? patch.agent_disallowed_tools);
     if (patch.publish !== undefined) configPatch.publish = !!patch.publish;
     if (Object.keys(configPatch).length) mapped.config_json = { ...(project.config_json || {}), ...configPatch };
     return this.store.updateProject(projectId, mapped);
@@ -1152,7 +1154,7 @@ export class Orchestrator {
         const actualAuditProvider = auditIdentity.known ? auditIdentity.provider : 'unknown';
         const auditRow = this.store.createAudit({
           id: newId('aud'), runId: run.id, taskId: task.id, attemptNo,
-          provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: auditIdentity.source, budgetScope: this.isDshAuditProject(project) ? 'project_audit' : 'global', model: audit.model,
+          provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: audit.providerSource || auditIdentity.source, budgetScope: this.isDshAuditProject(project) ? 'project_audit' : 'global', model: audit.model,
           verdict: audit.verdict, score: audit.score,
           criteria: audit.criteria, findings: audit.findings, requiredFixes: audit.requiredFixes,
           summary: audit.summary,
@@ -1939,7 +1941,7 @@ export class Orchestrator {
       const actualAuditProvider = auditIdentity.known ? auditIdentity.provider : 'unknown';
       const auditRow = this.store.createAudit({
         id: newId('aud'), runId: run.id, taskId: task.id, attemptNo: Number(task.attempt || 0) + 1,
-        provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: auditIdentity.source, budgetScope: this.isDshAuditProject(project) ? 'project_audit' : 'global', model: audit.model, verdict: audit.verdict, score: audit.score,
+        provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: audit.providerSource || auditIdentity.source, budgetScope: this.isDshAuditProject(project) ? 'project_audit' : 'global', model: audit.model, verdict: audit.verdict, score: audit.score,
         criteria: audit.criteria, findings: audit.findings, requiredFixes: audit.requiredFixes,
         summary: audit.summary, tokensIn: audit.usage?.input || 0, tokensOut: audit.usage?.output || 0,
         costCny: audit.costCny || 0, verificationStatus: auditStatus, evidenceHash: testedHash,

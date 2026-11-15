@@ -42,6 +42,12 @@
 - **关键可靠性根因修复**：任务 `verification_json` 指数膨胀（Invalid string length）、低预算 finalize 阻塞、GLM 身份/预算、容器执行保持。
 - 验收：5 个冻结任务 5/5 自主完成、10/10 测试、5/5 独立审计、2/2 故障恢复；**严格 24h 窗口未执行，24h 验收 FAIL/UNKNOWN**。详见 [v2.3 报告](docs/v2.3/REPORT.md)、[验收矩阵](docs/v2.3/ACCEPTANCE-MATRIX.md)。
 
+## 0.5 v2.5 新增（真实产品交付）
+
+- **Consumption Decision Lab** 真实 Web 产品：Claude Code/GLM 编码，冻结测试/build/真实浏览器验收，DSH 只读独立审计 PASS 100；详见 [v2.5 报告](docs/v2.5/REPORT.md) 与产品源码 `projects/consumption-decision-lab`（release/v0.1.0）。
+- **DSH 审计适配器**：真实 CLI、只读独立工作区、预审计 commit 绑定、逐条证据；项目级 ¥30 审计预算独立核算。
+- 已知未完成：Fencing Token、24h 连续验收；不标 PASS。
+
 ## 0.4 v2.4 新增（长时间无人监督运行）
 
 - **独立 Supervisor**：launchd/systemd + 守护脚本；进程退出/健康无响应检测、指数退避/熔断、崩溃记录、健康恢复后自动对账/续跑受管任务。

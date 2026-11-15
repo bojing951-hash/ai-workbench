@@ -192,3 +192,14 @@ GitHub 真实结果（API 复核）：
 - 独立 Supervisor 实测：Workbench SIGKILL 自动重启并恢复受管 run/loop（无人 resume/改码），任务测试+审计+commit 完成；健康无响应 SIGSTOP 自动重启。修复 Supervisor 重复重启竞态。
 - Durable 租约/对账/幂等测试通过；Provider-aware 审计预检在审计预算不足时编码前阻塞。
 - **24h 验收：`24H_AUTONOMY_NOT_VERIFIED`**（未执行完整 24h；非 GLM 审计预算剩 9,869，不得提升授权）。详见 `docs/v2.4/REPORT.md`。
+
+
+---
+
+# v2.5.0 产品交付追加（2026-11-16）
+
+- Workbench 回归 **206/206**。
+- 消费产品冻结测试：9/9 unit + tsc/build + Playwright desktop/mobile 全通过。
+- DSH 独立审计最终 **PASS 100 / commit 1ad754d1**；项目级审计预算 4 次、235,225 tokens、估算 ¥0.9014 / ¥30。
+- 真实失败与恢复：Agent 无进展/超时、UI 测试失败、DSH UNKNOWN、预算误报、Playwright headless-shell 缺陷；均已记录并修正，未伪造 PASS。
+- 未完成：Fencing Token（FAIL/NOT_IMPLEMENTED）、24h 连续验收（NOT VERIFIED）。

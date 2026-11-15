@@ -151,7 +151,7 @@ export function resolveAgentPermission(config, agentId, project = null) {
         '工作台默认禁止 Claude Code bypassPermissions；请使用 acceptEdits + 工具白名单，或由人工明确开启 WORKBENCH_ALLOW_UNSAFE_AGENT=1',
       );
     }
-    return { mode: requestedClaude, allowedTools: config.agents.claude.allowedTools, disallowedTools: config.agents.claude.disallowedTools, allowShell: false };
+    return { mode: requestedClaude, allowedTools: projectConfig.agent_allowed_tools || config.agents.claude.allowedTools, disallowedTools: projectConfig.agent_disallowed_tools !== undefined ? projectConfig.agent_disallowed_tools : config.agents.claude.disallowedTools, allowShell: false };
   }
 
   return { mode: 'restricted', allowShell: false };
