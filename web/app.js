@@ -249,6 +249,8 @@ const app = {
   modal: { open: false, type: '', onClose: null, confirmFinish: null, lastFocus: null, approvalsSig: '' },
   drawer: { open: false, path: '', content: '', lastFocus: null },
   booted: false,
+  isolation: null,
+  isolationError: null,
 };
 
 const dom = {};
@@ -1146,6 +1148,9 @@ async function copyWithToast(text, label) {
 // ============================================================
 const DOM_IDS = [
   'versionText',
+  'isolationPill',
+  'isolationDot',
+  'isolationLabel',
   'budgetWidget',
   'budgetTokensValue',
   'budgetTokensBar',
@@ -1682,6 +1687,8 @@ async function refreshAll(options = {}) {
   try {
     const stateOk = await loadState({ silent });
     if (!stateOk) ok = false;
+    const isolationOk = await loadIsolation({ silent });
+    if (!isolationOk) ok = false;
     if (app.selectedRunId) {
       const detailOk = await loadRunDetail(app.selectedRunId, { silent });
       if (!detailOk && !app.runDetail) ok = false;
@@ -2490,8 +2497,58 @@ function renderMiniPanel() {
 // ============================================================
 // 主区渲染
 // ============================================================
+async function loadIsolation({ silent = true } = {}) {
+  try {
+    app.isolation = await apiRequest('GET', '/api/isolation');
+    app.isolationError = null;
+    return true;
+  } catch (err) {
+    app.isolationError = err;
+    if (!silent) toast(`执行隔离状态加载失败：${err?.message || err}`, 'warn');
+    return false;
+  }
+}
+
+function renderIsolation() {
+  if (!dom.isolationPill) return;
+  const info = app.isolation;
+  let tone = 'gray';
+  let label = '隔离未知';
+  let title = '尚未获取执行隔离状态';
+  if (info) {
+    const container = info.container || {};
+    const kernel = info.kernelIsolation || 'BLOCKED';
+    if (container.testExecution) {
+      tone = 'green';
+      label = container.agentExecution ? '容器隔离就绪' : '容器测试就绪';
+      title = `Docker 容器可用；测试=${container.network?.test || 'none'}；Agent=${container.network?.agent || '未启用'}；镜像=${container.image?.name || 'unknown'}`;
+    } else if (info.kernelAvailable) {
+      tone = 'green';
+      label = '沙箱隔离就绪';
+      title = `内核级隔离=${kernel}`;
+    } else {
+      tone = 'amber';
+      label = '受限运行环境';
+      title = `内核级隔离=${kernel}；${info.note || 'Docker/sandbox 不可用，使用受限运行环境（不冒充强隔离）'}`;
+    }
+    if (app.isolationError) {
+      tone = 'amber';
+      label = '隔离状态降级';
+      title = `最近一次加载失败：${app.isolationError.message || app.isolationError}`;
+    }
+  } else if (app.isolationError) {
+    tone = 'red';
+    label = '隔离状态错误';
+    title = app.isolationError.message || String(app.isolationError);
+  }
+  setToneClass(dom.isolationPill, tone);
+  if (dom.isolationLabel) dom.isolationLabel.textContent = label;
+  dom.isolationPill.title = title;
+}
+
 function renderAll() {
   renderTopbar();
+  renderIsolation();
   renderSidebar();
   renderWorkspace();
   renderStatusPanel();
@@ -5157,6 +5214,8 @@ async function bootstrap() {
   startPolling();
 
   const stateOk = await loadState({ silent: false });
+  await loadIsolation({ silent: false });
+  renderAll();
   if (!stateOk) {
     renderAll();
     toast(`无法加载工作台状态：${app.stateError?.message || '未知错误'}`, 'error', { duration: 8000, force: true });
