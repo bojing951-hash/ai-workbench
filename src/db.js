@@ -268,6 +268,7 @@ export class Store {
         ['model', "TEXT DEFAULT ''"],
         ['provider_known', 'INTEGER DEFAULT 0'],
         ['provider_source', "TEXT DEFAULT ''"],
+        ['failure_class', "TEXT DEFAULT ''"],
       ],
       audits: [
         ['verification_status', "TEXT DEFAULT ''"],
@@ -276,6 +277,7 @@ export class Store {
         ['independence', "TEXT DEFAULT 'unknown'"],
         ['provider_known', 'INTEGER DEFAULT 0'],
         ['provider_source', "TEXT DEFAULT ''"],
+        ['failure_class', "TEXT DEFAULT ''"],
       ],
     };
     for (const [table, cols] of Object.entries(columns)) {
@@ -435,6 +437,9 @@ export class Store {
     const cur = this.getPlan(id);
     if (!cur) return null;
     const merged = { ...cur, ...patch };
+    if (typeof merged.verification_json === 'string') {
+      try { merged.verification_json = JSON.parse(merged.verification_json); } catch { merged.verification_json = {}; }
+    }
     this.db
       .prepare('UPDATE plans SET title=?, status=?, tasks_json=?, planner_meta_json=?, updated_at=? WHERE id=?')
       .run(
@@ -509,6 +514,9 @@ export class Store {
     const cur = this.getRun(id);
     if (!cur) return null;
     const merged = { ...cur, ...patch };
+    if (typeof merged.verification_json === 'string') {
+      try { merged.verification_json = JSON.parse(merged.verification_json); } catch { merged.verification_json = {}; }
+    }
     this.db
       .prepare(
         `UPDATE runs SET plan_id=?, status=?, current_task_id=?, budget_json=?, spent_json=?, stop_reason=?, result_json=?, verification_status=?, verified_sha=?, ci_status=?, ci_url=?, ci_checked_at=?, wall_deadline=?, parent_run_id=?, started_at=?, ended_at=?, updated_at=? WHERE id=?`,
@@ -594,6 +602,7 @@ export class Store {
     return parseRow(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id), {
       acceptance_json: [],
       result_json: {},
+      verification_json: {},
     });
   }
 
@@ -624,6 +633,9 @@ export class Store {
     const cur = this.getTask(id);
     if (!cur) return null;
     const merged = { ...cur, ...patch };
+    if (typeof merged.verification_json === 'string') {
+      try { merged.verification_json = JSON.parse(merged.verification_json); } catch { merged.verification_json = {}; }
+    }
     this.db
       .prepare(
         `UPDATE tasks SET status=?, attempt=?, branch=?, base_commit=?, head_commit=?, worktree_path=?, session_id=?, blocked_reason=?, result_json=?, verification_json=?, failure_signature=?, repeated_failures=?, agent_kind=?, test_command=?, max_attempts=?, updated_at=? WHERE id=?`,
@@ -662,7 +674,7 @@ export class Store {
     const row = this.db
       .prepare("SELECT * FROM tasks WHERE plan_id = ? AND status = 'queued' ORDER BY seq ASC LIMIT 1")
       .get(planId);
-    return parseRow(row, { acceptance_json: [], result_json: {} });
+    return parseRow(row, { acceptance_json: [], result_json: {}, verification_json: {} });
   }
 
   taskCounts(planId) {
@@ -744,13 +756,14 @@ export class Store {
       model: patch.model ?? cur.model,
       provider_known: patch.provider_known ?? patch.providerKnown ?? cur.provider_known,
       provider_source: patch.provider_source ?? patch.providerSource ?? cur.provider_source,
+      failure_class: patch.failure_class ?? patch.failureClass ?? cur.failure_class,
       duration_ms: patch.duration_ms ?? patch.durationMs ?? cur.duration_ms,
       log_path: patch.log_path ?? patch.logPath ?? cur.log_path,
     };
     const merged = { ...cur, ...normalized };
     this.db
       .prepare(
-        `UPDATE attempts SET session_id=?, exit_code=?, status=?, error=?, feedback=?, tokens_in=?, tokens_out=?, tokens_cache=?, cost_cny=?, cost_reported=?, cost_source=?, provider=?, model=?, provider_known=?, provider_source=?, duration_ms=?, log_path=?, updated_at=? WHERE id=?`,
+        `UPDATE attempts SET session_id=?, exit_code=?, status=?, error=?, feedback=?, tokens_in=?, tokens_out=?, tokens_cache=?, cost_cny=?, cost_reported=?, cost_source=?, provider=?, model=?, provider_known=?, provider_source=?, failure_class=?, duration_ms=?, log_path=?, updated_at=? WHERE id=?`,
       )
       .run(
         merged.session_id || '',
@@ -768,6 +781,7 @@ export class Store {
         merged.model || '',
         merged.provider_known ? 1 : 0,
         merged.provider_source || '',
+        merged.failure_class || '',
         merged.duration_ms || 0,
         merged.log_path || '',
         nowIso(),
@@ -1011,6 +1025,9 @@ export class Store {
     const cur = this.getApproval(id);
     if (!cur) return null;
     const merged = { ...cur, ...patch };
+    if (typeof merged.verification_json === 'string') {
+      try { merged.verification_json = JSON.parse(merged.verification_json); } catch { merged.verification_json = {}; }
+    }
     this.db
       .prepare('UPDATE approvals SET status=?, details_json=?, decided_at=?, decided_by=?, updated_at=? WHERE id=?')
       .run(merged.status, JSON.stringify(merged.details_json || {}), merged.decided_at || '', merged.decided_by || '', nowIso(), id);

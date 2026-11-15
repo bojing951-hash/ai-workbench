@@ -36,7 +36,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
@@ -303,6 +303,9 @@ export class Orchestrator {
         test_isolation: input.testIsolation || input.test_isolation || '',
         agent_isolation: input.agentIsolation || input.agent_isolation || '',
         container_agent_network: input.containerAgentNetwork || input.container_agent_network || '',
+        low_budget_finalize: input.lowBudgetFinalize === true || input.low_budget_finalize === true,
+        agent_fallback: parseList(input.agentFallback || input.agent_fallback),
+        agent_stall_timeout_ms: Number(input.agentStallTimeoutMs || input.agent_stall_timeout_ms || 0) || undefined,
       },
     });
     this.emit({ projectId: project.id, type: 'project_created', message: `项目已添加：${project.name}（${localPath}）` });
@@ -343,6 +346,9 @@ export class Orchestrator {
     if (patch.testIsolation !== undefined || patch.test_isolation !== undefined) configPatch.test_isolation = String(patch.testIsolation ?? patch.test_isolation);
     if (patch.agentIsolation !== undefined || patch.agent_isolation !== undefined) configPatch.agent_isolation = String(patch.agentIsolation ?? patch.agent_isolation);
     if (patch.containerAgentNetwork !== undefined || patch.container_agent_network !== undefined) configPatch.container_agent_network = String(patch.containerAgentNetwork ?? patch.container_agent_network);
+    if (patch.agentStallTimeoutMs !== undefined || patch.agent_stall_timeout_ms !== undefined) configPatch.agent_stall_timeout_ms = Number(patch.agentStallTimeoutMs ?? patch.agent_stall_timeout_ms);
+    if (patch.agentFallback !== undefined || patch.agent_fallback !== undefined) configPatch.agent_fallback = parseList(patch.agentFallback ?? patch.agent_fallback);
+    if (patch.lowBudgetFinalize !== undefined || patch.low_budget_finalize !== undefined) configPatch.low_budget_finalize = patch.lowBudgetFinalize === true || patch.low_budget_finalize === true;
     if (patch.publish !== undefined) configPatch.publish = !!patch.publish;
     if (Object.keys(configPatch).length) mapped.config_json = { ...(project.config_json || {}), ...configPatch };
     return this.store.updateProject(projectId, mapped);
@@ -505,25 +511,28 @@ export class Orchestrator {
         run = this.store.getRun(runId);
         if (!run || run.status !== RunStatus.RUNNING) break;
         if (controller.signal.aborted) break;
-        try {
-          assertRunWallClock(run, this.config.budget.runWallClockMs);
-          this.assertBudget(8_000);
-          const project = this.store.getProject(run.project_id);
-          const projectUsage = this.weightProjectUsage(this.store.usageForProject(run.project_id));
-          assertProjectBudget({
-            config: this.config,
-            project,
-            run,
-            totals: projectUsage,
-            estimatedTokens: 8_000,
-            estimatedCostCny: 0.05,
-          });
-        } catch (err) {
-          const kind = /WALL_CLOCK/.test(err?.code || '') ? 'wall_clock' : 'budget';
-          this.pauseRun(runId, err.message, kind);
-          break;
-        }
         const task = this.store.nextQueuedTask(run.plan_id);
+        const project = this.store.getProject(run.project_id);
+        const allowLowReserveFinalize = !task && project?.config_json?.low_budget_finalize === true;
+        if (!allowLowReserveFinalize) {
+          try {
+            assertRunWallClock(run, this.config.budget.runWallClockMs);
+            this.assertBudget(8_000);
+            const projectUsage = this.weightProjectUsage(this.store.usageForProject(run.project_id));
+            assertProjectBudget({
+              config: this.config,
+              project,
+              run,
+              totals: projectUsage,
+              estimatedTokens: 8_000,
+              estimatedCostCny: 0.05,
+            });
+          } catch (err) {
+            const kind = /WALL_CLOCK/.test(err?.code || '') ? 'wall_clock' : 'budget';
+            this.pauseRun(runId, err.message, kind);
+            break;
+          }
+        }
         if (!task) {
           await this.finalizeRun(run);
           break;
@@ -545,6 +554,93 @@ export class Orchestrator {
     } finally {
       this.running.delete(runId);
       this.controllers.delete(runId);
+    }
+  }
+
+  // ============================================================
+  // 自主恢复：Agent 候选、进度看门狗、失败分类
+  // ============================================================
+  classifyAgentFailure(agentResult = {}) {
+    const err = String(agentResult.error || '');
+    if (agentResult.stalled) return 'stalled';
+    if (agentResult.timedOut) return 'agent_timeout';
+    if (agentResult.aborted) return 'agent_aborted';
+    if (/token 预算|超出单任务 token|budget/i.test(err)) return 'budget';
+    if (/未返回可解析|未正常完成|连续未产生|no changes|结构化结果/i.test(err)) return 'agent_no_output';
+    if (/权限|permission|ISOLATION|CONTAINER_UNAVAILABLE/i.test(err)) return 'infrastructure';
+    return 'agent_error';
+  }
+
+  async resolveAgentCandidates(project, task) {
+    const primary = await this.deps.chooseAgent(this.config, project, task);
+    if (!primary) return [];
+    const configured = Array.isArray(project?.config_json?.agent_fallback) && project.config_json.agent_fallback.length
+      ? project.config_json.agent_fallback
+      : (this.config.agents.fallback || []);
+    let checks = [];
+    try { checks = await this.deps.checkAgents(this.config); } catch { checks = []; }
+    const ok = new Set((Array.isArray(checks) ? checks : []).filter((a) => a && a.ok).map((a) => a.id || a.agentId));
+    const list = [primary];
+    for (const id of configured) {
+      if (!id || id === primary || list.includes(id)) continue;
+      if (ok.size > 0 && !ok.has(id)) continue;
+      const identity = resolveAgentIdentity({ config: this.config, agentId: id, project });
+      if (!identity.exempt && this.budget().remainingTokens < 100_000) continue;
+      list.push(id);
+    }
+    return list;
+  }
+
+  async worktreeProgressSignal(worktree) {
+    try {
+      const status = await gitops.statusPorcelain(worktree);
+      const numstat = await gitops.git(worktree, ['diff', '--numstat'], { allowFail: true });
+      const changed = String(status || '').split('\n').filter(Boolean).length;
+      let lines = 0;
+      for (const line of String(numstat?.stdout || '').split('\n').filter(Boolean)) {
+        const parts = line.split('\t');
+        lines += Number(parts[0] || 0) + Number(parts[1] || 0);
+      }
+      return `${changed}:${lines}`;
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * 真实进度看门狗：不是只看进程存活，而是看工作树是否持续推进；
+   * 无进展超过阈值时终止子进程并返回 stalled（随后由上层切换/重试 Agent）。
+   */
+  async runAgentWithWatchdog({ agentId, ctx, worktree, parentSignal = null, stallTimeoutMs = 0 }) {
+    const local = new AbortController();
+    const onParentAbort = () => { try { local.abort(); } catch { /* ignore */ } };
+    if (parentSignal) {
+      if (parentSignal.aborted) onParentAbort();
+      else parentSignal.addEventListener('abort', onParentAbort, { once: true });
+    }
+    const threshold = Math.max(1_000, Number(stallTimeoutMs || this.config.agents.stallTimeoutMs || 180_000));
+    let lastSignal = await this.worktreeProgressSignal(worktree);
+    let lastProgressAt = Date.now();
+    let stalled = false;
+    const intervalMs = Math.max(5_000, Math.floor(threshold / 4));
+    const timer = setInterval(async () => {
+      if (local.signal.aborted) return;
+      const current = await this.worktreeProgressSignal(worktree);
+      if (current !== lastSignal) {
+        lastSignal = current;
+        lastProgressAt = Date.now();
+      } else if (Date.now() - lastProgressAt >= threshold) {
+        stalled = true;
+        try { local.abort(); } catch { /* ignore */ }
+      }
+    }, intervalMs);
+    timer.unref?.();
+    try {
+      const result = await this.deps.runAgent(agentId, { ...ctx, signal: local.signal });
+      return { result, stalled };
+    } finally {
+      clearInterval(timer);
+      if (parentSignal) parentSignal.removeEventListener?.('abort', onParentAbort);
     }
   }
 
@@ -625,6 +721,12 @@ export class Orchestrator {
       this.store.updateTask(task.id, { status: TaskStatus.PREPARING, worktree_path: worktree, branch, base_commit: baseCommit });
       this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'worktree_ready', message: `工作副本就绪：${branch}`, data: { worktree, baseCommit, planBranch } });
 
+      const agentCandidates = await this.resolveAgentCandidates(project, task);
+      if (!agentCandidates.length) {
+        return this.failTask(run, task, '没有可用的 Coding Agent（请检查 DSH / Claude Code 配置）', 'blocked');
+      }
+      let candidateIndex = 0;
+      let agentSwitches = 0;
       for (let attemptNo = 1; attemptNo <= maxAttempts; attemptNo++) {
         if (signal.aborted) throw new PolicyError('RUN_ABORTED', '运行已被取消');
         const currentRun = this.store.getRun(run.id) || run;
@@ -636,10 +738,7 @@ export class Orchestrator {
         });
         this.store.updateTask(task.id, { status: TaskStatus.CODING, attempt: attemptNo });
 
-        const agentId = await this.deps.chooseAgent(this.config, project, task);
-        if (!agentId) {
-          return this.failTask(run, task, '没有可用的 Coding Agent（请检查 DSH / Claude Code 配置）', 'blocked');
-        }
+        const agentId = agentCandidates[candidateIndex] || agentCandidates[0];
         const agentIdentity = resolveAgentIdentity({ config: this.config, agentId, project });
         let permission;
         try {
@@ -647,7 +746,7 @@ export class Orchestrator {
         } catch (err) {
           return this.failTask(run, task, `Agent 权限策略拒绝执行：${err.message}`, 'blocked');
         }
-        this.assertBudget(10_000);
+        if (!agentIdentity.exempt) this.assertBudget(10_000);
         const prompt = this.buildCodingPrompt({
           project, task, attemptNo, maxAttempts, feedback, worktree, protectedPaths, plan,
           agentId, permission,
@@ -684,30 +783,36 @@ export class Orchestrator {
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
           const perTaskCap = projectTaskCap > 0 ? projectTaskCap : this.config.budget.maxTokensPerTask;
           const perTaskTokens = agentIdentity.exempt ? 0 : Math.min(perTaskCap, Math.max(15_000, remaining - 25_000));
-          agentResult = await this.deps.runAgent(agentId, {
-            config: this.config,
-            project,
-            prompt,
-            cwd: worktree,
-            sessionId,
-            timeoutMs: agentId === 'claude' ? this.config.agents.claude.timeoutMs : this.config.agents.dsh.timeoutMs,
-            maxTokens: perTaskTokens,
-            signal,
-            identity: agentIdentity,
-            container: agentContainer,
-            agentHome: path.join(sandboxHome, `${agentId}-home`),
-            logPath: path.join(logDir, `attempt-${attemptNo}-${agentId}.log`),
-            onEvent: (evt) => {
-              if (!evt) return;
-              const message = evt.kind === 'tool_call'
-                ? `[${agentId}] 调用工具 ${evt.tool}${evt.summary ? `：${evt.summary}` : ''}`
-                : `[${agentId}] ${evt.summary || evt.kind}`;
-              this.emit({
-                runId: run.id, projectId: project.id, taskId: task.id, type: 'agent_progress',
-                level: evt.kind === 'error' ? 'warn' : 'debug', message: truncate(message, 500),
-              });
+          const watchdog = await this.runAgentWithWatchdog({
+            agentId,
+            worktree,
+            parentSignal: signal,
+            stallTimeoutMs: Number(project.config_json?.agent_stall_timeout_ms || this.config.agents.stallTimeoutMs),
+            ctx: {
+              config: this.config,
+              project,
+              prompt,
+              cwd: worktree,
+              sessionId,
+              timeoutMs: agentId === 'claude' ? this.config.agents.claude.timeoutMs : this.config.agents.dsh.timeoutMs,
+              maxTokens: perTaskTokens,
+              identity: agentIdentity,
+              container: agentContainer,
+              agentHome: path.join(sandboxHome, `${agentId}-home`),
+              logPath: path.join(logDir, `attempt-${attemptNo}-${agentId}.log`),
+              onEvent: (evt) => {
+                if (!evt) return;
+                const message = evt.kind === 'tool_call'
+                  ? `[${agentId}] 调用工具 ${evt.tool}${evt.summary ? `：${evt.summary}` : ''}`
+                  : `[${agentId}] ${evt.summary || evt.kind}`;
+                this.emit({
+                  runId: run.id, projectId: project.id, taskId: task.id, type: 'agent_progress',
+                  level: evt.kind === 'error' ? 'warn' : 'debug', message: truncate(message, 500),
+                });
+              },
             },
           });
+          agentResult = { ...watchdog.result, stalled: !!watchdog.stalled };
         } finally {
           release();
         }
@@ -725,6 +830,7 @@ export class Orchestrator {
           provider: agentResult.provider || (agentIdentity.known ? agentIdentity.provider : 'unknown'),
           providerKnown: agentResult.providerKnown ?? agentIdentity.known,
           providerSource: agentResult.providerSource || agentIdentity.source,
+          failureClass: agentResult.ok ? '' : this.classifyAgentFailure(agentResult),
           model: agentResult.model || agentIdentity.model || '',
           durationMs: agentResult.durationMs || 0,
           logPath: agentResult.logPath || '',
@@ -738,16 +844,42 @@ export class Orchestrator {
           runId: run.id, projectId: project.id, taskId: task.id,
           type: agentResult.ok ? 'agent_finished' : 'agent_failed',
           level: agentResult.ok ? 'info' : 'warn',
+          type: agentResult.ok ? 'agent_finished' : 'agent_failed',
+          level: agentResult.ok ? 'info' : 'warn',
           message: agentResult.ok
             ? `编码 Agent 完成（${Math.round((agentResult.durationMs || 0) / 1000)}s，tokens ${usage.total}，费用来源：${agentResult.costReported ? '厂商返回' : '估算'}）`
-            : `编码 Agent 失败：${agentResult.error}`,
-          data: { agent: agentId, tokens: usage.total, costCny: agentResult.costCny, costReported: !!agentResult.costReported },
+            : `编码 Agent 失败${agentResult.stalled ? '（无进展，看门狗已终止）' : ''}：${agentResult.error}`,
+          data: { agent: agentId, tokens: usage.total, costCny: agentResult.costCny, costReported: !!agentResult.costReported, stalled: !!agentResult.stalled, failureClass: agentResult.ok ? '' : this.classifyAgentFailure(agentResult), agentSwitches },
         });
 
         if (!agentResult.ok) {
+          const failureClass = this.classifyAgentFailure(agentResult);
+          const canSwitch = ['stalled', 'agent_timeout', 'agent_aborted', 'agent_no_output', 'infrastructure', 'agent_error', 'budget'].includes(failureClass);
+          if (canSwitch) {
+            const previous = agentId;
+            let nextAgent = '';
+            if (candidateIndex + 1 < agentCandidates.length) {
+              candidateIndex += 1;
+              nextAgent = agentCandidates[candidateIndex];
+            } else if (attemptNo < maxAttempts) {
+              // 没有可用备选/备选也失败时，回到主 Agent 的全新会话（不合并/不降低验收标准）
+              candidateIndex = 0;
+              nextAgent = agentCandidates[0];
+            }
+            if (nextAgent) {
+              agentSwitches += 1;
+              sessionId = '';
+              this.store.updateTask(task.id, { session_id: '' });
+              feedback = `上一轮 Agent（${previous}）失败/无进展（${failureClass}：${agentResult.error}）。已终止并切换到 ${nextAgent} 全新会话重新执行；保留验收标准不变。`;
+              this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'agent_fallback', level: 'warn', message: `Agent 失败分类 ${failureClass}，切换到 ${nextAgent}（新会话）`, data: { from: previous, to: nextAgent, failureClass, stalled: !!agentResult.stalled, attemptNo } });
+              this.recordFailure(task, failureSignature({ testTail: `fallback:${failureClass}:${previous}:${attemptNo}` }));
+              continue;
+            }
+          }
           feedback = `上一轮 Agent 执行失败：${agentResult.error}。请重新执行任务，确保只通过文件编辑产出可运行代码。`;
           const repeated = this.recordFailure(task, failureSignature({ testTail: agentResult.error }));
-          if (repeated >= 1) return this.failTask(run, task, '检测到重复的 Agent 失败签名，停止自动重试，保留证据等待人工诊断', 'blocked');
+          if (repeated >= 1) return this.failTask(run, task, `Agent 连续失败（${failureClass}），无可用的替代 Agent 或重试预算，停止并保留证据：${agentResult.error}`, 'blocked');
+          sessionId = '';
           continue;
         }
 

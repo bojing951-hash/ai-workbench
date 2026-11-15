@@ -173,3 +173,12 @@ GitHub 真实结果（API 复核）：
 - GLM 身份/预算：`tests/model-identity.test.js` 覆盖 GLM/DeepSeek/OpenAI/unknown；unknown 不豁免。
 - 可靠性循环：3 个真实任务、SIGKILL 恢复、无任务/能力阻塞停止；详见 `docs/v2.2/REPORT.md` 与 `ACCEPTANCE-MATRIX.md`。
 - 诚实披露：round2/3 中 Agent 自主完成受限（DeepSeek 预算耗尽、Claude 无进展），由 Supervisor 完成代码后仍经真实测试+独立审计；Agent 全自动完成率 1/3。容器 Agent 网络 egress allowlist 为 UNKNOWN/PARTIAL。
+
+
+---
+
+# v2.3.0 自主可靠性追加（2026-11-16）
+
+- `npm test`：**202/202**（v2.1 186 全保留 + v2.2 12 + v2.3 4：看门狗/失败分类、候选选择、任务 JSON 膨胀回归）。
+- 独立无人监督验收（24m22s 加速窗口）：5/5 真实任务完成、100% Coding Agent 自主、0 人工代码干预、2/2 故障恢复（Agent SIGSTOP 无进展、Workbench SIGKILL）、5/5 测试与独立审计 PASS。
+- **24 小时窗口未执行，判定 FAIL/UNKNOWN**；详见 `docs/v2.3/REPORT.md`。

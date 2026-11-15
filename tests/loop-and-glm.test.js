@@ -115,3 +115,19 @@ test('未知供应商不获得 GLM 预算豁免（即使 provider 字段缺失/�
     store.close();
   }
 });
+
+test('任务验证 JSON 重复更新不会指数膨胀（Invalid string length 回归）', () => {
+  const { config, store } = tempEnv();
+  try {
+    store.createRun({ id: 'run-json', projectId: 'p1', goal: 'g', status: 'running' });
+    store.createTasks([{ id: 'task-json', projectId: 'p1', runId: 'run-json', planId: 'plan-json', seq: 1, title: 't', acceptance: ['x'], testCommand: 'true' }]);
+    for (let i = 0; i < 20; i += 1) {
+      store.updateTask('task-json', { status: 'coding', attempt: i, verification_json: { baseCommit: 'a', testedHash: `h${i}` } });
+    }
+    const row = store.db.prepare("SELECT length(verification_json) len FROM tasks WHERE id='task-json'").get();
+    assert.ok(row.len < 2000, `verification_json 膨胀：${row.len}`);
+    const fresh = store.getTask('task-json');
+    assert.equal(typeof fresh.verification_json, 'object');
+    assert.equal(fresh.verification_json.testedHash, 'h19');
+  } finally { store.close(); }
+});

@@ -1,0 +1,5 @@
+86bd2f2 feat(task-1): [A5] 实现 CLI cli.js
+d9aabca feat(task-1): [A4] 实现报告 report.js
+8e87a52 feat(task-1): [A3] 实现账本 ledger.js
+7d4fc36 feat(task-1): [A2] 实现状态归约 state.js
+8f0888a feat(task-1): [A1] 实现事件存储 events.js

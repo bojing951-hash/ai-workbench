@@ -82,7 +82,7 @@ export function buildConfig(overrides = {}) {
       maxTokensPerTask: int(env.MAX_TOKENS_PER_TASK, 600_000),
       maxAttempts: int(env.MAX_ATTEMPTS, 2),
       maxAgentConcurrency: int(env.MAX_AGENT_CONCURRENCY, 2),
-      minReserveTokens: int(env.MIN_RESERVE_TOKENS, 20_000),
+      minReserveTokens: int(env.MIN_RESERVE_TOKENS, 2_000),
       // 缓存读取 token 按较低权重计入预算（原始用量仍完整展示；权重用于硬上限保护）
       cacheTokenWeight: Number(env.CACHE_TOKEN_WEIGHT ?? 0.1),
       // 用户明确授权：GLM 模型不受工作台内部 token/费用上限约束；但仍完整记录真实用量与费用
@@ -95,6 +95,9 @@ export function buildConfig(overrides = {}) {
     },
     agents: {
       default: str(env.DEFAULT_AGENT, 'auto'),
+      // 自主恢复：主 Agent 失败/无进展时按顺序切换已配置且可用的 Agent
+      fallback: (env.AGENT_FALLBACK || 'dsh,claude').split(',').map((x) => x.trim()).filter(Boolean),
+      stallTimeoutMs: int(env.AGENT_STALL_TIMEOUT_MS, 180_000),
       dsh: {
         bin: str(env.DSH_BIN, defaultDshBin()),
         provider: str(env.DSH_PROVIDER, ''),

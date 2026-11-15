@@ -35,6 +35,13 @@
 - **持续研发可靠性**：3 个真实任务、SIGKILL 中断恢复、循环完成判定、幂等/不重复 commit、Git 基线校验、UNKNOWN 不推进、无任务/阻塞正确停止。
 - 报告：[v2.2 报告](docs/v2.2/REPORT.md)、[验收矩阵](docs/v2.2/ACCEPTANCE-MATRIX.md)、[容器隔离](docs/v2.2/CONTAINER-ISOLATION.md)、[GLM 身份](docs/v2.2/GLM-IDENTITY.md)。
 
+## 0.3 v2.3 新增（无人监督自主执行可靠性）
+
+- **真实进度看门狗**：按 worktree 实际推进检测 Agent 无进展，超时终止并保留证据；支持新会话重试与备选 Agent 切换（非 GLM 备选受预算约束）。
+- **失败分类与恢复**：stalled/timeout/budget/no-output/agent/infrastructure 分类持久化；主 Agent 失败→备选→主 Agent 全新会话；无人工代码干预。
+- **关键可靠性根因修复**：任务 `verification_json` 指数膨胀（Invalid string length）、低预算 finalize 阻塞、GLM 身份/预算、容器执行保持。
+- 验收：5 个冻结任务 5/5 自主完成、10/10 测试、5/5 独立审计、2/2 故障恢复；**严格 24h 窗口未执行，24h 验收 FAIL/UNKNOWN**。详见 [v2.3 报告](docs/v2.3/REPORT.md)、[验收矩阵](docs/v2.3/ACCEPTANCE-MATRIX.md)。
+
 ## 1. 核心能力
 
 | 能力 | 实现 |
