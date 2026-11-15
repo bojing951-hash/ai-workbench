@@ -14,9 +14,11 @@
  *   workbench loop list [--project <项目ID>] [--json]
  *   workbench loop status <loopId> [--json]
  *   workbench loop pause|resume|cancel <loopId> [--reason "..."] [--json]
+ *   workbench isolation [--json] [--url http://host:port]
+ *   workbench isolation [--json] [--url http://host:port]
  *
- * loop 子命令复用工作台 HTTP API（/api/loops 系列，data/api-token 认证），
- * 因此需要先启动服务（npm start 或 workbench serve）。
+ * loop / isolation 子命令复用工作台 HTTP API（/api/loops、/api/executor，
+ * data/api-token 认证），因此需要先启动服务（npm start 或 workbench serve）。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,6 +28,8 @@ import { EventBus } from '../src/bus.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { startServer } from '../src/server.js';
 import { LoopManager } from '../src/loop.js';
+import { detectIsolationCapabilities } from '../src/isolation.js';
+import { containerCapabilities } from '../src/container.js';
 import { checkAllAgents } from '../src/agents/index.js';
 import { auditProviderStatus } from '../src/auditors/index.js';
 import { formatCny, formatTokens } from '../src/pricing.js';
@@ -275,6 +279,32 @@ async function runLoopCommand() {
   if (loop?.current_run_id) console.log(`当前运行：${loop.current_run_id}`);
 }
 
+/** `isolation` 子命令：通过 HTTP API 展示执行隔离与容器能力。 */
+async function runIsolationCommand() {
+  if (wantsHelp) {
+    console.log([
+      '用法：workbench isolation [--json] [--url http://127.0.0.1:4477]',
+      '',
+      '展示当前执行隔离能力：内核隔离（docker/sandbox-exec/BLOCKED）、受限运行环境、',
+      'Docker 容器测试/Claude Agent 可用性与镜像状态。只读，不改变任何运行。',
+    ].join('\n'));
+    return;
+  }
+  const info = await apiRequest('GET', '/api/isolation');
+  if (args.json) {
+    console.log(JSON.stringify(info, null, 2));
+    return;
+  }
+  const container = info.container || {};
+  console.log(`内核隔离：${info.kernelIsolation || 'unknown'}${info.kernelAvailable ? '（可用）' : '（不可用）'}`);
+  console.log(`受限运行环境：${info.restrictedRuntime?.available ? '可用（无内核级强隔离）' : '不可用'}`);
+  console.log(`Docker：${container.docker?.available ? `可用（${container.docker.version || ''}）` : '不可用'}`);
+  console.log(`运行时镜像：${container.image?.name || '—'} ${container.image?.available ? '已就绪' : '缺失'}`);
+  console.log(`容器测试执行：${container.testExecution ? '可用' : 'BLOCKED'}；容器 Agent：${container.agentExecution ? '可用（Claude）' : 'BLOCKED'}`);
+  console.log(`网络：测试=${container.network?.test || '—'}；Agent=${container.network?.agent || '—'}`);
+  if (container.note) console.log(`说明：${container.note}`);
+}
+
 async function main() {
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
     printRootHelp();
@@ -283,6 +313,11 @@ async function main() {
 
   if (cmd === 'loop') {
     await runLoopCommand();
+    return;
+  }
+
+  if (cmd === 'isolation') {
+    await runIsolationCommand();
     return;
   }
 

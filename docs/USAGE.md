@@ -135,3 +135,13 @@ npm run demo:phase3      # 阶段三：多项目并行 + 跨 Agent + GitHub PR/C
 | 任务一直 paused | 看运行 `stop_reason` 与事件流：常见原因为测试命令缺失、预算耗尽、审计不可用、Agent 未产生变更 |
 | GitHub 推送/PR 显示"待授权" | 配置 `GITHUB_TOKEN` 后重试；工作台不会伪造成功 |
 | 想查看某次产物 | 任务详情中点击产物，或 `GET /api/artifacts?path=...`；文件在 `data/artifacts/<runId>/` |
+
+
+## 执行隔离查看（isolation）
+
+```bash
+node bin/workbench.js isolation           # 人类可读
+node bin/workbench.js isolation --json    # 原始 JSON（/api/isolation）
+```
+
+展示内核隔离（docker/sandbox-exec/BLOCKED）、受限运行环境、Docker 容器测试/Claude Agent 可用性、运行时镜像与网络策略。命令只读，不启动/取消任何运行；服务需先启动。
