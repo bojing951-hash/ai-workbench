@@ -1,0 +1,33 @@
+name: AI Workbench CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Show runtime
+        run: node --version && npm --version
+
+      - name: Unit & integration tests (offline, no model calls)
+        run: npm test
+
+      - name: Validate demo acceptance suites (pre-implementation should fail)
+        run: |
+          echo "Demo projects are acceptance fixtures; their tests are expected to fail before an agent implements them."
+          ls demo/*/tests/*.test.js | wc -l

@@ -1,0 +1,13 @@
+{
+  "name": "notes-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Notes API：阶段二真实验收项目（多任务规划 + 断点恢复）",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,26 @@
+# 本地密钥（绝不提交）
+.env
+.env.local
+*.key
+
+# 运行时数据：数据库、日志、worktree、Agent 运行时 Home
+data/
+projects/
+.probe/
+
+# 依赖与构建产物（本项目零依赖，保留以防插件）
+node_modules/
+dist/
+
+# 系统与编辑器
+.DS_Store
+*.log
+
+# 编辑器与覆盖率
+.vscode/
+.idea/
+coverage/
+*.tsbuildinfo
+
+# 本机截图/浏览器临时目录（脚本产物）
+data/chrome-*/

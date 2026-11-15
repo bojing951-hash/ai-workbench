@@ -1,0 +1,33 @@
+{
+  "name": "ai-dev-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI 全自动软件开发工作台：多项目 / 多 Coding Agent / 确定性工作流 / 独立审计 / 自动修复 / 断点恢复 / 可视化",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning bin/workbench.js serve",
+    "workbench": "node --no-warnings=ExperimentalWarning bin/workbench.js",
+    "test": "node --no-warnings=ExperimentalWarning --test tests/*.test.js",
+    "test:e2e": "node --no-warnings=ExperimentalWarning --test tests/e2e/*.test.js",
+    "demo:phase1": "node --no-warnings=ExperimentalWarning scripts/demo-phase1.mjs",
+    "demo:phase2": "node --no-warnings=ExperimentalWarning scripts/demo-phase2.mjs",
+    "demo:phase3": "node --no-warnings=ExperimentalWarning scripts/demo-phase3.mjs",
+    "demo:phase3:evidence": "node --no-warnings=ExperimentalWarning scripts/phase3-evidence.mjs",
+    "screenshot": "node --no-warnings=ExperimentalWarning scripts/screenshot.mjs"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "ai-agents",
+    "coding-agent",
+    "automation",
+    "deepseek",
+    "claude-code",
+    "github-actions",
+    "workbench",
+    "nodejs"
+  ],
+  "author": "bojing951-hash (https://github.com/bojing951-hash)"
+}

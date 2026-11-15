@@ -1,0 +1,13 @@
+{
+  "name": "log-audit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Log Audit：阶段三多项目/跨 Agent 验收项目",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

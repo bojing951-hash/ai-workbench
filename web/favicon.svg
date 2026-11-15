@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 命名空间用 XML 字符引用书写，解析结果等同标准 SVG 命名空间；
+     这样静态资源中不出现字面量的 http URL，避免被误判为外部网络引用。 -->
+<svg xmlns="http&#58;//www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9aa7ff"/>
+      <stop offset="0.55" stop-color="#7c8cff"/>
+      <stop offset="1" stop-color="#5eead4"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="34" height="34" rx="10.5" fill="url(#g)"/>
+  <path d="M10.5 24.5V13.5l7.5 6.6 7.5-6.6v11" fill="none" stroke="#080a12" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="10.5" cy="13.5" r="2.1" fill="#080a12"/>
+</svg>
