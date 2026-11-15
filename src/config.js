@@ -147,6 +147,7 @@ export function buildConfig(overrides = {}) {
       timeoutMs: int(env.AUDIT_TIMEOUT_MS, 300_000),
       maxDiffChars: int(env.AUDIT_MAX_DIFF_CHARS, 70_000),
       maxTokens: int(env.AUDIT_MAX_TOKENS, 12_000),
+      contextFiles: (env.AUDIT_CONTEXT_FILES || 'src/orchestrator.js,src/policy.js,src/server.js').split(',').map((x) => x.trim()).filter(Boolean),
       requireIndependent: toBool(env.AUDIT_REQUIRE_INDEPENDENT, true),
       allowSameFamily: toBool(env.AUDIT_ALLOW_SAME_FAMILY, false),
       maxChunks: int(env.AUDIT_MAX_CHUNKS, 6),

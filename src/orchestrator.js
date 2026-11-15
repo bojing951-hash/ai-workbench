@@ -1455,6 +1455,23 @@ export class Orchestrator {
     return updated;
   }
 
+  /** 读取审计参考上下文（未改动文件，仅只读展示，用于核对文档声明与实现是否一致）。 */
+  async collectAuditContext(worktree) {
+    const paths = Array.isArray(this.config.audit.contextFiles) ? this.config.audit.contextFiles : [];
+    const files = [];
+    for (const rel of paths.slice(0, 8)) {
+      try {
+        const abs = path.join(worktree, rel);
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+        const content = fs.readFileSync(abs, 'utf8');
+        files.push({ path: rel, content: content.slice(0, 12000) });
+      } catch {
+        /* ignore */
+      }
+    }
+    return files;
+  }
+
   /**
    * 仅重试"验证/审计"阶段：复用已存在的任务 worktree，不重新调用 Coding Agent。
    * 用于审计模型暂时不可用/审计空返回等场景；仍执行真实测试、独立审计与提交。
@@ -1519,9 +1536,10 @@ export class Orchestrator {
       const coderFamily = coderFamilyFor(lastAttempt?.agent_kind || task.agent_kind || 'dsh', this.config);
       this.store.updateTask(task.id, { status: TaskStatus.AUDITING });
       this.assertBudget(8_000);
+      const contextFiles = await this.collectAuditContext(worktree);
       const audit = await this.deps.runAudit({
         config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },
-        diff, diffStat, testResult, repoFiles, coderFamily,
+        diff, diffStat, testResult, repoFiles, coderFamily, contextFiles,
         versionInfo: { baseCommit, worktreeHash: testedHash, testedHash },
       });
       const auditStatus = audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL');

@@ -183,7 +183,9 @@ export function createApp({ config, store, orchestrator, loops = null }) {
     }
 
     if (pathname === '/api/state' && method === 'GET') {
-      return sendJson(res, 200, { ok: true, data: await orchestrator.state() });
+      const data = await orchestrator.state();
+      data.loops = loops ? loops.list() : [];
+      return sendJson(res, 200, { ok: true, data });
     }
 
     if (pathname === '/api/config' && method === 'GET') {

@@ -136,7 +136,7 @@ function splitDiffChunks(diff, maxChars, maxChunks) {
   return chunks.map((chunk, index) => ({ index, total: chunks.length, text: chunk, truncated: false }));
 }
 
-function buildAuditPrompt({ project, task, acceptance, diffChunk, diffStat, testResult, repoFiles, versionInfo, chunkMeta }) {
+function buildAuditPrompt({ project, task, acceptance, diffChunk, diffStat, testResult, repoFiles, versionInfo, chunkMeta, contextFiles = [] }) {
   const testEvidence = testResult
     ? [
         `命令：${testResult.command}`,
@@ -158,6 +158,7 @@ function buildAuditPrompt({ project, task, acceptance, diffChunk, diffStat, test
     `## 代码变更 diff${chunkMeta ? `（第 ${chunkMeta.index + 1}/${chunkMeta.total} 段）` : ''}\n${diffChunk}`,
     `## 测试证据\n${testEvidence}`,
     `## 仓库文件（只读参考）\n${repoFiles.slice(0, 120).join('\n') || '（不可用）'}`,
+    `## 参考上下文（未改动文件，只读）\n${contextFiles.map((f) => `### ${f.path}\n${truncate(f.content, 7000)}`).join('\n\n') || '（无）'}`,
     '请独立审查并输出 JSON 结论。',
   ]
     .filter(Boolean)
@@ -191,6 +192,7 @@ export async function runAudit({
   diffStat,
   testResult,
   repoFiles = [],
+  contextFiles = [],
   coderFamily = '',
   versionInfo = {},
   signal = null,
@@ -240,6 +242,7 @@ export async function runAudit({
       repoFiles,
       versionInfo,
       chunkMeta: chunks.length > 1 ? { index: chunk.index, total: chunk.total } : null,
+      contextFiles,
     });
     const res = await callAuditOnce({ config, provider, prompt, acceptance: chunks.length > 1 ? [] : acceptance, signal });
     chunkResults.push(res);
