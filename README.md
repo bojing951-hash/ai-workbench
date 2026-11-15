@@ -1,4 +1,4 @@
-# AI 开发工作台（AI Development Workbench）
+# AI 开发工作台（AI Development Workbench）v2.0
 
 **只管给需求，开发、测试、独立审计、自动修复、跨 Agent 推进，最后给你验收。**
 
@@ -6,9 +6,41 @@
 任务规划 → 编码 → 测试 → 独立模型审计 → 失败修复 → 逐任务推进 → 推送分支 / 创建草稿 PR / 运行 GitHub Actions，
 整个过程可暂停、可中断、可恢复，并实时显示在 Web 界面中。**工作台永不合并主分支，合并由你人工决定。**
 
-![工作台：双 Agent 任务流水线、独立审计、GitHub PR 与 Actions](docs/images/workbench-phase3-pr-ci.png)
+![工作台 v2.0：CI_PASSED 验证门禁、双 Agent 审计、GitHub PR/CI](docs/images/workbench-v2-w-ci-passed.png)
 
 ---
+
+## 0. v2.0 新增（安全与多项目接入）
+
+- **P0 安全整改**：Claude 默认受限（acceptEdits+工具白名单，不再 bypass）、测试/Agent 最小环境变量、API Token/Cookie 认证与 CSRF/Host 校验、测试命令 allowlist、产物路径/symlink 防护。
+- **独立审计加固**：验收标准逐条精确匹配+证据硬校验、PASS/FAIL/UNKNOWN 三态、diff 分块审计、测试/审计/提交 SHA 指纹绑定、审计模型与编码模型族独立选择。
+- **CI 交付闸门**：LOCAL_VERIFIED / CI_PENDING / CI_PASSED / CI_FAILED；验收必须绑定真实 commit；CI 未过不会进入待验收。
+- **预算与失败控制**：全局/项目/运行/任务预算、墙钟、运行锁、重复失败检测、费用来源（厂商返回/估算/UNKNOWN，不以 0 冒充）。
+- **审批中心**：CI 闸门、远端推送等需要人工决定的事项集中展示；批准不合并、不部署。
+- **自我升级**：独立候选副本 → 离线测试 → 隔离实例冒烟 → （可选）真实任务验证 → 才允许升级 PR；稳定实例不受影响。
+- **多项目接入**：W（自身）/ A（Global Opportunity Engine，只读+沙箱分支）/ B（Investment Agent，READ_ONLY，权威树禁止写入）。
+- 详细 v2 报告：[docs/v2/PHASE0-AUDIT.md](docs/v2/PHASE0-AUDIT.md)、[P0 审计](docs/v2/P0-AUDIT.md)、[安全整改](docs/v2/SECURITY-REMEDIATION.md)、[验收矩阵](docs/v2/ACCEPTANCE-MATRIX.md)、[自我升级](docs/v2/UPGRADE.md)。
+
+## 0.1 v2.1 新增（持续自主研发）
+
+- **持续自主研发循环**：Planner 识别真实缺口 → 单任务开发/测试/独立审计/修复 → 内部验收 → 更新项目基线 → 自动下一轮；无任务/失败/授权阻塞时停止，不制造任务。W 已连续完成 3 轮真实任务（API/UI/CLI），支持中断恢复。
+- **GLM 预算授权**：GLM 真实 token/cache/费用完整记录且不受工作台内部预算上限；DeepSeek/OpenAI 仍受原预算；API/UI 按 provider 分开统计。
+- **执行隔离**：Docker/sandbox 能力实际探测；本机不可用时使用受限独立运行环境并将内核级隔离标记 BLOCKED，要求强隔离的项目 fail-closed。
+- 报告：[v2.1 工程报告](docs/v2.1/REPORT.md)、[v2.1 验收矩阵](docs/v2.1/ACCEPTANCE-MATRIX.md)、[隔离](docs/v2.1/ISOLATION.md)。
+
+## 0.2 v2.2 新增（自主研发可靠性收口）
+
+- **真正容器执行隔离**：Docker 适配器 + 运行时镜像；minimal worktree mount、cap-drop、no-new-privileges、只读 rootfs、network none(测试)、非 root、pids/memory/cpu 限制、超时清理；Docker 不可用 fail-closed。真实容器内 Claude Agent + 容器测试 E2E PASS。
+- **GLM 预算按实际模型身份**：只有 known GLM 豁免；Claude Code 使用 OpenAI/Anthropic/DeepSeek 端点不豁免；unknown 永不豁免；DeepSeek/OpenAI 原预算不变；四类供应商回归测试。
+- **持续研发可靠性**：3 个真实任务、SIGKILL 中断恢复、循环完成判定、幂等/不重复 commit、Git 基线校验、UNKNOWN 不推进、无任务/阻塞正确停止。
+- 报告：[v2.2 报告](docs/v2.2/REPORT.md)、[验收矩阵](docs/v2.2/ACCEPTANCE-MATRIX.md)、[容器隔离](docs/v2.2/CONTAINER-ISOLATION.md)、[GLM 身份](docs/v2.2/GLM-IDENTITY.md)。
+
+## 0.3 v2.3 新增（无人监督自主执行可靠性）
+
+- **真实进度看门狗**：按 worktree 实际推进检测 Agent 无进展，超时终止并保留证据；支持新会话重试与备选 Agent 切换（非 GLM 备选受预算约束）。
+- **失败分类与恢复**：stalled/timeout/budget/no-output/agent/infrastructure 分类持久化；主 Agent 失败→备选→主 Agent 全新会话；无人工代码干预。
+- **关键可靠性根因修复**：任务 `verification_json` 指数膨胀（Invalid string length）、低预算 finalize 阻塞、GLM 身份/预算、容器执行保持。
+- 验收：5 个冻结任务 5/5 自主完成、10/10 测试、5/5 独立审计、2/2 故障恢复；**严格 24h 窗口未执行，24h 验收 FAIL/UNKNOWN**。详见 [v2.3 报告](docs/v2.3/REPORT.md)、[验收矩阵](docs/v2.3/ACCEPTANCE-MATRIX.md)。
 
 ## 1. 核心能力
 
@@ -160,7 +192,7 @@ docs/                     使用说明 / 架构 / 配置 / 测试报告
 ## 7. 测试
 
 ```bash
-npm test          # 84 个用例全部通过；零依赖、离线、无需 API Key、不消耗 token
+npm test          # 180 个用例全部通过；零依赖、离线、无需 API Key、不消耗 token
 ```
 
 工作台的 GitHub Actions 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)，每个 demo 项目也内置 CI 工作流（阶段三 PR 会真实触发）。
