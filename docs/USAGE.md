@@ -41,7 +41,39 @@ node bin/workbench.js run --project <id> --goal "实现 X" --acceptance "a,b" --
 node bin/workbench.js resume <runId> --retry-failed
 node bin/workbench.js accept <runId>
 node bin/workbench.js events <runId>
+node bin/workbench.js --help                 # 查看全部命令（含原有 serve/run 等）
 ```
+
+### 研发循环（loop）子命令
+
+`loop` 子命令组用于查看和控制持续研发循环，**复用工作台 HTTP API**（`/api/loops` 系列），
+认证沿用 `data/api-token`（CLI 自动读取，无需手动传 Token）。因为走 HTTP，执行前需要先启动工作台服务：
+
+```bash
+npm start                                    # 或：node bin/workbench.js serve
+```
+
+```bash
+node bin/workbench.js loop --help            # 查看 loop 子命令用法
+node bin/workbench.js loop list              # 列出全部研发循环（状态/轮次/当前运行/停止原因）
+node bin/workbench.js loop list --project <项目ID>   # 只看某个项目的循环
+node bin/workbench.js loop status <loopId>   # 查看单个循环的详细状态与历史
+node bin/workbench.js loop pause <loopId>    # 暂停循环（可加 --reason "说明"）
+node bin/workbench.js loop resume <loopId>   # 恢复循环（可加 --retry-current 重试当前运行）
+node bin/workbench.js loop cancel <loopId>   # 取消循环（可加 --reason "说明"）
+```
+
+| 子命令 | 对应 HTTP API | 说明 |
+|---|---|---|
+| `loop list` | `GET /api/loops[?projectId=]` | 输出循环列表：id、项目、status、round/maxRounds、当前/最近运行、stopReason |
+| `loop status <id>` | `GET /api/loops/<id>` | 输出单个循环的详细状态：目标、模式、轮次进度、运行 ID、停止原因、历史 |
+| `loop pause <id>` | `POST /api/loops/<id>/pause` | 暂停循环，body 可带 `reason` |
+| `loop resume <id>` | `POST /api/loops/<id>/resume` | 恢复循环，body 可带 `retryCurrent`（`--retry-current`） |
+| `loop cancel <id>` | `POST /api/loops/<id>/cancel` | 取消循环，body 可带 `reason` |
+
+- 通用选项：`--url http://127.0.0.1:4477` 或 `--host/--port` 指定服务地址；`--json` 输出原始 JSON 便于脚本处理。
+- 服务未启动时命令以非 0 退出码结束并打印清晰的连接错误（提示先 `npm start`），不会抛裸栈或挂起。
+- `loop` 只做查看与暂停/恢复/取消，不会合并主分支或部署；循环的创建仍在 Web 界面/`POST /api/projects/:id/loops`。
 
 ## 3. 添加项目时的注意事项
 
@@ -103,3 +135,13 @@ npm run demo:phase3      # 阶段三：多项目并行 + 跨 Agent + GitHub PR/C
 | 任务一直 paused | 看运行 `stop_reason` 与事件流：常见原因为测试命令缺失、预算耗尽、审计不可用、Agent 未产生变更 |
 | GitHub 推送/PR 显示"待授权" | 配置 `GITHUB_TOKEN` 后重试；工作台不会伪造成功 |
 | 想查看某次产物 | 任务详情中点击产物，或 `GET /api/artifacts?path=...`；文件在 `data/artifacts/<runId>/` |
+
+
+## 执行隔离查看（isolation）
+
+```bash
+node bin/workbench.js isolation           # 人类可读
+node bin/workbench.js isolation --json    # 原始 JSON（/api/isolation）
+```
+
+展示内核隔离（docker/sandbox-exec/BLOCKED）、受限运行环境、Docker 容器测试/Claude Agent 可用性、运行时镜像与网络策略。命令只读，不启动/取消任何运行；服务需先启动。
