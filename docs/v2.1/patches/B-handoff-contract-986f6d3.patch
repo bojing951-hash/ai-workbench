@@ -1,0 +1,345 @@
+From 986f6d3e99e1b46d059d4fa389345eff6f30facf Mon Sep 17 00:00:00 2001
+From: AI Workbench <workbench@localhost>
+Date: Sun, 15 Nov 2026 21:18:24 +0800
+Subject: [PATCH] =?UTF-8?q?feat(task-1):=20=E5=9C=A8=20B=20=E6=9C=80?=
+ =?UTF-8?q?=E6=96=B0=20R37=20=E9=9A=94=E7=A6=BB=E5=85=8B=E9=9A=86=E4=B8=AD?=
+ =?UTF-8?q?=E5=A2=9E=E5=8A=A0=20A=E2=86=92B=20handoff=20=E7=A6=BB=E7=BA=BF?=
+ =?UTF-8?q?=E5=A5=91=E7=BA=A6=E5=86=92=E7=83=9F=E6=B5=8B=E8=AF=95=EF=BC=88?=
+ =?UTF-8?q?=E7=BA=AF=E6=96=B0=E5=A2=9E=E6=B5=8B=E8=AF=95=EF=BC=8C=E4=B8=8D?=
+ =?UTF-8?q?=E4=BF=AE=E6=94=B9=E6=9D=83=E5=A8=81=E6=A0=91/=E6=97=A2?=
+ =?UTF-8?q?=E6=9C=89=E6=B5=8B=E8=AF=95/=E5=86=BB=E7=BB=93=E6=96=87?=
+ =?UTF-8?q?=E6=A1=A3=EF=BC=89=E3=80=82?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 验收：新增 tests/test_workbench_handoff_contract.py：用临时目录调用 ia_cli.py research-run --question <自包含问题> --out-dir <tmp>，断言 stdout 为单个 JSON 信封且包含 ok/steps/layers_summary；若产物生成则 report.json 与 report.md 双落盘；L3/L4 必须 produced=False/declared-not-produced；干净无数据环境允许 SKIP，不得断言 run_ok=True。
+- 验收：不修改任何既有测试、产品代码、docs/autonomous-rd 冻结文档、.github/workflows、CLAUDE.md、PRODUCT-GOAL.md。
+- 验收：测试使用临时目录，不联网、不调真实模型/付费 API、不写产品数据树。
+- 验收：项目门禁命令（状态一致性 + thresholds + 新测试）全部通过。
+
+审计：glm/glm-5.3 PASS（得分 94）
+测试：python3 -B scripts/rd_state_consistency.py --repo . --state-dir docs/autonomous-rd && python3 -B scripts/thresholds_gate.py && python3 -B tests/test_workbench_handoff_contract.py 通过（指纹 37b49069bb1b）
+生成：AI 开发工作台 v2.0
+---
+ tests/test_workbench_handoff_contract.py | 308 +++++++++++++++++++++++
+ 1 file changed, 308 insertions(+)
+ create mode 100644 tests/test_workbench_handoff_contract.py
+
+diff --git a/tests/test_workbench_handoff_contract.py b/tests/test_workbench_handoff_contract.py
+new file mode 100644
+index 0000000..386dfa7
+--- /dev/null
++++ b/tests/test_workbench_handoff_contract.py
+@@ -0,0 +1,308 @@
++#!/usr/bin/env python3
++# -*- coding: utf-8 -*-
++"""A→B 交接接口离线契约冒烟测试(纯新增测试,不改产品代码)。
++
++契约源(权威,只读不改):
++  ia_cli.py::cmd_research_run
++      → stdout 恰一个 JSON 信封(顶层 ok;data.steps / data.layers_summary)
++  scripts/research_orchestrator.py::run_research
++      → report.json + report.md 双落盘;
++        L3 AI推断层 / L4 条件情景层恒 produced=False(declared-not-produced,
++        归编排层 Agent 补作,本管线绝不代写)。
++
++覆盖面:
++  [1] 真子进程调用 `ia_cli.py research-run --question <自包含问题> --out-dir <tmp>`,
++      stdout 恰一个 JSON 对象(无进度/警告混入);
++  [2] 信封三件套: 顶层 ok + data.steps + data.layers_summary 的类型与内容契约;
++  [3] 产物双落盘: report.json / report.md 均在临时报告目录且非空;
++      L3/L4 produced=False + declared-not-produced 注记(JSON 与 MD 双面);
++  [4] 干净无数据环境容忍: 允许步骤 SKIP / 失败;SKIP 必须带原因;
++      **本套件不断言 run_ok=True**(ok 只校验类型,不锁定取值);
++  [5] 隔离证据: 报告目录在临时目录内;产品 data/daily 与默认
++      output/research_runs 前后零变化。
++
++离线纪律: research-run 全链=本地确定性步骤(零模型、零网络);本套件显式剥离
++MODEL_* / IA_NEWS_MODEL_SUMMARY,不传 --explain / --archive,
++IA_ARCHIVE_DIR 指入临时目录,PYTHONDONTWRITEBYTECODE=1 防 __pycache__ 落产品树。
++"""
++import json
++import os
++import shutil
++import subprocess
++import sys
++import tempfile
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++CLI = os.path.join(ROOT, 'ia_cli.py')
++
++# 自包含问题: 明写主体(美国)+指标(注册表 display_name「10年期美债收益率」)
++# +时间窗(当前/年内),不依赖任何对话上下文。刻意只命中 1 个指标——
++# S5_compare 因「命中指标不足 2 个」确定性 SKIP,用于锁「允许 SKIP」契约。
++QUESTION = '美国10年期美债收益率当前水平及年内变化如何？'
++
++PASS, FAIL = 0, 0
++
++
++def check(name, cond, detail=""):
++    global PASS, FAIL
++    if cond:
++        PASS += 1
++        print(f"  ✅ {name}")
++    else:
++        FAIL += 1
++        print(f"  ❌ {name} {detail}")
++
++
++def section(title):
++    print("═" * 64)
++    print(f"[{title}]")
++    print("═" * 64)
++
++
++def _dir_entries(path):
++    """目录项快照;不存在= None(用于前后零变化对照)。"""
++    try:
++        return sorted(os.listdir(path))
++    except OSError:
++        return None
++
++
++def _parse_json_stream(raw):
++    """把 stdout 解析为 JSON 对象序列;任何非 JSON 尾巴 → None。
++
++    返回 list 才代表「整个 stdout 只由若干 JSON 值+空白构成」;
++    调用方再要求恰 1 个。不用 json.loads,以便区分「单个信封」与
++    「信封+进度文字」及「两个信封」等违约形态。
++    """
++    dec = json.JSONDecoder()
++    pos, n, objs = 0, len(raw), []
++    try:
++        while True:
++            while pos < n and raw[pos] in ' \t\r\n':
++                pos += 1
++            if pos >= n:
++                return objs
++            obj, pos = dec.raw_decode(raw, pos)
++            objs.append(obj)
++    except ValueError:
++        return None
++
++
++def _run_research_run(tmp):
++    """真子进程跑 CLI(临时目录注入);返回 (proc|None, stdout, stderr, cmd)。"""
++    out_dir = os.path.join(tmp, 'research_runs')
++    os.makedirs(out_dir, exist_ok=True)
++    env = dict(os.environ)
++    # 离线/零付费断言面: 置空模型凭证(空串=未配置,且 env 优先于 .env,
++    # 不会被项目根 .env 重新注入);关闭新闻模型摘要;不传 --explain/--archive。
++    for key in ('MODEL_API_KEY', 'MODEL_BASE_URL', 'MODEL_NAME', 'GLM_API_KEY'):
++        env[key] = ''
++    env['IA_NEWS_MODEL_SUMMARY'] = '0'
++    env['PYTHONDONTWRITEBYTECODE'] = '1'   # 防 import 写 __pycache__ 落产品树
++    env['IA_ARCHIVE_DIR'] = os.path.join(tmp, 'archive')  # 防误写研究档案
++    cmd = [sys.executable, '-B', CLI, 'research-run',
++           '--question', QUESTION, '--out-dir', out_dir]
++    try:
++        proc = subprocess.run(cmd, capture_output=True, text=True,
++                              errors='replace', timeout=900, cwd=ROOT, env=env)
++    except (subprocess.TimeoutExpired, OSError):
++        return None, '', '', cmd
++    return proc, proc.stdout, proc.stderr, cmd
++
++
++def _read_text(path):
++    try:
++        with open(path, encoding='utf-8') as fh:
++            return fh.read()
++    except (OSError, ValueError):
++        return ''
++
++
++def main():
++    tmp = tempfile.mkdtemp(prefix='ia_ab_handoff_')
++    try:
++        daily_dir = os.path.join(ROOT, 'data', 'daily')
++        default_out = os.path.join(ROOT, 'output', 'research_runs')
++        before_daily = _dir_entries(daily_dir)
++        before_default_out = _dir_entries(default_out)
++
++        section("1 单 JSON 信封(真子进程 research-run)")
++        proc, raw, err, cmd = _run_research_run(tmp)
++        check("CLI 可启动(临时 --out-dir 注入)",
++              proc is not None, "超时/进程启动失败")
++        if proc is None:
++            return 1
++        check("调用形态: python -B ia_cli.py research-run --question … --out-dir <tmp>",
++              cmd[2] == CLI and cmd[3] == 'research-run'
++              and '--question' in cmd and '--out-dir' in cmd, str(cmd[:6]))
++        check("退出码为 0/1(语义成败由信封 ok 承载,不断言 run_ok=True)",
++              proc.returncode in (0, 1), f"rc={proc.returncode}")
++        check("stderr 无 Traceback(进程未裸崩)",
++              'Traceback' not in (err or ''), (err or '')[:160])
++        stripped = (raw or '').strip()
++        check("stdout 首字符为 '{'", stripped.startswith('{'),
++              repr(stripped[:100]))
++        objs = _parse_json_stream(raw or '')
++        check("stdout 恰一个顶层 JSON(无进度/警告/双信封混入)",
++              isinstance(objs, list) and len(objs) == 1,
++              f"实际 {len(objs) if isinstance(objs, list) else '非JSON'}")
++        env = (objs[0] if isinstance(objs, list) and len(objs) == 1
++               and isinstance(objs[0], dict) else {})
++        check("信封为 JSON 对象", bool(env))
++        check("顶层 ok 字段为 bool", isinstance(env.get('ok'), bool),
++              f"ok={env.get('ok')!r}")
++        check("信封 capability='research-run'",
++              env.get('capability') == 'research-run',
++              f"got {env.get('capability')!r}")
++        data = env.get('data') if isinstance(env.get('data'), dict) else {}
++        check("信封 data.steps 为 list", isinstance(data.get('steps'), list))
++        check("信封 data.layers_summary 为 dict",
++              isinstance(data.get('layers_summary'), dict))
++
++        section("2 步骤台账契约(干净环境允许 SKIP/失败)")
++        steps = (data.get('steps') if isinstance(data.get('steps'), list)
++                 else [])
++        check("步骤台账非空", bool(steps), f"n={len(steps)}")
++        check("每步含 step/ok/executed 三键",
++              all(isinstance(s, dict) and {'step', 'ok', 'executed'} <= set(s)
++                  for s in steps))
++        check("step 非空字符串;ok/executed 为 bool",
++              all(isinstance(s.get('step'), str) and s.get('step')
++                  and isinstance(s.get('ok'), bool)
++                  and isinstance(s.get('executed'), bool) for s in steps))
++        names = [s.get('step') for s in steps]
++        required = {'S1_decompose', 'S3_changes', 'S8_grounded_qa',
++                    'S9_views_lint', 'S10_selfcheck', 'S11_archive'}
++        check("关键步骤齐备(S1/S3/S8/S9/S10/S11)",
++              required <= set(names), f"missing={sorted(required - set(names))}")
++        skipped = [s for s in steps if s.get('executed') is False]
++        check("SKIP 步骤均带原因(不得静默跳过)",
++              all(str(s.get('note') or '').strip() for s in skipped),
++              f"skipped={[s.get('step') for s in skipped]}")
++        check("SKIP 契约被实跑覆盖(S5_compare 命中指标<2 确定性 SKIP)",
++              any(s.get('step') == 'S5_compare' for s in skipped),
++              f"skipped={[s.get('step') for s in skipped]}")
++        n_exec = sum(1 for s in steps if s.get('executed'))
++        n_skip = len(skipped)
++        n_fail = sum(1 for s in steps
++                     if s.get('executed') and s.get('ok') is False)
++        # 注意: 此处只统计、不判定——无数据环境进程步失败/跳过均为合法状态。
++        print(f"  观察: env.ok={env.get('ok')} executed={n_exec} "
++              f"skipped={n_skip} executed_failed={n_fail}")
++
++        section("3 四层摘要契约(L3/L4 declared-not-produced)")
++        ls = (data.get('layers_summary')
++              if isinstance(data.get('layers_summary'), dict) else {})
++        required_ls = {'L1_available', 'L1_n_rows', 'L2_vp_available',
++                       'L2_n_views', 'L3_produced', 'L4_produced'}
++        check("layers_summary 六键齐备", required_ls <= set(ls),
++              f"missing={sorted(required_ls - set(ls))}")
++        check("L1_available 为 bool / L1_n_rows 为 int",
++              isinstance(ls.get('L1_available'), bool)
++              and isinstance(ls.get('L1_n_rows'), int))
++        check("L2_vp_available 为 bool / L2_n_views 为 int|None",
++              isinstance(ls.get('L2_vp_available'), bool)
++              and (ls.get('L2_n_views') is None
++                   or isinstance(ls.get('L2_n_views'), int)))
++        check("L3_produced=False(declared-not-produced)",
++              ls.get('L3_produced') is False, f"got {ls.get('L3_produced')!r}")
++        check("L4_produced=False(declared-not-produced)",
++              ls.get('L4_produced') is False, f"got {ls.get('L4_produced')!r}")
++
++        section("4 产物双落盘与 L3/L4 注记(JSON+MD 双面)")
++        report_dir = data.get('report_dir')
++        check("data.report_dir 在场且为目录",
++              isinstance(report_dir, str) and os.path.isdir(report_dir),
++              f"got {report_dir!r}")
++        if not isinstance(report_dir, str):
++            report_dir = ''
++        report_json = os.path.join(report_dir, 'report.json')
++        report_md = os.path.join(report_dir, 'report.md')
++        check("report.json 与 report.md 双落盘且非空",
++              all(os.path.isfile(p) and os.path.getsize(p) > 0
++                  for p in (report_json, report_md)),
++              f"json={os.path.isfile(report_json)} "
++              f"md={os.path.isfile(report_md)}")
++        report = {}
++        if os.path.isfile(report_json):
++            try:
++                with open(report_json, encoding='utf-8') as fh:
++                    report = json.load(fh)
++            except (OSError, ValueError):
++                report = {}
++        if not isinstance(report, dict):
++            report = {}
++        check("report.json 可解析且 schema_version=2.0",
++              report.get('schema_version') == '2.0',
++              f"schema={report.get('schema_version')!r}")
++        check("report.run.question 与 CLI 入参一致",
++              ((report.get('run') or {}).get('question') == QUESTION),
++              f"got {(report.get('run') or {}).get('question')!r}")
++        layers = report.get('layers') if isinstance(report.get('layers'), dict) else {}
++        l3 = layers.get('L3_AI推断层') if isinstance(
++            layers.get('L3_AI推断层'), dict) else {}
++        l4 = layers.get('L4_条件情景层') if isinstance(
++            layers.get('L4_条件情景层'), dict) else {}
++        check("report.json L3/L4 produced=False",
++              l3.get('produced') is False and l4.get('produced') is False,
++              f"L3={l3.get('produced')!r} L4={l4.get('produced')!r}")
++        l3n, l4n = str(l3.get('note') or ''), str(l4.get('note') or '')
++        check("L3 declared-not-produced 注记(归 Agent+绝不代写)",
++              'Agent' in l3n and '绝不代写' in l3n, l3n[:100])
++        check("L4 declared-not-produced 注记(归 Agent+绝不代写)",
++              'Agent' in l4n and '绝不代写' in l4n, l4n[:100])
++        check("report.json 步骤台账与信封条数一致",
++              len(report.get('steps') or []) == len(steps),
++              f"report={len(report.get('steps') or [])} env={len(steps)}")
++        l1_rows = ((layers.get('L1_事实层') or {}).get('rows') or [])
++        check("report.json L1 行数与 layers_summary 一致",
++              len(l1_rows) == ls.get('L1_n_rows'),
++              f"report={len(l1_rows)} summary={ls.get('L1_n_rows')!r}")
++        check("report.json 证据索引行数与信封一致",
++              len(report.get('evidence_index') or [])
++              == data.get('n_evidence_rows'),
++              f"report={len(report.get('evidence_index') or [])} "
++              f"env={data.get('n_evidence_rows')!r}")
++        md = _read_text(report_md) if os.path.isfile(report_md) else ''
++        check("report.md 四层区分/步骤台账/L3-L4 produced=False 齐备",
++              all(t in md for t in ('## 四层区分',
++                                    'L3 AI推断层 produced=False',
++                                    'L4 条件情景层 produced=False',
++                                    '## 步骤台账')))
++
++        section("5 隔离证据(临时目录;不写产品数据树)")
++        tmp_real = os.path.realpath(tmp)
++        rep_real = os.path.realpath(report_dir) if report_dir else ''
++        inside = False
++        if rep_real:
++            try:
++                inside = os.path.commonpath([tmp_real, rep_real]) == tmp_real
++            except ValueError:
++                inside = False
++        check("报告目录位于临时目录内(--out-dir 生效)", inside,
++              f"report_dir={rep_real!r} tmp={tmp_real!r}")
++        check("产品 data/daily 前后零新增/删除",
++              _dir_entries(daily_dir) == before_daily)
++        check("默认 output/research_runs 前后零新增(未污染产品输出)",
++              _dir_entries(default_out) == before_default_out)
++
++        section("6 契约观察(不锁定 run_ok)")
++        print(f"  观察: env.ok={env.get('ok')}(bool,可为 False)"
++              f" L1_available={ls.get('L1_available')}"
++              f" L1_n_rows={ls.get('L1_n_rows')}"
++              f" L3_produced={ls.get('L3_produced')}"
++              f" L4_produced={ls.get('L4_produced')}")
++        print("  说明: 干净无数据环境允许步骤 SKIP/失败;本套件只锁信封与四层")
++        print("        诚实面,不断言 run_ok=True(亦不断言 run_ok=False)。")
++
++        print()
++        print("═" * 64)
++        print(f"结果: {PASS}通过 / {FAIL}失败")
++        print("═" * 64)
++        return 0 if FAIL == 0 else 1
++    finally:
++        shutil.rmtree(tmp, ignore_errors=True)
++
++
++if __name__ == '__main__':
++    sys.exit(main())
+-- 
+2.50.1 (Apple Git-155)
+
