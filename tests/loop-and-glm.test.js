@@ -39,8 +39,8 @@ test('GLM 与其它 provider 分开统计，且 GLM 不计入预算上限', () =
   const { config, store } = tempEnv();
   try {
     store.createRun({ id: 'run1', projectId: 'p1', goal: 'g', status: 'running' });
-    store.createAttempt({ id: 'a1', runId: 'run1', taskId: 't1', attemptNo: 1, stage: 'coding', agentKind: 'claude', provider: 'glm', model: 'glm-5.3', tokensIn: 100, tokensOut: 50, tokensCache: 1000, costCny: 1.5 });
-    store.createAttempt({ id: 'a2', runId: 'run1', taskId: 't1', attemptNo: 2, stage: 'coding', agentKind: 'dsh', provider: 'deepseek', model: 'deepseek', tokensIn: 100, tokensOut: 50, tokensCache: 1000, costCny: 0.1 });
+    store.createAttempt({ id: 'a1', runId: 'run1', taskId: 't1', attemptNo: 1, stage: 'coding', agentKind: 'claude', provider: 'glm', providerKnown: true, providerSource: 'test', model: 'glm-5.3', tokensIn: 100, tokensOut: 50, tokensCache: 1000, costCny: 1.5 });
+    store.createAttempt({ id: 'a2', runId: 'run1', taskId: 't1', attemptNo: 2, stage: 'coding', agentKind: 'dsh', provider: 'deepseek', providerKnown: true, providerSource: 'test', model: 'deepseek', tokensIn: 100, tokensOut: 50, tokensCache: 1000, costCny: 0.1 });
     const raw = store.usageTotals();
     assert.ok(raw.byProvider.glm);
     assert.ok(raw.byProvider.deepseek);
@@ -95,6 +95,22 @@ test('LoopManager：队列模式在队列为空时停止，不制造任务', asy
     assert.equal(after.status, 'completed');
     assert.match(after.stop_reason, /队列已空/);
     assert.equal(started.length, 0);
+  } finally {
+    store.close();
+  }
+});
+
+
+test('未知供应商不获得 GLM 预算豁免（即使 provider 字段缺失/未知）', () => {
+  const { config, store } = tempEnv();
+  try {
+    store.createRun({ id: 'run-unknown', projectId: 'p1', goal: 'g', status: 'running' });
+    store.createAttempt({ id: 'au1', runId: 'run-unknown', taskId: 't1', attemptNo: 1, stage: 'coding', agentKind: 'custom', provider: 'unknown', providerKnown: false, tokensIn: 100, tokensOut: 50, tokensCache: 1000, costCny: 0.2 });
+    const orchestrator = new Orchestrator({ config, store, bus: new EventBus(), deps: { runAgent: async () => ({}), chooseAgent: async () => 'dsh', runAudit: async () => ({}), checkAgents: async () => [] } });
+    const weighted = orchestrator.weightUsage(store.usageTotals());
+    assert.equal(weighted.glmUnlimited, true);
+    assert.equal(weighted.budgetTokens, 100 + 50 + 1000 * 0.1); // unknown 计入，不豁免
+    assert.ok(Math.abs(weighted.budgetCostCny - 0.2) < 1e-9);
   } finally {
     store.close();
   }

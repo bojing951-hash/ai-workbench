@@ -10,6 +10,8 @@ import { commandExists, execCapture } from '../runner.js';
 import { ensureDir } from '../util.js';
 import { buildAgentEnv, resolveAgentPermission } from '../security.js';
 import { estimateCostCny, usdToCny } from '../pricing.js';
+import { resolveAgentIdentity } from '../model-identity.js';
+import { runAgentInContainer } from '../container.js';
 
 export const meta = {
   id: 'claude',
@@ -88,20 +90,37 @@ export async function run(ctx) {
   if (cc.model) args.push('--model', cc.model);
   if (sessionId) args.push('--resume', sessionId);
 
+  const identity = resolveAgentIdentity({ config, agentId: 'claude', project });
   const env = buildAgentEnv({ config, agentId: 'claude', homeDir: ctx.agentHome });
+  const containerEnv = {
+    ANTHROPIC_BASE_URL: cc.baseUrl || '',
+    ANTHROPIC_API_KEY: cc.apiKey || '',
+    ANTHROPIC_MODEL: cc.model || '',
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    CLAUDE_CODE_DISABLE_THINKING: '1',
+  };
 
   const startedAt = Date.now();
-  const res = await execCapture(cc.bin, args, {
-    cwd,
-    env,
-    timeoutMs: timeoutMs || cc.timeoutMs,
-    stdin: prompt,
-    logPath,
-    signal,
-    onStderr: (chunk) => {
-      if (onEvent && chunk.trim()) onEvent({ kind: 'stderr', summary: chunk.slice(0, 200) });
-    },
-  });
+  let res;
+  if (ctx.container) {
+    res = await runAgentInContainer({
+      config, worktree: cwd, agentHome: cc.home, cliArgs: args, env: containerEnv,
+      timeoutMs: timeoutMs || cc.timeoutMs, stdin: prompt, logPath, signal,
+      network: ctx.container.network || '',
+    });
+  } else {
+    res = await execCapture(cc.bin, args, {
+      cwd,
+      env,
+      timeoutMs: timeoutMs || cc.timeoutMs,
+      stdin: prompt,
+      logPath,
+      signal,
+      onStderr: (chunk) => {
+        if (onEvent && chunk.trim()) onEvent({ kind: 'stderr', summary: chunk.slice(0, 200) });
+      },
+    });
+  }
   const durationMs = Date.now() - startedAt;
   const data = parseResultJson(res.stdout);
   if (!data) {
@@ -130,7 +149,8 @@ export async function run(ctx) {
   };
   const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
   const costReported = Number.isFinite(Number(data.total_cost_usd));
-  const costCny = costReported ? usdToCny(Number(data.total_cost_usd)) : estimateCostCny('glm', cc.model || 'glm', usage);
+  const costProvider = identity.known ? identity.provider : 'unknown';
+  const costCny = costReported ? usdToCny(Number(data.total_cost_usd)) : estimateCostCny(costProvider, cc.model || identity.model || 'unknown', usage);
 
   let error = '';
   if (res.timedOut) error = 'Claude Code 执行超时';
@@ -148,8 +168,12 @@ export async function run(ctx) {
     text: String(data.result || ''),
     error,
     agentKind: 'claude',
-    provider: 'glm',
-    model: cc.model || 'glm',
+    provider: identity.known ? identity.provider : 'unknown',
+    providerKnown: identity.known,
+    providerSource: identity.source,
+    providerNote: identity.note,
+    model: cc.model || identity.model || '',
+    exempt: identity.exempt,
     canRunShell: false,
     costReported,
     costSource: costReported ? 'vendor' : 'estimated',
@@ -162,6 +186,7 @@ export async function run(ctx) {
     tokens,
     costCny,
     logPath,
+    container: ctx.container ? res.isolation : null,
     numTurns: data.num_turns,
     reportedCostUsd: data.total_cost_usd,
   };

@@ -97,6 +97,9 @@ export function buildConfig(overrides = {}) {
       default: str(env.DEFAULT_AGENT, 'auto'),
       dsh: {
         bin: str(env.DSH_BIN, defaultDshBin()),
+        provider: str(env.DSH_PROVIDER, ''),
+        model: str(env.DSH_MODEL, ''),
+        baseUrl: str(env.DSH_BASE_URL, ''),
         home: str(env.DSH_HOME_OVERRIDE, paths.dshHome),
         permissionMode: str(env.DSH_PERMISSION_MODE, 'workspace-write'),
         approvalPolicy: str(env.DSH_APPROVAL_POLICY, 'never'),
@@ -178,6 +181,16 @@ export function buildConfig(overrides = {}) {
       mode: env.ISOLATION_MODE || 'restricted',
       dockerBin: env.DOCKER_BIN || 'docker',
       testImage: env.ISOLATION_TEST_IMAGE || '',
+      container: {
+        image: env.CONTAINER_IMAGE || env.ISOLATION_TEST_IMAGE || 'ai-workbench-runtime:2.2',
+        dockerBin: env.DOCKER_BIN || 'docker',
+        memory: env.CONTAINER_MEMORY || '2g',
+        cpus: env.CONTAINER_CPUS || '2',
+        pidsLimit: int(env.CONTAINER_PIDS_LIMIT, 512),
+        networkTest: env.CONTAINER_NETWORK_TEST || 'none',
+        networkAgent: env.CONTAINER_NETWORK_AGENT || 'bridge',
+        timeoutMs: int(env.CONTAINER_TIMEOUT_MS, 900_000),
+      },
     },
     policy: {
       neverMerge: true,

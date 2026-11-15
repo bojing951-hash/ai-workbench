@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { PolicyError } from './policy.js';
 import { detectIsolationCapabilities, isolationModeForProject } from './isolation.js';
+import { containerCapabilities } from './container.js';
 import { VERSION } from './orchestrator.js';
 import { assertSafeWriteRequest, isAllowedHost, redactForResponse, resolveWithin, WriteRateLimiter } from './security.js';
 
@@ -360,7 +361,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
 
     if (pathname === '/api/isolation' && method === 'GET') {
       const caps = isolation();
-      return sendJson(res, 200, { ok: true, data: { ...caps, projectModes: store.listProjects().map((p) => ({ id: p.id, name: p.name, mode: isolationModeForProject(config, p) })) } });
+      return sendJson(res, 200, { ok: true, data: { ...caps, container: containerCapabilities(config), projectModes: store.listProjects().map((p) => ({ id: p.id, name: p.name, mode: isolationModeForProject(config, p) })) } });
     }
 
     if (pathname === '/api/budget' && method === 'GET') {

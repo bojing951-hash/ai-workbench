@@ -9,6 +9,7 @@ import { commandExists, execCapture } from '../runner.js';
 import { ensureDir } from '../util.js';
 import { buildAgentEnv, resolveAgentPermission } from '../security.js';
 import { estimateCostCny } from '../pricing.js';
+import { resolveAgentIdentity } from '../model-identity.js';
 
 export const meta = {
   id: 'dsh',
@@ -63,6 +64,7 @@ export async function run(ctx) {
     else signal.addEventListener('abort', onParentAbort, { once: true });
   }
 
+  const identity = resolveAgentIdentity({ config, agentId: 'dsh', project });
   const args = [
     'headless',
     '--json',
@@ -145,7 +147,8 @@ export async function run(ctx) {
 
   const durationMs = Date.now() - startedAt;
   const totalTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-  const costCny = estimateCostCny('deepseek', 'deepseek-flash', usage);
+  const costProvider = identity.known ? identity.provider : 'unknown';
+  const costCny = estimateCostCny(costProvider, identity.model || 'unknown', usage);
   const completed = finalReason?.kind === 'completed';
   let error = '';
   if (overBudget) error = `Agent 超出单任务 token 预算（${totalTokens} > ${maxTokens}），已中止`;
@@ -159,8 +162,12 @@ export async function run(ctx) {
     text: finalText,
     error,
     agentKind: 'dsh',
-    provider: 'deepseek',
-    model: 'deepseek',
+    provider: identity.known ? identity.provider : 'unknown',
+    providerKnown: identity.known,
+    providerSource: identity.source,
+    providerNote: identity.note,
+    model: identity.model || '',
+    exempt: identity.exempt,
     canRunShell: permission.allowShell,
     costReported: false,
     costSource: 'estimated',

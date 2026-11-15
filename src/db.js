@@ -266,12 +266,16 @@ export class Store {
         ['cost_source', "TEXT DEFAULT 'estimated'"],
         ['provider', "TEXT DEFAULT ''"],
         ['model', "TEXT DEFAULT ''"],
+        ['provider_known', 'INTEGER DEFAULT 0'],
+        ['provider_source', "TEXT DEFAULT ''"],
       ],
       audits: [
         ['verification_status', "TEXT DEFAULT ''"],
         ['evidence_hash', "TEXT DEFAULT ''"],
         ['diff_hash', "TEXT DEFAULT ''"],
         ['independence', "TEXT DEFAULT 'unknown'"],
+        ['provider_known', 'INTEGER DEFAULT 0'],
+        ['provider_source', "TEXT DEFAULT ''"],
       ],
     };
     for (const [table, cols] of Object.entries(columns)) {
@@ -288,6 +292,10 @@ export class Store {
       this.db.exec("UPDATE attempts SET provider='glm' WHERE (provider IS NULL OR provider='') AND agent_kind='claude'");
       this.db.exec("UPDATE attempts SET provider='deepseek' WHERE (provider IS NULL OR provider='') AND agent_kind IN ('dsh','planning','deepseek')");
       this.db.exec("UPDATE attempts SET provider='unknown' WHERE provider IS NULL OR provider=''");
+      // 历史记录：旧版按 agentKind 推断 provider；标记 known=1 并保留来源，避免重复/回退费用口径
+      this.db.exec("UPDATE attempts SET provider_known=1, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek') AND provider_known=0 AND provider_source=''");
+      this.db.exec("UPDATE attempts SET provider='unknown', provider_known=0, provider_source='legacy_unknown' WHERE provider NOT IN ('glm','deepseek','openai','anthropic') AND provider_source=''");
+      this.db.exec("UPDATE audits SET provider_known=1, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek','openai','anthropic') AND provider_known=0 AND provider_source=''");
     } catch {
       /* ignore */
     }
@@ -679,8 +687,8 @@ export class Store {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,cost_reported,cost_source,provider,model,duration_ms,log_path,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,cost_reported,cost_source,provider,model,provider_known,provider_source,duration_ms,log_path,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         a.id,
@@ -703,6 +711,8 @@ export class Store {
         a.costSource || (a.costReported ? 'vendor' : 'estimated'),
         a.provider || '',
         a.model || '',
+        a.providerKnown ? 1 : 0,
+        a.providerSource || '',
         a.durationMs || 0,
         a.logPath || '',
         now,
@@ -732,13 +742,15 @@ export class Store {
       cost_source: patch.cost_source ?? patch.costSource ?? cur.cost_source,
       provider: patch.provider ?? cur.provider,
       model: patch.model ?? cur.model,
+      provider_known: patch.provider_known ?? patch.providerKnown ?? cur.provider_known,
+      provider_source: patch.provider_source ?? patch.providerSource ?? cur.provider_source,
       duration_ms: patch.duration_ms ?? patch.durationMs ?? cur.duration_ms,
       log_path: patch.log_path ?? patch.logPath ?? cur.log_path,
     };
     const merged = { ...cur, ...normalized };
     this.db
       .prepare(
-        `UPDATE attempts SET session_id=?, exit_code=?, status=?, error=?, feedback=?, tokens_in=?, tokens_out=?, tokens_cache=?, cost_cny=?, cost_reported=?, cost_source=?, provider=?, model=?, duration_ms=?, log_path=?, updated_at=? WHERE id=?`,
+        `UPDATE attempts SET session_id=?, exit_code=?, status=?, error=?, feedback=?, tokens_in=?, tokens_out=?, tokens_cache=?, cost_cny=?, cost_reported=?, cost_source=?, provider=?, model=?, provider_known=?, provider_source=?, duration_ms=?, log_path=?, updated_at=? WHERE id=?`,
       )
       .run(
         merged.session_id || '',
@@ -754,6 +766,8 @@ export class Store {
         merged.cost_source || 'estimated',
         merged.provider || '',
         merged.model || '',
+        merged.provider_known ? 1 : 0,
+        merged.provider_source || '',
         merged.duration_ms || 0,
         merged.log_path || '',
         nowIso(),
@@ -777,8 +791,8 @@ export class Store {
   createAudit(a) {
     this.db
       .prepare(
-        `INSERT INTO audits (id,run_id,task_id,attempt_no,provider,model,verdict,score,criteria_json,findings_json,required_fixes_json,summary,tokens_in,tokens_out,cost_cny,raw_path,verification_status,evidence_hash,diff_hash,independence,created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO audits (id,run_id,task_id,attempt_no,provider,model,provider_known,provider_source,verdict,score,criteria_json,findings_json,required_fixes_json,summary,tokens_in,tokens_out,cost_cny,raw_path,verification_status,evidence_hash,diff_hash,independence,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         a.id,
@@ -787,6 +801,8 @@ export class Store {
         a.attemptNo || 0,
         a.provider,
         a.model || '',
+        a.providerKnown ? 1 : 0,
+        a.providerSource || '',
         a.verdict,
         a.score || 0,
         JSON.stringify(a.criteria || []),
@@ -920,12 +936,12 @@ export class Store {
   }
 
   usageTotals() {
-    const attemptRows = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM attempts GROUP BY provider`).all();
-    const auditRows = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost FROM audits GROUP BY provider`).all();
+    const attemptRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM attempts GROUP BY provider`).all();
+    const auditRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost FROM audits GROUP BY provider`).all();
     const byProvider = {};
     const ensure = (name) => {
       const key = name || 'unknown';
-      if (!byProvider[key]) byProvider[key] = { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 };
+      if (!byProvider[key]) byProvider[key] = { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0, known: false };
       return byProvider[key];
     };
     for (const r of attemptRows) {
@@ -934,13 +950,14 @@ export class Store {
       agg.tokensOut += Number(r.tout);
       agg.tokensCache += Number(r.tc);
       agg.costCny += Number(r.cost);
+      agg.known = agg.known || Number(r.known) === 1;
     }
     for (const r of auditRows) {
       const agg = ensure(r.provider || 'unknown');
       agg.tokensIn += Number(r.tin);
       agg.tokensOut += Number(r.tout);
-      // 审计缓存 token 无法精确取得时按 0 计，不冒充
       agg.costCny += Number(r.cost);
+      agg.known = agg.known || Number(r.known) === 1;
     }
     for (const agg of Object.values(byProvider)) agg.tokens = agg.tokensIn + agg.tokensOut + agg.tokensCache;
     const total = Object.values(byProvider).reduce((acc, a) => {
@@ -951,12 +968,12 @@ export class Store {
   }
 
   usageForProject(projectId) {
-    const attemptRows = this.db.prepare(`SELECT a.provider, COALESCE(SUM(a.tokens_in),0) tin, COALESCE(SUM(a.tokens_out),0) tout, COALESCE(SUM(a.tokens_cache),0) tc, COALESCE(SUM(a.cost_cny),0) cost FROM attempts a JOIN runs r ON r.id=a.run_id WHERE r.project_id=? GROUP BY a.provider`).all(projectId);
-    const auditRows = this.db.prepare(`SELECT au.provider, COALESCE(SUM(au.tokens_in),0) tin, COALESCE(SUM(au.tokens_out),0) tout, COALESCE(SUM(au.cost_cny),0) cost FROM audits au JOIN runs r ON r.id=au.run_id WHERE r.project_id=? GROUP BY au.provider`).all(projectId);
+    const attemptRows = this.db.prepare(`SELECT a.provider, MAX(a.provider_known) known, COALESCE(SUM(a.tokens_in),0) tin, COALESCE(SUM(a.tokens_out),0) tout, COALESCE(SUM(a.tokens_cache),0) tc, COALESCE(SUM(a.cost_cny),0) cost FROM attempts a JOIN runs r ON r.id=a.run_id WHERE r.project_id=? GROUP BY a.provider`).all(projectId);
+    const auditRows = this.db.prepare(`SELECT au.provider, MAX(au.provider_known) known, COALESCE(SUM(au.tokens_in),0) tin, COALESCE(SUM(au.tokens_out),0) tout, COALESCE(SUM(au.cost_cny),0) cost FROM audits au JOIN runs r ON r.id=au.run_id WHERE r.project_id=? GROUP BY au.provider`).all(projectId);
     const byProvider = {};
-    const ensure = (name) => { const k = name || 'unknown'; if (!byProvider[k]) byProvider[k] = { tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0 }; return byProvider[k]; };
-    for (const r of attemptRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.tokensCache+=Number(r.tc); a.costCny+=Number(r.cost); }
-    for (const r of auditRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.costCny+=Number(r.cost); }
+    const ensure = (name) => { const k = name || 'unknown'; if (!byProvider[k]) byProvider[k] = { tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0,known:false }; return byProvider[k]; };
+    for (const r of attemptRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.tokensCache+=Number(r.tc); a.costCny+=Number(r.cost); a.known=a.known||Number(r.known)===1; }
+    for (const r of auditRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.costCny+=Number(r.cost); a.known=a.known||Number(r.known)===1; }
     for (const a of Object.values(byProvider)) a.tokens=a.tokensIn+a.tokensOut+a.tokensCache;
     const total = Object.values(byProvider).reduce((acc,a)=>{acc.tokensIn+=a.tokensIn;acc.tokensOut+=a.tokensOut;acc.tokensCache+=a.tokensCache;acc.tokens+=a.tokens;acc.costCny+=a.costCny;return acc;},{tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0});
     return { ...total, byProvider };

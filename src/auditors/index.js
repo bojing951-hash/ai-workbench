@@ -144,6 +144,7 @@ function buildAuditPrompt({ project, task, acceptance, diffChunk, diffStat, test
         testResult.durationMs ? `耗时：${Math.round(testResult.durationMs / 1000)}s` : '',
         `输出（截断）：\n${truncate(testResult.stdout || '', 6000)}`,
         testResult.stderr ? `stderr（截断）：\n${truncate(testResult.stderr, 2000)}` : '',
+        testResult.isolation ? `执行隔离：${JSON.stringify(testResult.isolation)}` : '',
       ]
         .filter(Boolean)
         .join('\n')

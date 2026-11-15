@@ -24,6 +24,8 @@ import { estimateCostCny } from './pricing.js';
 import * as gitops from './git.js';
 import { execShell } from './runner.js';
 import { assertIsolationForProject, detectIsolationCapabilities, isolationModeForProject } from './isolation.js';
+import { resolveAgentIdentity, resolveLlmIdentity, isExemptIdentity } from './model-identity.js';
+import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
@@ -34,7 +36,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
@@ -105,6 +107,8 @@ export class Orchestrator {
 
   recordLlmUsage({ runId, taskId = '', source, provider, model, usage, costCny }) {
     const u = summarizeUsage(usage || {});
+    const identity = resolveLlmIdentity({ config: this.config, provider });
+    const actualProvider = identity.known ? identity.provider : 'unknown';
     const attempt = this.store.createAttempt({
       id: newId('att'),
       runId,
@@ -112,8 +116,10 @@ export class Orchestrator {
       attemptNo: 0,
       stage: source,
       agentKind: source,
-      provider: provider || 'unknown',
-      model: model || '',
+      provider: actualProvider,
+      providerKnown: identity.known,
+      providerSource: identity.source,
+      model: model || identity.model || '',
       sessionId: '',
       prompt: '',
       status: 'completed',
@@ -138,13 +144,13 @@ export class Orchestrator {
     let budgetTokens = 0;
     let budgetCostCny = 0;
     for (const [name, agg] of Object.entries(byProvider)) {
-      if (exempt.has(String(name).toLowerCase())) continue;
+      if (exempt.has(String(name).toLowerCase()) && agg.known !== false) continue;
       budgetTokens += Number(agg.tokensIn || 0) + Number(agg.tokensOut || 0) + Number(agg.tokensCache || 0) * weight;
       budgetCostCny += Number(agg.costCny || 0);
     }
     const glm = byProvider.glm || { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 };
     const nonGlm = Object.entries(byProvider).reduce((acc, [name, agg]) => {
-      if (exempt.has(String(name).toLowerCase())) return acc;
+      if (exempt.has(String(name).toLowerCase()) && agg.known !== false) return acc;
       acc.tokensIn += Number(agg.tokensIn || 0);
       acc.tokensOut += Number(agg.tokensOut || 0);
       acc.tokensCache += Number(agg.tokensCache || 0);
@@ -196,7 +202,8 @@ export class Orchestrator {
       tokensPercent: Math.min(100, Math.round((effectiveUsed / cfg.maxTotalTokens) * 1000) / 10),
       costPercent: Math.min(100, Math.round((used.budgetCostCny / cfg.maxCostCny) * 1000) / 10),
       breakdown: used,
-      note: 'GLM 模型按用户授权不受工作台 token/费用上限约束，但真实用量与费用完整记录并单列；其余模型仍受原预算（缓存按权重折算）约束',
+      note: '仅当实际模型供应商被识别为 GLM 时豁免工作台 token/费用上限；未知供应商不豁免；其余模型仍受原预算（缓存按权重折算）约束',
+      identityPolicy: 'provider identity: glm(exempt) / deepseek / openai / anthropic / unknown(not exempt)',
     };
   }
 
@@ -293,6 +300,9 @@ export class Orchestrator {
         allowed_test_commands: parseList(input.allowedTestCommands || input.allowed_test_commands || input.testCommand || input.test_command),
         test_env_allowlist: parseList(input.testEnvAllowlist || input.test_env_allowlist),
         agent_permission: input.agentPermission || input.agent_permission || '',
+        test_isolation: input.testIsolation || input.test_isolation || '',
+        agent_isolation: input.agentIsolation || input.agent_isolation || '',
+        container_agent_network: input.containerAgentNetwork || input.container_agent_network || '',
       },
     });
     this.emit({ projectId: project.id, type: 'project_created', message: `项目已添加：${project.name}（${localPath}）` });
@@ -330,6 +340,9 @@ export class Orchestrator {
     if (patch.testEnvAllowlist !== undefined || patch.test_env_allowlist !== undefined) configPatch.test_env_allowlist = parseList(patch.testEnvAllowlist ?? patch.test_env_allowlist);
     if (patch.agentPermission !== undefined || patch.agent_permission !== undefined) configPatch.agent_permission = patch.agentPermission ?? patch.agent_permission;
     if (patch.testTimeoutMs !== undefined || patch.test_timeout_ms !== undefined) configPatch.test_timeout_ms = Number(patch.testTimeoutMs ?? patch.test_timeout_ms);
+    if (patch.testIsolation !== undefined || patch.test_isolation !== undefined) configPatch.test_isolation = String(patch.testIsolation ?? patch.test_isolation);
+    if (patch.agentIsolation !== undefined || patch.agent_isolation !== undefined) configPatch.agent_isolation = String(patch.agentIsolation ?? patch.agent_isolation);
+    if (patch.containerAgentNetwork !== undefined || patch.container_agent_network !== undefined) configPatch.container_agent_network = String(patch.containerAgentNetwork ?? patch.container_agent_network);
     if (patch.publish !== undefined) configPatch.publish = !!patch.publish;
     if (Object.keys(configPatch).length) mapped.config_json = { ...(project.config_json || {}), ...configPatch };
     return this.store.updateProject(projectId, mapped);
@@ -536,6 +549,45 @@ export class Orchestrator {
   }
 
   // ============================================================
+  // 执行隔离辅助（容器测试 / 容器 Agent）
+  // ============================================================
+  containerTestRequested(project) {
+    return String(project?.config_json?.test_isolation || '').toLowerCase() === 'docker';
+  }
+
+  agentContainerRequested(project) {
+    return String(project?.config_json?.agent_isolation || '').toLowerCase() === 'docker';
+  }
+
+  containerTestEnv(project) {
+    const projectConfig = project?.config_json || {};
+    const allow = new Set(
+      [...(projectConfig.test_env_allowlist || []), ...(this.config.security.testEnvAllowlist || [])]
+        .map((s) => String(s).trim()).filter(Boolean),
+    );
+    const env = { CI: '1', PYTHONDONTWRITEBYTECODE: '1' };
+    for (const key of allow) if (process.env[key] !== undefined) env[key] = process.env[key];
+    return env;
+  }
+
+  async runProjectTest({ project, worktree, command, timeoutMs, logPath, signal = null }) {
+    if (this.containerTestRequested(project)) {
+      const caps = containerCapabilities(this.config);
+      if (!caps.testExecution) {
+        throw new PolicyError('CONTAINER_UNAVAILABLE', `项目要求容器测试，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}（fail-closed，不降级）`);
+      }
+      return runTestInContainer({ config: this.config, worktree, command, env: this.containerTestEnv(project), timeoutMs, logPath, signal });
+    }
+    const sandbox = tmpHomeFor(this.config, `local-${newId('run')}`, newId('task'));
+    return execShell(command, {
+      cwd: worktree,
+      timeoutMs,
+      logPath,
+      env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandbox, 'test-home') }),
+    });
+  }
+
+  // ============================================================
   // 单任务流水线
   // ============================================================
   async runTask(run, task, signal) {
@@ -588,6 +640,7 @@ export class Orchestrator {
         if (!agentId) {
           return this.failTask(run, task, '没有可用的 Coding Agent（请检查 DSH / Claude Code 配置）', 'blocked');
         }
+        const agentIdentity = resolveAgentIdentity({ config: this.config, agentId, project });
         let permission;
         try {
           permission = resolveAgentPermission(this.config, agentId, project);
@@ -613,13 +666,24 @@ export class Orchestrator {
           data: { agent: agentId, attemptNo, sessionId: sessionId || null, promptArtifact, permission: permission.mode },
         });
 
+        let agentContainer = null;
+        if (this.agentContainerRequested(project)) {
+          if (agentId !== 'claude') {
+            return this.failTask(run, task, `项目要求容器 Agent，但当前 Agent ${agentId} 不支持容器执行（仅 Claude Code）；未降级为宿主执行`, 'blocked');
+          }
+          const caps = containerCapabilities(this.config);
+          if (!caps.agentExecution) {
+            return this.failTask(run, task, `项目要求容器 Agent，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}（fail-closed，不降级）`, 'blocked');
+          }
+          agentContainer = { network: project.config_json?.container_agent_network || this.config.isolation?.container?.networkAgent || 'bridge' };
+        }
         const release = await this.agentSemaphore.acquire();
         let agentResult;
         try {
           const remaining = this.budget().remainingTokens;
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
           const perTaskCap = projectTaskCap > 0 ? projectTaskCap : this.config.budget.maxTokensPerTask;
-          const perTaskTokens = Math.min(perTaskCap, Math.max(15_000, remaining - 25_000));
+          const perTaskTokens = agentIdentity.exempt ? 0 : Math.min(perTaskCap, Math.max(15_000, remaining - 25_000));
           agentResult = await this.deps.runAgent(agentId, {
             config: this.config,
             project,
@@ -629,6 +693,8 @@ export class Orchestrator {
             timeoutMs: agentId === 'claude' ? this.config.agents.claude.timeoutMs : this.config.agents.dsh.timeoutMs,
             maxTokens: perTaskTokens,
             signal,
+            identity: agentIdentity,
+            container: agentContainer,
             agentHome: path.join(sandboxHome, `${agentId}-home`),
             logPath: path.join(logDir, `attempt-${attemptNo}-${agentId}.log`),
             onEvent: (evt) => {
@@ -656,8 +722,10 @@ export class Orchestrator {
           costCny: agentResult.costCny || 0,
           costReported: !!agentResult.costReported,
           costSource: agentResult.costSource || (agentResult.costReported ? 'vendor' : 'estimated'),
-          provider: agentResult.provider || (agentId === 'claude' ? 'glm' : agentId === 'dsh' ? 'deepseek' : 'unknown'),
-          model: agentResult.model || '',
+          provider: agentResult.provider || (agentIdentity.known ? agentIdentity.provider : 'unknown'),
+          providerKnown: agentResult.providerKnown ?? agentIdentity.known,
+          providerSource: agentResult.providerSource || agentIdentity.source,
+          model: agentResult.model || agentIdentity.model || '',
           durationMs: agentResult.durationMs || 0,
           logPath: agentResult.logPath || '',
         });
@@ -719,19 +787,21 @@ export class Orchestrator {
           return this.failTask(run, task, `测试命令安全校验失败：${err.message}`, 'blocked');
         }
         this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_started', message: `运行测试：${safeCommand}`, data: { command: safeCommand, testedHash } });
-        const testRes = await execShell(safeCommand, {
-          cwd: worktree,
+        const testRes = await this.runProjectTest({
+          project,
+          worktree,
+          command: safeCommand,
           timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
           logPath: path.join(logDir, `attempt-${attemptNo}-test.log`),
-          env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandboxHome, 'test-home') }),
         });
         lastTest = {
           command: safeCommand, code: testRes.code, timedOut: testRes.timedOut,
           durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr,
+          isolation: testRes.isolation || null,
         };
         this.writeArtifact({
           runId: run.id, taskId: task.id, kind: 'test', filename: `attempt-${attemptNo}-test.txt`,
-          content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}`,
+          content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n${testRes.isolation ? `isolation=${JSON.stringify(testRes.isolation)}\n` : ''}\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}`,
         });
         await gitops.stageAll(worktree);
         const afterTestHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
@@ -779,9 +849,11 @@ export class Orchestrator {
           return this.failTask(run, task, `${message}（不伪造审计结论）`, 'blocked');
         }
         const auditStatus = audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL');
+        const auditIdentity = resolveLlmIdentity({ config: this.config, provider: audit.provider });
+        const actualAuditProvider = auditIdentity.known ? auditIdentity.provider : 'unknown';
         const auditRow = this.store.createAudit({
           id: newId('aud'), runId: run.id, taskId: task.id, attemptNo,
-          provider: audit.provider, model: audit.model,
+          provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: auditIdentity.source, model: audit.model,
           verdict: audit.verdict, score: audit.score,
           criteria: audit.criteria, findings: audit.findings, requiredFixes: audit.requiredFixes,
           summary: audit.summary,
@@ -1513,12 +1585,14 @@ export class Orchestrator {
       const testCommand = this.resolveTaskTestCommand(project, task);
       const safeCommand = assertSafeTestCommand(testCommand, project);
       this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_started', message: `运行测试：${safeCommand}`, data: { command: safeCommand, testedHash } });
-      const testRes = await execShell(safeCommand, {
-        cwd: worktree, timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
+      const testRes = await this.runProjectTest({
+        project,
+        worktree,
+        command: safeCommand,
+        timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
         logPath: path.join(logDir, `verify-${Date.now()}-test.log`),
-        env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandboxHome, 'test-home') }),
       });
-      const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr };
+      const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null };
       this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
       await gitops.stageAll(worktree);
       const afterHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
@@ -1553,9 +1627,11 @@ export class Orchestrator {
         versionInfo: { baseCommit, worktreeHash: testedHash, testedHash },
       });
       const auditStatus = audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL');
+      const auditIdentity = resolveLlmIdentity({ config: this.config, provider: audit.provider });
+      const actualAuditProvider = auditIdentity.known ? auditIdentity.provider : 'unknown';
       const auditRow = this.store.createAudit({
         id: newId('aud'), runId: run.id, taskId: task.id, attemptNo: Number(task.attempt || 0) + 1,
-        provider: audit.provider, model: audit.model, verdict: audit.verdict, score: audit.score,
+        provider: actualAuditProvider, providerKnown: auditIdentity.known, providerSource: auditIdentity.source, model: audit.model, verdict: audit.verdict, score: audit.score,
         criteria: audit.criteria, findings: audit.findings, requiredFixes: audit.requiredFixes,
         summary: audit.summary, tokensIn: audit.usage?.input || 0, tokensOut: audit.usage?.output || 0,
         costCny: audit.costCny || 0, verificationStatus: auditStatus, evidenceHash: testedHash,
