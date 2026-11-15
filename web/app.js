@@ -8,6 +8,7 @@
 // 常量：状态映射与格式化
 // ============================================================
 const MAX_EVENTS = 300;
+const LOOP_HISTORY_LIMIT = 5;
 const POLL_INTERVAL_MS = 5000;
 const REFRESH_DEBOUNCE_MS = 260;
 
@@ -20,6 +21,17 @@ const RUN_STATUS = {
   accepted: { label: '已验收', tone: 'green' },
   failed: { label: '失败', tone: 'red' },
   cancelled: { label: '已取消', tone: 'gray' },
+};
+
+const LOOP_STATUS = {
+  running: { label: '运行中', tone: 'blue' },
+  paused: { label: '已暂停', tone: 'amber' },
+  interrupted: { label: '已中断', tone: 'amber' },
+  blocked: { label: '已阻塞', tone: 'amber' },
+  completed: { label: '已完成', tone: 'green' },
+  failed: { label: '失败', tone: 'red' },
+  cancelled: { label: '已取消', tone: 'gray' },
+  unknown: { label: '未知', tone: 'gray' },
 };
 
 const TASK_STATUS = {
@@ -1183,6 +1195,11 @@ const DOM_IDS = [
   'runsPanel',
   'runsSub',
   'runList',
+  'loopsPanel',
+  'loopsSub',
+  'loopList',
+  'loopsEmpty',
+  'loopsRefreshBtn',
   'runDetailView',
   'runHeader',
   'verifyPanel',
@@ -1237,6 +1254,7 @@ function bindStaticEvents() {
   dom.helpBtn.addEventListener('click', () => openHelpModal());
   dom.welcomeHelpBtn.addEventListener('click', () => openHelpModal());
   dom.refreshBtn.addEventListener('click', () => refreshAll({ silent: false, reason: 'manual' }));
+  if (dom.loopsRefreshBtn) dom.loopsRefreshBtn.addEventListener('click', () => refreshLoopsPanel());
   dom.approvalsBtn.addEventListener('click', () => openApprovalsModal());
   dom.modalBackdrop.addEventListener('click', dismissModal);
   dom.modalCloseBtn.addEventListener('click', dismissModal);
@@ -1368,6 +1386,8 @@ async function loadState(options = {}) {
     const data = await apiRequest('GET', '/api/state');
     if (!data || typeof data !== 'object') throw new ApiError('工作台返回了无效的状态数据', 0, 'BAD_STATE');
     app.state = data;
+    // 研发循环面板优先使用 GET /api/state 的 loops 字段；旧服务未返回时回退到 GET /api/loops。
+    if (!Array.isArray(app.state.loops)) app.state.loops = await loadLoopsFallback();
     app.stateError = null;
     app.lastStateAt = Date.now();
     return true;
@@ -1375,6 +1395,15 @@ async function loadState(options = {}) {
     app.stateError = error;
     if (silent) reportBackgroundError(error);
     return false;
+  }
+}
+
+async function loadLoopsFallback() {
+  try {
+    const data = await apiRequest('GET', '/api/loops');
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
   }
 }
 
@@ -2482,6 +2511,7 @@ function renderWorkspace() {
   renderProjectHeader(project);
   syncGoalForm(project);
   renderRuns(project);
+  renderLoops();
   if (app.selectedRunId) {
     dom.runDetailView.hidden = false;
     renderRunDetail();
@@ -2803,6 +2833,187 @@ function truncateText(value, maxLength) {
   const text = String(value || '');
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength)}…`;
+}
+
+// ============================================================
+// 研发循环面板（数据来自 GET /api/state 的 loops 字段）
+// ============================================================
+function loopStatusMeta(status) {
+  const key = String(status || 'unknown').toLowerCase();
+  return LOOP_STATUS[key] || { label: key || '未知', tone: 'gray' };
+}
+
+function normalizeLoop(rawLoop) {
+  const loop = rawLoop && typeof rawLoop === 'object' ? rawLoop : {};
+  const progress = loop.progress && typeof loop.progress === 'object' ? loop.progress : {};
+  const project = loop.project && typeof loop.project === 'object' ? loop.project : {};
+  const maxRounds = Math.max(0, toNumber(loop.maxRounds ?? loop.max_rounds ?? progress.maxRounds));
+  const round = Math.max(0, toNumber(loop.round ?? progress.round));
+  const history = Array.isArray(loop.history) ? loop.history : Array.isArray(loop.history_json) ? loop.history_json : [];
+  const rawPercent = Number(loop.percent ?? progress.percent);
+  const percent = Number.isFinite(rawPercent)
+    ? Math.max(0, Math.min(100, rawPercent))
+    : maxRounds > 0
+      ? Math.max(0, Math.min(100, Math.round((round / maxRounds) * 100)))
+      : 0;
+  return {
+    id: String(loop.id || ''),
+    projectId: String(loop.projectId || loop.project_id || project.id || ''),
+    projectName: String(project.name || loop.projectName || loop.project_name || ''),
+    goal: String(loop.goal || ''),
+    mode: String(loop.mode || 'plan'),
+    status: String(loop.status || 'unknown').toLowerCase(),
+    round,
+    maxRounds,
+    percent,
+    stopReason: String(loop.stopReason ?? loop.stop_reason ?? '').trim(),
+    currentRunId: String(loop.currentRunId || loop.current_run_id || ''),
+    lastRunId: String(loop.lastRunId || loop.last_run_id || ''),
+    updatedAt: loop.updatedAt || loop.updated_at || '',
+    history,
+  };
+}
+
+function normalizeLoopHistoryEntry(rawEntry, index) {
+  const item = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
+  const task = item.task && typeof item.task === 'object' ? item.task : {};
+  return {
+    round: toNumber(item.round, index + 1),
+    title: String(task.title || item.title || (typeof item.task === 'string' ? item.task : '') || '未记录任务'),
+    status: String(item.status || item.verification || '').toLowerCase(),
+    commit: String(item.commit || item.sha || ''),
+    runId: String(item.runId || item.run_id || ''),
+    finishedAt: item.finishedAt || item.finished_at || '',
+  };
+}
+
+function loopHistoryStatusMeta(status) {
+  const raw = String(status || '').trim();
+  if (!raw) return { label: '未记录', tone: 'gray' };
+  if (VERIFICATION_STATUS[raw.toUpperCase()]) return VERIFICATION_STATUS[raw.toUpperCase()];
+  return RUN_STATUS[raw.toLowerCase()] || { label: raw, tone: 'gray' };
+}
+
+function buildLoopHistory(loop) {
+  const history = Array.isArray(loop.history) ? loop.history : [];
+  const recent = history.slice(-LOOP_HISTORY_LIMIT).map(normalizeLoopHistoryEntry).reverse();
+  const block = el('div', { className: 'loop-history' }, [
+    el('div', { className: 'loop-history-head' }, [
+      el('span', { className: 'loop-history-title', text: '最近历史' }),
+      el('span', { className: 'loop-history-count', text: history.length ? `${history.length} 条` : '暂无' }),
+    ]),
+  ]);
+  if (!recent.length) {
+    block.append(el('p', { className: 'loop-history-empty', text: '暂无历史轮次' }));
+    return block;
+  }
+  const list = el('ol', { className: 'loop-history-list' });
+  for (const entry of recent) {
+    const meta = loopHistoryStatusMeta(entry.status);
+    list.append(
+      el('li', { className: 'loop-history-item' }, [
+        el('span', { className: 'loop-history-round', text: `第 ${entry.round} 轮` }),
+        el('span', { className: 'loop-history-main' }, [
+          el('span', { className: 'loop-history-task', text: entry.title, title: entry.title }),
+          el('span', { className: 'loop-history-meta' }, [
+            badge(meta.label, meta.tone),
+            entry.commit ? el('span', { className: 'mono', text: fmtShortSha(entry.commit) }) : null,
+            entry.finishedAt ? el('span', { text: fmtRelative(entry.finishedAt), title: fmtDateTimeFull(entry.finishedAt) }) : null,
+          ].filter(Boolean)),
+        ]),
+      ]),
+    );
+  }
+  block.append(list);
+  return block;
+}
+
+function buildLoopItem(loop) {
+  const meta = loopStatusMeta(loop.status);
+  const title = [
+    loop.id ? `循环 ${loop.id}` : '研发循环',
+    `status=${loop.status || 'unknown'}`,
+    `round=${loop.round}`,
+    `maxRounds=${loop.maxRounds}`,
+    `stopReason=${loop.stopReason || '—'}`,
+  ].join(' · ');
+  const head = el('div', { className: 'loop-item-head' }, [
+    badge(meta.label, meta.tone),
+    el('div', { className: 'loop-item-titles' }, [
+      el('span', { className: 'loop-item-goal', text: loop.goal || '（未记录循环目标）', title: loop.goal || '' }),
+      el('span', { className: 'loop-item-meta' }, [
+        loop.projectName ? el('span', { text: `项目：${loop.projectName}` }) : null,
+        loop.id ? el('span', { className: 'mono', text: shortId(loop.id, 14) }) : null,
+        loop.updatedAt ? el('span', { text: `更新 ${fmtRelative(loop.updatedAt)}`, title: fmtDateTimeFull(loop.updatedAt) }) : null,
+      ].filter(Boolean)),
+    ]),
+    el('span', { className: 'loop-item-round', text: `第 ${loop.round} / ${loop.maxRounds || '—'} 轮` }),
+  ]);
+  const track = el('div', {
+    className: 'progress-track loop-progress',
+    attrs: {
+      role: 'progressbar',
+      'aria-valuemin': '0',
+      'aria-valuemax': String(loop.maxRounds || 0),
+      'aria-valuenow': String(loop.round),
+      'aria-label': '研发循环轮次进度',
+    },
+  }, [el('span', { className: 'progress-fill', style: { width: `${loop.percent}%` } })]);
+  const facts = el('div', { className: 'loop-facts' }, [
+    el('span', { className: 'loop-fact' }, [
+      el('span', { className: 'loop-fact-label', text: '状态' }),
+      el('span', { className: 'mono', text: loop.status || 'unknown' }),
+    ]),
+    el('span', { className: 'loop-fact' }, [
+      el('span', { className: 'loop-fact-label', text: '轮次' }),
+      el('span', { className: 'mono', text: `${loop.round} / ${loop.maxRounds || '—'}` }),
+    ]),
+    el('span', { className: 'loop-fact' }, [
+      el('span', { className: 'loop-fact-label', text: '停因' }),
+      el('span', { className: loop.stopReason ? 'loop-stop' : 'loop-stop is-empty', text: loop.stopReason || '—', title: loop.stopReason || '' }),
+    ]),
+  ]);
+  return el('article', {
+    className: 'loop-item',
+    title,
+    attrs: {
+      'data-loop-status': loop.status,
+      'data-loop-round': String(loop.round),
+      'data-loop-max-rounds': String(loop.maxRounds),
+      'data-loop-stop-reason': loop.stopReason,
+    },
+  }, [head, track, facts, buildLoopHistory(loop)]);
+}
+
+function renderLoops() {
+  if (!dom.loopList || !dom.loopsEmpty) return;
+  const loaded = !!app.state;
+  const loops = Array.isArray(app.state?.loops)
+    ? app.state.loops.map(normalizeLoop).filter((loop) => loop.id || loop.goal)
+    : [];
+  if (dom.loopsSub) {
+    if (!loaded) dom.loopsSub.textContent = app.stateError ? '状态加载失败' : '加载中…';
+    else if (!loops.length) dom.loopsSub.textContent = '暂无研发循环 · 循环启动后可在此查看轮次与历史';
+    else dom.loopsSub.textContent = `共 ${loops.length} 个循环 · 展示状态、轮次、停因与最近历史`;
+  }
+  clearNode(dom.loopList);
+  dom.loopsEmpty.hidden = !loaded || loops.length > 0;
+  dom.loopList.hidden = !loaded || loops.length === 0;
+  for (const loop of loops) dom.loopList.append(buildLoopItem(loop));
+}
+
+async function refreshLoopsPanel() {
+  const button = dom.loopsRefreshBtn;
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  button.classList.add('is-spinning');
+  try {
+    // refreshAll 会重新请求 GET /api/state，随后通过 renderAll -> renderLoops 更新面板。
+    await refreshAll({ silent: false, reason: 'loops-manual' });
+  } finally {
+    button.disabled = false;
+    button.classList.remove('is-spinning');
+  }
 }
 
 // ============================================================
