@@ -19,6 +19,6 @@
 | 低预算 finalize 阻塞 | PASS | 本地 finalize 在无排队任务时放行（项目显式开关）；既有预算暂停测试仍通过 |
 | 非 GLM 预算未被削弱 | PASS | 全局成本 ¥28.76/¥30；剩余 11,908；GLM 单独豁免 |
 | 未操作 A/B | PASS（操作层面） | 无 A/B 项目级请求/进程/文件/分支/推送；未读取其状态 |
-| Draft PR/不合并/不部署 | PASS（待最终 PR 编号） | 仅 draft PR |
+| Draft PR/不合并/不部署 | PASS | PR #5 draft/open；CI success 303db05；无 merge/deploy |
 | 人工代码干预次数 | 0 | 验收期间无 src 编辑 |
 | 自动化测试 | PASS | 202/202（186 原测试全保留） |

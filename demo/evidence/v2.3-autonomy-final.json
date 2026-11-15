@@ -317,5 +317,14 @@
       "message": "研发循环完成：5 轮",
       "runId": "run_mwhzxrobebd9e6dc"
     }
-  ]
+  ],
+  "pr": {
+    "number": 5,
+    "url": "https://github.com/bojing951-hash/ai-workbench/pull/5",
+    "draft": true,
+    "merged": false,
+    "ci": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43731398017",
+    "headSha": "303db05"
+  },
+  "verdict": "24h FAIL/UNKNOWN: accelerated 24m22s acceptance 5/5 autonomous; full 24h not executed"
 }

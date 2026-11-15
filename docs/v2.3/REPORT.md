@@ -4,7 +4,8 @@
 - 范围：**仅 W**。未对 A/B 发起项目级请求、进程操作、文件/分支/推送；未读取其工作区或研发状态。
 - 版本：v2.3.0（独立分支 `v2.3.0`）
 - 测试：**202/202**（v2.1 186 + v2.2 12 + v2.3 新增 4）
-- 最终 Draft PR：#5（见最终交付），**未合并 main、未部署生产**
+- 最终 Draft PR：#5 https://github.com/bojing951-hash/ai-workbench/pull/5（draft，**未合并 main、未部署生产**）
+- CI：https://github.com/bojing951-hash/ai-workbench/actions/runs/43731398017（success，head `303db05`）
 
 ## 0. 最终判定（严格遵守用户唯一完成条件）
 
