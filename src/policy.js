@@ -247,7 +247,7 @@ export function assertProjectBudget({ config, project, run, totals, estimatedTok
     Number(runBudget.maxCostCny || config.budget.maxCostCnyPerRun || Infinity),
     config.budget.maxCostCny,
   );
-  const usedCost = Number(totals?.costCny || 0);
+  const usedCost = Number(totals?.budgetCostCny ?? totals?.costCny ?? 0);
   if (usedCost + estimatedCostCny > maxCost) {
     throw new PolicyError('PROJECT_BUDGET_COST_EXCEEDED', `项目/运行成本预算超限（${usedCost} + ${estimatedCostCny} > ${maxCost}）`);
   }

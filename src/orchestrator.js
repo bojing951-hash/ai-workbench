@@ -1117,16 +1117,28 @@ export class Orchestrator {
           message: `开始独立审计（编码模型族：${coderFamily}）`,
           data: { audit: auditProviderStatus(this.config, { coderFamily }) },
         });
-        this.assertBudget(6_000);
+        if (!this.isDshAuditProject(project)) this.assertBudget(6_000);
         let audit;
+        let auditCommit = '';
+        let provisionalCommit = null;
         try {
           const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
           const diffStat = await gitops.diffStat(worktree, baseCommit);
+          if (this.isDshAuditProject(project)) {
+            const provisionalMessage = `feat(task-${task.seq}): ${task.title}\n\nDSH 只读独立审计对象 commit（AI Workbench v2.5）\n测试指纹: ${testedHash}`;
+            provisionalCommit = await gitops.commitAll(worktree, provisionalMessage);
+            const provisionalTree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
+            if (provisionalCommit.empty || provisionalTree !== testedHash) throw new PolicyError('COMMIT_FINGERPRINT_MISMATCH', 'DSH 预审计 commit 与测试版本不一致');
+            auditCommit = provisionalCommit.commit || (await gitops.currentHead(worktree));
+            await gitops.updateRef(project.local_path, planBranch, auditCommit);
+            this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'audit_commit_created', message: `已创建 DSH 审计绑定 commit ${auditCommit.slice(0, 8)}`, data: { auditCommit, testedHash } });
+          }
           audit = await this.deps.runAudit({
             config: this.config, project,
             task: { ...task, acceptance_json: task.acceptance_json },
             diff, diffStat, testResult: lastTest, repoFiles, coderFamily,
             versionInfo: { baseCommit, worktreeHash: testedHash, testedHash },
+            worktree, commit: auditCommit,
             signal,
           });
         } catch (err) {
@@ -1184,12 +1196,17 @@ export class Orchestrator {
             `测试：${safeCommand} 通过（指纹 ${testedHash.slice(0, 12)}）`,
             '生成：AI 开发工作台 v2.0',
           ].join('\n');
-          const commit = await gitops.commitAll(worktree, commitMessage);
-          const committedTree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
-          if (commit.empty || committedTree !== testedHash) {
-            return this.failTask(run, task, '提交内容与审计/测试版本不一致（指纹校验失败），拒绝推进', 'blocked', { testedHash, committedTree });
+          let commit;
+          if (provisionalCommit) {
+            commit = provisionalCommit;
+          } else {
+            commit = await gitops.commitAll(worktree, commitMessage);
+            const committedTree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
+            if (commit.empty || committedTree !== testedHash) {
+              return this.failTask(run, task, '提交内容与审计/测试版本不一致（指纹校验失败），拒绝推进', 'blocked', { testedHash, committedTree });
+            }
+            await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
           }
-          await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
           const headCommit = await gitops.currentHead(worktree);
           const verification = {
             baseCommit, testedHash, commit: headCommit, planBranch,
