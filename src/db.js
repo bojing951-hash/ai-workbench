@@ -246,6 +246,8 @@ export class Store {
         ['ci_required', 'INTEGER DEFAULT 1'],
         ['allow_local_acceptance', 'INTEGER DEFAULT 1'],
         ['remote_push_authorized', 'INTEGER DEFAULT 0'],
+        ['write_owner', "TEXT DEFAULT ''"],
+        ['lease_expires_at', "TEXT DEFAULT ''"],
       ],
       runs: [
         ['verification_status', "TEXT DEFAULT 'LOCAL_VERIFIED'"],
@@ -255,6 +257,9 @@ export class Store {
         ['ci_checked_at', "TEXT DEFAULT ''"],
         ['wall_deadline', "TEXT DEFAULT ''"],
         ['parent_run_id', "TEXT DEFAULT ''"],
+        ['lease_owner', "TEXT DEFAULT ''"],
+        ['lease_expires_at', "TEXT DEFAULT ''"],
+        ['reconciliation_json', "TEXT DEFAULT '{}'"],
       ],
       tasks: [
         ['verification_json', "TEXT DEFAULT '{}'"],
@@ -1059,6 +1064,37 @@ export class Store {
     this.db.prepare('UPDATE loops SET status=?,round=?,max_rounds=?,queue_json=?,history_json=?,contract_files_json=?,current_run_id=?,last_run_id=?,stop_reason=?,updated_at=? WHERE id=?')
       .run(m.status, m.round, m.max_rounds, JSON.stringify(m.queue_json || []), JSON.stringify(m.history_json || []), JSON.stringify(m.contract_files_json || []), m.current_run_id || '', m.last_run_id || '', m.stop_reason || '', nowIso(), id);
     return this.getLoop(id);
+  }
+
+  acquireProjectLease(projectId, owner, ttlMs = 90_000) {
+    const now = nowIso();
+    const expires = new Date(Date.now() + ttlMs).toISOString();
+    const res = this.db.prepare("UPDATE projects SET write_owner=?, lease_expires_at=?, updated_at=? WHERE id=? AND (write_owner='' OR lease_expires_at='' OR lease_expires_at<?)").run(owner, expires, now, projectId, now);
+    return res.changes > 0;
+  }
+
+  renewProjectLease(projectId, owner, ttlMs = 90_000) {
+    const expires = new Date(Date.now() + ttlMs).toISOString();
+    return this.db.prepare("UPDATE projects SET lease_expires_at=?, updated_at=? WHERE id=? AND write_owner=?").run(expires, nowIso(), projectId, owner).changes > 0;
+  }
+
+  releaseProjectLease(projectId, owner) {
+    return this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='', updated_at=? WHERE id=? AND write_owner=?").run(nowIso(), projectId, owner).changes > 0;
+  }
+
+  clearExpiredLeases() {
+    const now = nowIso();
+    return { projects: this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='' WHERE lease_expires_at<>'' AND lease_expires_at<?").run(now).changes,
+      runs: this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE lease_expires_at<>'' AND lease_expires_at<?").run(now).changes };
+  }
+
+  setRunLease(runId, owner, ttlMs = 90_000) {
+    const expires = new Date(Date.now() + ttlMs).toISOString();
+    this.db.prepare('UPDATE runs SET lease_owner=?, lease_expires_at=? WHERE id=?').run(owner, expires, runId);
+  }
+
+  clearRunLease(runId) {
+    this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE id=?").run(runId);
   }
 
   setMeta(key, value) {

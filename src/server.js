@@ -334,6 +334,26 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       });
     }
 
+    if (pathname === '/api/supervisor/recover' && method === 'POST') {
+      const recoveredRuns = await orchestrator.recoverSupervisedRuns();
+      const recoveredLoops = [];
+      if (loops) {
+        const supervisedProjects = new Set(store.listProjects().filter((p) => p.config_json?.supervisor_managed === true).map((p) => p.id));
+        for (const loop of store.listLoops({ status: 'interrupted' })) {
+          if (!supervisedProjects.has(loop.project_id)) continue;
+          const current = loop.current_run_id ? await orchestrator.reconcileInterruptedRun(loop.current_run_id).catch((err) => ({ ok: false, failures: [err.message] })) : { ok: true };
+          if (!current.ok) { recoveredLoops.push({ loopId: loop.id, resumed: false, reason: current.failures?.join('；') }); continue; }
+          try {
+            await loops.resume(loop.id, { retryCurrent: true });
+            recoveredLoops.push({ loopId: loop.id, resumed: true });
+          } catch (err) {
+            recoveredLoops.push({ loopId: loop.id, resumed: false, reason: err.message });
+          }
+        }
+      }
+      return sendJson(res, 200, { ok: true, data: { recoveredRuns, recoveredLoops, at: new Date().toISOString() } });
+    }
+
     if (pathname === '/api/loops' && method === 'GET') {
       const projectId = url.searchParams.get('projectId') || '';
       return sendJson(res, 200, { ok: true, data: loops ? loops.list(projectId) : [] });

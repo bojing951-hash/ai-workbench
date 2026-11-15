@@ -42,6 +42,14 @@
 - **关键可靠性根因修复**：任务 `verification_json` 指数膨胀（Invalid string length）、低预算 finalize 阻塞、GLM 身份/预算、容器执行保持。
 - 验收：5 个冻结任务 5/5 自主完成、10/10 测试、5/5 独立审计、2/2 故障恢复；**严格 24h 窗口未执行，24h 验收 FAIL/UNKNOWN**。详见 [v2.3 报告](docs/v2.3/REPORT.md)、[验收矩阵](docs/v2.3/ACCEPTANCE-MATRIX.md)。
 
+## 0.4 v2.4 新增（长时间无人监督运行）
+
+- **独立 Supervisor**：launchd/systemd + 守护脚本；进程退出/健康无响应检测、指数退避/熔断、崩溃记录、健康恢复后自动对账/续跑受管任务。
+- **Durable Orchestrator**：SQLite 项目写租约/run 租约、单写所有权、恢复前 DB/Git/审计对账、幂等恢复与检查点。
+- **Agent 自主恢复**：事件+worktree 双通道无进展检测、失败分类、备选 Agent 过滤与主 Agent 新会话重试。
+- **Provider-aware 审计资源调度**：审计 Provider 独立选择；审计资源不可用时在编码前安全阻塞并保存检查点；GLM 授权豁免，非 GLM 预算不放宽。
+- **验收状态**：`24H_AUTONOMY_NOT_VERIFIED`（24h 未执行；独立审计预算不足），v2.3 加速无人监督验收 5/5 自主通过。详见 [v2.4 报告](docs/v2.4/REPORT.md)、[验收矩阵](docs/v2.4/ACCEPTANCE-MATRIX.md)、[Supervisor](supervisor/README.md)。
+
 ## 1. 核心能力
 
 | 能力 | 实现 |

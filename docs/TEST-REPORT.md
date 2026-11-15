@@ -182,3 +182,13 @@ GitHub 真实结果（API 复核）：
 - `npm test`：**202/202**（v2.1 186 全保留 + v2.2 12 + v2.3 4：看门狗/失败分类、候选选择、任务 JSON 膨胀回归）。
 - 独立无人监督验收（24m22s 加速窗口）：5/5 真实任务完成、100% Coding Agent 自主、0 人工代码干预、2/2 故障恢复（Agent SIGSTOP 无进展、Workbench SIGKILL）、5/5 测试与独立审计 PASS。
 - **24 小时窗口未执行，判定 FAIL/UNKNOWN**；详见 `docs/v2.3/REPORT.md`。
+
+
+---
+
+# v2.4.0 长时间无人监督可靠性追加（2026-11-16）
+
+- `npm test`：**206/206**（v2.3 202 + 新增 4：租约/对账/审计预检/看门狗事件进度）。
+- 独立 Supervisor 实测：Workbench SIGKILL 自动重启并恢复受管 run/loop（无人 resume/改码），任务测试+审计+commit 完成；健康无响应 SIGSTOP 自动重启。修复 Supervisor 重复重启竞态。
+- Durable 租约/对账/幂等测试通过；Provider-aware 审计预检在审计预算不足时编码前阻塞。
+- **24h 验收：`24H_AUTONOMY_NOT_VERIFIED`**（未执行完整 24h；非 GLM 审计预算剩 9,869，不得提升授权）。详见 `docs/v2.4/REPORT.md`。
