@@ -174,3 +174,59 @@ export async function planTasks({ config, project, goal, acceptance = [], mode =
     costCny: result.costCny,
   };
 }
+
+const NEXT_TASK_SYSTEM = `你是 AI 研发循环的 Planner。你的任务是基于项目的权威目标、当前状态、契约文件与已完成历史，选出**一个**最小、真实、可验证的下一项工程任务。
+
+硬性规则：
+1. 只输出 JSON，不要 Markdown 围栏或解释。
+2. 只能选择当前代码/文档中确实缺失或未验证的能力；不得重复已完成任务，不得制造任务维持循环。
+3. 优先选择低风险、能在单次 Agent 会话完成、可用仓库现有测试命令验证的任务；禁止修改保护路径（测试/验收/CI）、禁止推送/合并/部署、禁止付费数据源。
+4. 若找不到真实且安全的下一任务，返回 {"action":"no_task","rationale":"..."}；若被权限/外部依赖阻塞，返回 {"action":"blocked","rationale":"...","blocked_reason":"..."}。
+5. 任务必须给出 1-5 条可独立验证的验收标准，以及建议的 agent（auto/dsh/claude）。
+6. 不要建议"运行测试""优化代码"这类无具体产物的空任务。
+
+输出格式（三选一）：
+{"action":"task","rationale":"为什么这是当前最重要的真实缺口","task":{"title":"...","description":"...","acceptance":["..."],"agent":"auto","test_command":""}}
+{"action":"no_task","rationale":"..."}
+{"action":"blocked","rationale":"...","blocked_reason":"..."}`;
+
+export async function planNextTask({ config, project, goal, history = [], contractFiles = [], previousTasks = [] }) {
+  const providers = availableProviders(config);
+  const usable = providers.find((p) => p.name === config.planner.provider) || providers.find((p) => p.name === 'deepseek') || providers[0];
+  if (!usable) throw new PolicyError('PLANNER_UNAVAILABLE', '缺少规划模型，无法生成下一任务');
+  const repoContext = await buildRepoContext(config, project);
+  const contractBlocks = [];
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  for (const file of contractFiles.slice(0, 8)) {
+    try {
+      const abs = path.join(project.local_path, file);
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+        contractBlocks.push(`### ${file}\n${truncate(fs.readFileSync(abs, 'utf8'), 6000)}`);
+      }
+    } catch { /* ignore */ }
+  }
+  const historyLines = history.map((h, i) => `${i + 1}. round ${h.round}: ${h.task?.title || h.title} -> ${h.status || 'completed (verified)'} (${h.commit || 'no commit'})`);
+  const prevLines = previousTasks.map((t) => `- ${t.title}`).join('\n') || '（无）';
+  const userPrompt = [
+    `## 项目\n${project.name}（${project.language || 'unknown'}，默认分支 ${project.default_branch}，测试命令 ${project.test_command || '未配置'}）`,
+    `## 研发循环目标\n${goal}`,
+    `## 已完成任务（不得重复）\n${historyLines.join('\n') || '（无）'}\n${prevLines}`,
+    `## 权威契约文件\n${contractBlocks.join('\n\n') || '（未配置）'}`,
+    `## 仓库上下文\n${truncate(repoContext.text, 20000)}`,
+    '请输出下一步决策 JSON。',
+  ].join('\n\n');
+  const result = await completeJson({ config, provider: usable.name, model: usable.model, system: NEXT_TASK_SYSTEM, messages: [{ role: 'user', content: userPrompt }], maxTokens: 2500, temperature: 0, timeoutMs: config.planner.timeoutMs });
+  const data = result.json || {};
+  const action = String(data.action || '').toLowerCase();
+  if (!['task', 'no_task', 'blocked'].includes(action)) throw new PolicyError('PLANNER_INVALID', `规划器返回非法 action：${data.action}`);
+  if (action !== 'task') return { action, rationale: String(data.rationale || ''), blockedReason: String(data.blocked_reason || data.blockedReason || ''), usage: result.usage, costCny: result.costCny, provider: result.provider, model: result.model };
+  const tasks = validateTasks([data.task]);
+  const task = tasks[0];
+  const normalizedTitle = task.title.trim().toLowerCase();
+  const duplicate = history.some((h) => String(h.task?.title || h.title || '').trim().toLowerCase() === normalizedTitle);
+  if (duplicate) {
+    return { action: 'no_task', rationale: `规划器给出的任务与已完成任务重复：${task.title}`, usage: result.usage, costCny: result.costCny, provider: result.provider, model: result.model };
+  }
+  return { action: 'task', task, rationale: String(data.rationale || ''), usage: result.usage, costCny: result.costCny, provider: result.provider, model: result.model };
+}

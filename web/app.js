@@ -8,6 +8,7 @@
 // 常量：状态映射与格式化
 // ============================================================
 const MAX_EVENTS = 300;
+const LOOP_HISTORY_LIMIT = 5;
 const POLL_INTERVAL_MS = 5000;
 const REFRESH_DEBOUNCE_MS = 260;
 
@@ -20,6 +21,17 @@ const RUN_STATUS = {
   accepted: { label: '已验收', tone: 'green' },
   failed: { label: '失败', tone: 'red' },
   cancelled: { label: '已取消', tone: 'gray' },
+};
+
+const LOOP_STATUS = {
+  running: { label: '运行中', tone: 'blue' },
+  paused: { label: '已暂停', tone: 'amber' },
+  interrupted: { label: '已中断', tone: 'amber' },
+  blocked: { label: '已阻塞', tone: 'amber' },
+  completed: { label: '已完成', tone: 'green' },
+  failed: { label: '失败', tone: 'red' },
+  cancelled: { label: '已取消', tone: 'gray' },
+  unknown: { label: '未知', tone: 'gray' },
 };
 
 const TASK_STATUS = {
@@ -51,6 +63,7 @@ const EVENT_LEVEL = {
   info: { label: '信息', tone: 'blue' },
   warn: { label: '警告', tone: 'amber' },
   error: { label: '错误', tone: 'red' },
+  debug: { label: '调试', tone: 'gray' },
 };
 
 const MODE_LABELS = { single: '单任务执行', plan: '自动多任务规划' };
@@ -95,6 +108,101 @@ const CI_LABELS = {
   error: { label: 'Actions 查询失败', tone: 'red' },
 };
 
+// v2：验证状态（远端 CI 闸门 + 本地验收）
+const VERIFICATION_STATUS = {
+  LOCAL_VERIFIED: {
+    code: 'LOCAL_VERIFIED',
+    label: '本地已验证',
+    tone: 'cyan',
+    note: '仅完成本地测试与独立审计，未通过远端 CI',
+  },
+  CI_PENDING: {
+    code: 'CI_PENDING',
+    label: 'CI 等待中',
+    tone: 'amber',
+    note: 'GitHub Actions 尚未完成，暂不能验收',
+  },
+  CI_PASSED: {
+    code: 'CI_PASSED',
+    label: 'CI 已通过',
+    tone: 'green',
+    note: '远端 CI 通过且绑定验证 commit，可正常验收',
+  },
+  CI_FAILED: {
+    code: 'CI_FAILED',
+    label: 'CI 未通过',
+    tone: 'red',
+    note: 'GitHub Actions 失败或 commit 不一致，不能验收',
+  },
+  AWAITING_ACCEPTANCE: {
+    code: 'AWAITING_ACCEPTANCE',
+    label: '等待人工验收',
+    tone: 'cyan',
+    note: '运行等待人工验收',
+  },
+  ACCEPTED: {
+    code: 'ACCEPTED',
+    label: '已验收',
+    tone: 'green',
+    note: '已记录人工验收，未合并主分支',
+  },
+};
+
+// v2：审批中心
+const APPROVAL_TYPE_LABELS = {
+  ci_gate: 'CI 闸门',
+  remote_push: '远端推送',
+  publish: '发布',
+  merge: '合并',
+};
+const APPROVAL_STATUS = {
+  pending: { label: '待审批', tone: 'amber' },
+  approved: { label: '已批准', tone: 'green' },
+  rejected: { label: '已拒绝', tone: 'red' },
+};
+
+// v2：费用来源（不能把 ¥0 / 未标注金额当作真实成本）
+const COST_SOURCE = {
+  vendor: { key: 'vendor', label: '厂商返回', tone: 'green', note: '成本来自模型厂商返回值' },
+  estimated: { key: 'estimated', label: '估算', tone: 'amber', note: '按 token 与公开价格估算，不是厂商账单' },
+  mixed: { key: 'mixed', label: '混合（厂商 + 估算）', tone: 'cyan', note: '部分调用为厂商返回，部分为估算' },
+  unknown: { key: 'unknown', label: 'UNKNOWN', tone: 'gray', note: '未找到成本来源记录，金额可能不可靠' },
+};
+
+// v2：新增事件类型的配色与图标（未映射类型回退到关键词匹配）
+const EVENT_TYPE_META = {
+  audit_unknown: { icon: '?', tone: 'amber', rowClass: 'type-audit-unknown', label: '审计未知' },
+  audit_error: { icon: '!', tone: 'red', rowClass: 'type-audit-error', label: '审计错误' },
+  ci_gate_blocked: { icon: '⌁', tone: 'amber', rowClass: 'type-gate-blocked', label: 'CI 闸门阻塞' },
+  approval_decided: { icon: '◈', tone: 'cyan', rowClass: 'type-approval', label: '审批决定' },
+  test_command_fallback: { icon: '↺', tone: 'amber', rowClass: 'type-test-fallback', label: '测试命令回退' },
+  protected_path_violation: { icon: '⚠', tone: 'red', rowClass: 'type-protected-violation', label: '受保护路径违规' },
+  agent_progress: { icon: '›', tone: 'blue', rowClass: 'type-agent-progress', label: 'Agent 进度' },
+  audit_started: { icon: '◌', tone: 'purple', label: '审计开始' },
+  audit_passed: { icon: '✓', tone: 'green', rowClass: 'type-passed', label: '审计通过' },
+  audit_failed: { icon: '✕', tone: 'red', rowClass: 'type-failed', label: '审计失败' },
+  test_started: { icon: '▷', tone: 'blue', label: '测试开始' },
+  test_passed: { icon: '✓', tone: 'green', rowClass: 'type-passed', label: '测试通过' },
+  test_failed: { icon: '✕', tone: 'red', rowClass: 'type-failed', label: '测试失败' },
+  task_passed: { icon: '✓', tone: 'green', rowClass: 'type-passed', label: '任务通过' },
+  task_failed: { icon: '✕', tone: 'red', rowClass: 'type-failed', label: '任务失败' },
+  task_requeued: { icon: '↺', tone: 'blue', label: '任务重新排队' },
+  run_accepted: { icon: '✓', tone: 'green', rowClass: 'type-passed', label: '运行已验收' },
+  run_awaiting_acceptance: { icon: '◈', tone: 'cyan', label: '等待验收' },
+  run_resumed: { icon: '↻', tone: 'blue', label: '运行已恢复' },
+  run_paused: { icon: 'Ⅱ', tone: 'amber', label: '运行已暂停' },
+  run_cancelled: { icon: '×', tone: 'gray', label: '运行已取消' },
+  run_error: { icon: '!', tone: 'red', rowClass: 'type-failed', label: '运行错误' },
+  agent_finished: { icon: '✓', tone: 'green', label: 'Agent 完成' },
+  agent_failed: { icon: '✕', tone: 'red', rowClass: 'type-failed', label: 'Agent 失败' },
+  branch_pushed: { icon: '↑', tone: 'green', rowClass: 'type-passed', label: '分支已推送' },
+  pr_created: { icon: '⤴', tone: 'green', rowClass: 'type-passed', label: 'PR 已创建' },
+  publish_blocked: { icon: '⌁', tone: 'amber', label: '发布待授权' },
+  ci_update: { icon: '◈', tone: 'blue', label: 'CI 状态更新' },
+  no_changes: { icon: '·', tone: 'amber', label: '无代码变更' },
+  worktree_ready: { icon: '◇', tone: 'blue', label: '工作副本就绪' },
+};
+
 const TONE_VARS = {
   green: 'var(--green)',
   red: 'var(--red)',
@@ -123,6 +231,7 @@ const app = {
   expandedTasks: new Set(),
   taskDetails: new Map(),
   runActionPending: false,
+  approvalPending: new Set(),
   scrollToRunAfterLoad: false,
   events: [],
   eventIds: new Set(),
@@ -137,7 +246,7 @@ const app = {
   backgroundErrorAt: 0,
   backgroundErrorMsg: '',
   lastToast: { message: '', at: 0 },
-  modal: { open: false, type: '', onClose: null, confirmFinish: null, lastFocus: null },
+  modal: { open: false, type: '', onClose: null, confirmFinish: null, lastFocus: null, approvalsSig: '' },
   drawer: { open: false, path: '', content: '', lastFocus: null },
   booted: false,
 };
@@ -384,6 +493,329 @@ function parseAcceptanceLines(text) {
 }
 
 // ============================================================
+// v2：审批 / 验证状态 / 费用来源 数据工具
+// ============================================================
+function fmtShortSha(value, length = 8) {
+  const sha = String(value || '').trim();
+  return sha ? sha.slice(0, length) : '—';
+}
+
+function parseTagList(text) {
+  return [
+    ...new Set(
+      String(text || '')
+        .split(/[\r\n,，;；、]+/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function flagOn(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function flagOff(value) {
+  return value === false || value === 0 || value === '0' || value === 'false';
+}
+
+function normalizeCostSourceKey(value) {
+  const key = String(value || '').trim().toLowerCase();
+  if (!key) return '';
+  if (['vendor', 'vendor-returned', 'reported', 'exact', 'api', 'billing'].includes(key)) return 'vendor';
+  if (['estimated', 'estimate', 'calc', 'calculated', 'fallback', 'computed'].includes(key)) return 'estimated';
+  return 'unknown';
+}
+
+function costSourceMeta(key) {
+  return COST_SOURCE[key] || COST_SOURCE.unknown;
+}
+
+function collectCostSourceKeys(run) {
+  const keys = new Set();
+  const push = (value) => {
+    const key = normalizeCostSourceKey(value);
+    if (key) keys.add(key);
+  };
+  const pushAttempts = (attempts) => {
+    for (const attempt of Array.isArray(attempts) ? attempts : []) {
+      if (attempt) push(attempt.costSource ?? attempt.cost_source);
+    }
+  };
+  for (const task of run?.tasks || []) pushAttempts(task.attempts);
+  for (const entry of app.taskDetails.values()) pushAttempts(entry?.data?.attempts);
+  const events = Array.isArray(run?.events) ? run.events : [];
+  for (const event of events) {
+    const type = String(event?.type || '');
+    if (type !== 'agent_finished' && type !== 'agent_failed') continue;
+    const data = event?.data && typeof event.data === 'object' ? event.data : event?.data_json || {};
+    if (typeof data.costReported === 'boolean') push(data.costReported ? 'vendor' : 'estimated');
+    const message = String(event?.message || '');
+    if (message.includes('费用来源：厂商返回')) push('vendor');
+    else if (message.includes('费用来源：估算')) push('estimated');
+  }
+  return keys;
+}
+
+function costSourceOfRun(run) {
+  const keys = collectCostSourceKeys(run);
+  const hasVendor = keys.has('vendor');
+  const hasEstimated = keys.has('estimated');
+  if (hasVendor && hasEstimated) return COST_SOURCE.mixed;
+  if (hasVendor) return COST_SOURCE.vendor;
+  if (hasEstimated) return COST_SOURCE.estimated;
+  return COST_SOURCE.unknown;
+}
+
+function costSourceOfAttempt(attempt) {
+  return costSourceMeta(normalizeCostSourceKey(attempt?.costSource) || 'unknown');
+}
+
+function fmtRunCost(run) {
+  const cost = toNumber(run?.spent_json?.costCny);
+  if (cost > 0) return fmtCostCny(cost);
+  const tokens = toNumber(run?.spent_json?.tokens);
+  return tokens > 0 ? '费用未知' : '—';
+}
+
+function buildCostSourceChip(run, options = {}) {
+  const source = costSourceOfRun(run);
+  return el('span', {
+    className: `cost-source-chip tone-${source.tone}${options.block ? ' is-block' : ''}`,
+    title: `费用来源：${source.label}\n${source.note}`,
+  }, [
+    el('span', { className: 'cost-source-chip-label', text: options.prefix === false ? source.label : `费用来源：${source.label}` }),
+  ]);
+}
+
+function normalizeApproval(raw) {
+  const item = raw || {};
+  const details =
+    item.details_json && typeof item.details_json === 'object'
+      ? item.details_json
+      : item.details && typeof item.details === 'object'
+        ? item.details
+        : {};
+  return {
+    id: item.id || '',
+    runId: item.run_id || item.runId || '',
+    taskId: item.task_id || item.taskId || '',
+    type: String(item.type || ''),
+    status: String(item.status || 'pending').toLowerCase(),
+    title: String(item.title || ''),
+    details,
+    createdAt: item.created_at || item.createdAt || '',
+    updatedAt: item.updated_at || '',
+    decidedAt: item.decided_at || item.decidedAt || '',
+    decidedBy: item.decided_by || item.decidedBy || '',
+  };
+}
+
+function normalizeApprovals(list) {
+  return (Array.isArray(list) ? list : []).map(normalizeApproval).filter((item) => item.id);
+}
+
+function pendingApprovals() {
+  const list = normalizeApprovals(app.state?.approvals);
+  return list.filter((approval) => approval.status === 'pending');
+}
+
+function approvalTypeLabel(type) {
+  return APPROVAL_TYPE_LABELS[type] || type || '审批项';
+}
+
+function approvalStatusMeta(status) {
+  return APPROVAL_STATUS[status] || { label: status || '未知', tone: 'gray' };
+}
+
+function approvalDetailsSummary(approval) {
+  const details = approval?.details || {};
+  const parts = [];
+  const verification = details.verification && typeof details.verification === 'object' ? details.verification : {};
+  if (verification.status) parts.push(`验证状态 ${verification.status}`);
+  if (verification.note) parts.push(String(verification.note));
+  if (details.planHead) parts.push(`commit ${fmtShortSha(details.planHead, 10)}`);
+  const blocked = Array.isArray(details.publish?.blocked) ? details.publish.blocked.filter(Boolean) : [];
+  if (blocked.length) parts.push(`待授权动作：${blocked.join('；')}`);
+  if (details.note) parts.push(String(details.note));
+  return parts.length ? parts.join(' · ') : '无额外详情';
+}
+
+function verificationStatusOf(run) {
+  const detail = run || {};
+  const result = detail.result_json && typeof detail.result_json === 'object' ? detail.result_json : {};
+  const raw = String(detail.verification_status || result.verificationStatus || result.acceptedVerification || '')
+    .trim()
+    .toUpperCase();
+  if (raw) return raw;
+  if (detail.status === 'awaiting_acceptance') return 'AWAITING_ACCEPTANCE';
+  if (detail.status === 'accepted') return 'ACCEPTED';
+  return '';
+}
+
+function verificationMetaOf(status) {
+  const code = String(status || '').trim().toUpperCase();
+  if (VERIFICATION_STATUS[code]) return VERIFICATION_STATUS[code];
+  return {
+    code: code || 'UNKNOWN',
+    label: code ? `未知验证状态（${code}）` : '验证状态未知',
+    tone: 'gray',
+    note: '后端未返回可识别的 verification_status',
+  };
+}
+
+function verifiedShaOf(run) {
+  const detail = run || {};
+  const result = detail.result_json && typeof detail.result_json === 'object' ? detail.result_json : {};
+  return String(detail.verified_sha || result.verifiedSha || result.acceptedSha || result.planHead || '');
+}
+
+function ciInfoOf(run) {
+  const detail = run || {};
+  const result = detail.result_json && typeof detail.result_json === 'object' ? detail.result_json : {};
+  const publish = result.publish && typeof result.publish === 'object' ? result.publish : {};
+  const ci = result.ci && typeof result.ci === 'object' ? result.ci : publish.ci && typeof publish.ci === 'object' ? publish.ci : null;
+  const status = String(detail.ci_status || ci?.status || '').toLowerCase();
+  const conclusion = String(ci?.conclusion || '').toLowerCase();
+  const url = safeHttpUrl(detail.ci_url || ci?.htmlUrl || ci?.url);
+  const phase = conclusion || status;
+  const meta =
+    CI_LABELS[phase] ||
+    (phase === 'done' ? CI_LABELS.success : null) || {
+      label: phase ? `CI 状态：${phase}` : 'CI 状态未知',
+      tone: 'gray',
+    };
+  return {
+    status,
+    conclusion,
+    url,
+    meta,
+    note: ci?.note || '',
+    error: ci?.error || '',
+    sha: String(ci?.sha || ''),
+  };
+}
+
+/**
+ * 根据运行状态 + 验证状态决定「验收」是否可用、以及是否必须发送 confirmLocalOnly。
+ */
+function acceptancePlan(run) {
+  const project = (app.runDetail && app.runDetail.project) || currentProject() || null;
+  const status = verificationStatusOf(run);
+  const sha = verifiedShaOf(run);
+  const allowLocal = !flagOff(project?.allow_local_acceptance);
+  const base = {
+    status,
+    sha,
+    allowLocal,
+    mode: 'unknown',
+    confirmLocalOnly: false,
+    allowed: false,
+    reason: '',
+  };
+  if (run?.status !== 'awaiting_acceptance') {
+    return { ...base, allowed: false, reason: '运行不在等待验收状态' };
+  }
+  if (!sha) {
+    return { ...base, allowed: false, reason: '运行没有绑定真实验证 commit（verified_sha），后端不允许验收' };
+  }
+  if (status === 'CI_PASSED') return { ...base, allowed: true, mode: 'ci' };
+  if (status === 'CI_PENDING') {
+    return { ...base, allowed: false, reason: 'GitHub CI 尚未完成（CI_PENDING），完成前不能验收；可点击「刷新 CI」后重试。' };
+  }
+  if (status === 'CI_FAILED') {
+    return { ...base, allowed: false, reason: 'GitHub CI 未通过（CI_FAILED），不能验收；请先修复 CI 失败项。' };
+  }
+  if (status === 'LOCAL_VERIFIED') {
+    if (!allowLocal) {
+      return { ...base, allowed: false, reason: '项目不允许本地验收（allow_local_acceptance=false），需要等待远端 CI 通过。' };
+    }
+    return { ...base, allowed: true, mode: 'local', confirmLocalOnly: true };
+  }
+  if (status === 'ACCEPTED') return { ...base, allowed: false, reason: '运行已验收' };
+  // 旧版后端没有 verification_status：仅允许在人工核对后按旧流程验收
+  return { ...base, allowed: true, mode: 'legacy' };
+}
+
+function verificationSubText(run, info) {
+  const meta = info.verification;
+  if (run.status === 'accepted') return `已记录人工验收 · ${meta.code}`;
+  if (!info.verificationStatus) return '后端未返回验证状态（可能是旧版服务）';
+  return meta.note;
+}
+
+function verificationGuidance(run, info, plan) {
+  const meta = info.verification;
+  const sha = info.verifiedSha ? fmtShortSha(info.verifiedSha, 10) : '';
+  if (run.status === 'awaiting_acceptance') {
+    if (!plan.allowed && plan.reason && meta.code !== 'CI_PENDING' && meta.code !== 'CI_FAILED') {
+      return `${plan.reason}${sha ? `（当前验证状态 ${meta.code}，验证 commit ${sha}）` : `（当前验证状态 ${meta.code}）`}`;
+    }
+    if (plan.mode === 'local') {
+      return `仅本地验证（LOCAL_VERIFIED，commit ${sha}）：远端 CI 未通过或项目未要求远端 CI。点击验收会弹出确认并发送 confirmLocalOnly=true，按「本地交付」记录；不会合并主分支、不会部署。`;
+    }
+    if (meta.code === 'CI_PASSED') {
+      return `远端 CI 已通过（CI_PASSED，commit ${sha}）：可以正常验收。验收只记录人工决定，不会自动合并主分支或部署。`;
+    }
+    if (meta.code === 'CI_PENDING') {
+      return `GitHub CI 尚未完成（CI_PENDING）：完成前不能验收。可点击「刷新 CI」重新拉取 Actions 状态，完成后再验收。`;
+    }
+    if (meta.code === 'CI_FAILED') {
+      return `GitHub CI 未通过（CI_FAILED）：不能验收。请打开 CI 详情修复失败项，或取消本次运行。`;
+    }
+    if (plan.mode === 'legacy') {
+      return `当前服务未返回 verification_status（可能是旧版后端）：无法确认远端 CI 结果。验收前请人工核对目标、任务、审计与产物，验收只记录结果，不会合并主分支。`;
+    }
+    return meta.note;
+  }
+  if (run.status === 'accepted') {
+    return `已验收（${info.verificationStatus || '状态未知'}${sha ? `，commit ${sha}` : ''}；未合并主分支，未部署）。`;
+  }
+  if (run.status === 'running' || run.status === 'queued') {
+    return `运行尚未结束，verification_status 会在完成后更新（LOCAL_VERIFIED / CI_PENDING / CI_PASSED / CI_FAILED）。当前记录：${meta.code}；此时不可验收。`;
+  }
+  if (run.status === 'paused' || run.status === 'interrupted') {
+    return `运行在验证/验收前暂停。恢复运行后会重新计算验证状态；当前验证状态：${meta.code}。`;
+  }
+  if (run.status === 'failed' || run.status === 'cancelled') {
+    return `运行已结束，验证状态：${meta.code}。未验收、未合并主分支。`;
+  }
+  return `验证状态：${meta.code}。远端交付需要 CI_PASSED 并绑定 commit，本地验收需要显式确认。`;
+}
+
+function buildAcceptConfirmOptions(run, info, plan) {
+  const sha = info.verifiedSha ? fmtShortSha(info.verifiedSha, 10) : '';
+  if (plan.mode === 'local') {
+    return {
+      title: '确认本地验收（不合并）',
+      message: `运行 ${shortId(run.id, 16)} 当前验证状态为 LOCAL_VERIFIED（commit ${sha}），未通过远端 CI。`,
+      highlight: '确认后将按「本地交付」记录人工验收，并向服务发送 { confirmLocalOnly: true }。',
+      warning: '验收不会合并主分支、不会部署、不会自动推送远端；是否合并 PR 仍由你自行决定。',
+      confirmText: '确认本地验收',
+      tone: 'accept',
+    };
+  }
+  if (plan.mode === 'ci') {
+    return {
+      title: '记录人工验收（CI_PASSED）',
+      message: `远端 CI 已通过（CI_PASSED）并绑定 commit ${sha}。验收只记录人工决定，不改变远端仓库。`,
+      highlight: '不会合并主分支、不会部署、不会自动推送。',
+      warning: '如需合并 PR，请自行在 GitHub 上操作并复核 CI 与审计证据。',
+      confirmText: '确认验收（不合并）',
+      tone: 'accept',
+    };
+  }
+  return {
+    title: '记录人工验收（验证状态未知）',
+    message: `当前服务未返回可识别的验证状态（可能是旧版后端），运行 ${shortId(run.id, 16)} 的验证 commit 为 ${sha || '未知'}。`,
+    warning: '无法确认远端 CI 结果；请仅在你已人工核对目标、任务、审计与产物后继续。验收不会合并主分支、不会部署。',
+    highlight: '验收只记录人工决定，不会自动合并主分支。',
+    confirmText: '确认验收（不合并）',
+    tone: 'accept',
+  };
+}
+
+// ============================================================
 // API
 // ============================================================
 class ApiError extends Error {
@@ -418,14 +850,32 @@ async function apiRequest(method, requestPath, body) {
     }
     const errorPayload = payload && payload.ok === false ? payload.error : null;
     if (!response.ok || errorPayload) {
-      const message = errorPayload?.message || payload?.message || `请求失败（HTTP ${response.status}）`;
-      throw new ApiError(message, response.status, errorPayload?.code || '', errorPayload?.details || null);
+      const rawMessage = errorPayload?.message || payload?.message || `请求失败（HTTP ${response.status}）`;
+      throw new ApiError(
+        describeHttpError(response.status, rawMessage),
+        response.status,
+        errorPayload?.code || '',
+        // details 仅用于程序判断，绝不在界面上按 HTML 渲染
+        errorPayload?.details || null,
+      );
     }
     return payload ? payload.data : undefined;
   }
   const text = await response.text();
-  if (!response.ok) throw new ApiError(`请求失败（HTTP ${response.status}）`, response.status);
+  if (!response.ok) throw new ApiError(describeHttpError(response.status, `请求失败（HTTP ${response.status}）`), response.status);
   return text;
+}
+
+function describeHttpError(status, rawMessage) {
+  const message = String(rawMessage || '').trim();
+  if (status === 401) return 'API 认证失败，请刷新页面获取会话 Cookie 后重试';
+  if (status === 403) {
+    return message && message !== '请求失败（HTTP 403）'
+      ? `请求被安全策略拒绝：${message}`
+      : '请求被安全策略拒绝：Host / Origin / CSRF / 限流校验未通过，请刷新页面后重试';
+  }
+  if (!message) return `请求失败（HTTP ${status}）`;
+  return message;
 }
 
 // ============================================================
@@ -699,6 +1149,7 @@ const DOM_IDS = [
   'budgetWidget',
   'budgetTokensValue',
   'budgetTokensBar',
+  'budgetGlmValue',
   'budgetCostValue',
   'budgetCostBar',
   'auditPill',
@@ -712,6 +1163,8 @@ const DOM_IDS = [
   'sseDot',
   'sseLabel',
   'refreshBtn',
+  'approvalsBtn',
+  'approvalsCount',
   'helpBtn',
   'projectCount',
   'projectList',
@@ -743,8 +1196,15 @@ const DOM_IDS = [
   'runsPanel',
   'runsSub',
   'runList',
+  'loopsPanel',
+  'loopsSub',
+  'loopList',
+  'loopsEmpty',
+  'loopsRefreshBtn',
   'runDetailView',
   'runHeader',
+  'verifyPanel',
+  'runApprovalsPanel',
   'tasksSub',
   'taskList',
   'eventsScope',
@@ -795,6 +1255,8 @@ function bindStaticEvents() {
   dom.helpBtn.addEventListener('click', () => openHelpModal());
   dom.welcomeHelpBtn.addEventListener('click', () => openHelpModal());
   dom.refreshBtn.addEventListener('click', () => refreshAll({ silent: false, reason: 'manual' }));
+  if (dom.loopsRefreshBtn) dom.loopsRefreshBtn.addEventListener('click', () => refreshLoopsPanel());
+  dom.approvalsBtn.addEventListener('click', () => openApprovalsModal());
   dom.modalBackdrop.addEventListener('click', dismissModal);
   dom.modalCloseBtn.addEventListener('click', dismissModal);
   dom.drawerBackdrop.addEventListener('click', closeDrawer);
@@ -925,6 +1387,8 @@ async function loadState(options = {}) {
     const data = await apiRequest('GET', '/api/state');
     if (!data || typeof data !== 'object') throw new ApiError('工作台返回了无效的状态数据', 0, 'BAD_STATE');
     app.state = data;
+    // 研发循环面板优先使用 GET /api/state 的 loops 字段；旧服务未返回时回退到 GET /api/loops。
+    if (!Array.isArray(app.state.loops)) app.state.loops = await loadLoopsFallback();
     app.stateError = null;
     app.lastStateAt = Date.now();
     return true;
@@ -932,6 +1396,15 @@ async function loadState(options = {}) {
     app.stateError = error;
     if (silent) reportBackgroundError(error);
     return false;
+  }
+}
+
+async function loadLoopsFallback() {
+  try {
+    const data = await apiRequest('GET', '/api/loops');
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
   }
 }
 
@@ -973,6 +1446,8 @@ function normalizeAttempt(rawAttempt) {
     status: attempt.status || '',
     tokens: toNumber(attempt.tokens, toNumber(attempt.tokens_in) + toNumber(attempt.tokens_out) + toNumber(attempt.tokens_cache)),
     costCny: toNumber(attempt.cost_cny),
+    costSource: normalizeCostSourceKey(attempt.cost_source ?? attempt.costSource),
+    costReported: flagOn(attempt.cost_reported ?? attempt.costReported),
     durationMs: toNumber(attempt.duration_ms),
     error: attempt.error || '',
     createdAt: attempt.created_at || '',
@@ -1017,6 +1492,8 @@ function normalizeRunDetail(rawDetail) {
     result_json: detail.result_json || {},
     spent_json: detail.spent_json || {},
     budget_json: detail.budget_json || {},
+    project: detail.project && typeof detail.project === 'object' ? detail.project : null,
+    approvals: normalizeApprovals(detail.approvals),
     actions: Array.isArray(detail.actions) ? detail.actions : [],
     events: Array.isArray(detail.events) ? detail.events : [],
     tasks,
@@ -1057,7 +1534,39 @@ function deriveRunInfo(run) {
   const tasks = Array.isArray(detail.tasks) ? detail.tasks : [];
   const counts = {};
   for (const task of tasks) counts[task.status] = (counts[task.status] || 0) + 1;
-  return { result, publish, pushAction, prAction, blockedAction, ciAction, planBranch, pr, blockedReasons, ci, counts, acceptedAt: result.acceptedAt || '' };
+  const verificationStatus = verificationStatusOf(detail);
+  const verification = verificationMetaOf(verificationStatus);
+  const verifiedSha = verifiedShaOf(detail);
+  const verifyCi = ciInfoOf(detail);
+  const approvals = normalizeApprovals(detail.approvals);
+  const pendingApprovalCount = approvals.filter((item) => item.status === 'pending').length;
+  const costSource = costSourceOfRun(detail);
+  const spent = {
+    tokens: toNumber(detail.spent_json?.tokens),
+    costCny: toNumber(detail.spent_json?.costCny),
+  };
+  return {
+    result,
+    publish,
+    pushAction,
+    prAction,
+    blockedAction,
+    ciAction,
+    planBranch,
+    pr,
+    blockedReasons,
+    ci,
+    counts,
+    acceptedAt: result.acceptedAt || '',
+    verificationStatus,
+    verification,
+    verifiedSha,
+    verifyCi,
+    approvals,
+    pendingApprovalCount,
+    costSource,
+    spent,
+  };
 }
 
 function summarizeTaskCounts(tasks) {
@@ -1238,7 +1747,7 @@ function normalizeEvent(rawEvent) {
     projectId: raw.projectId || raw.project_id || '',
     taskId: raw.taskId || raw.task_id || '',
     type: String(raw.type || 'event'),
-    level: ['info', 'warn', 'error'].includes(raw.level) ? raw.level : 'info',
+    level: ['info', 'warn', 'error', 'debug'].includes(raw.level) ? raw.level : 'info',
     message: String(raw.message || ''),
     createdAt: raw.createdAt || raw.created_at || new Date().toISOString(),
   };
@@ -1426,14 +1935,34 @@ function syncEventsForRun(run) {
   updateEventFooter();
 }
 
+function eventTypeMeta(type) {
+  const key = String(type || '');
+  if (EVENT_TYPE_META[key]) return EVENT_TYPE_META[key];
+  if (/(passed|accepted|created|pr_created|branch_pushed)/.test(key)) {
+    return { icon: '✓', tone: 'green', rowClass: 'type-passed', label: '通过' };
+  }
+  if (/(failed|error|blocked|cancelled|violation)/.test(key)) {
+    return { icon: '!', tone: 'red', rowClass: 'type-failed', label: '异常' };
+  }
+  return null;
+}
+
 function buildEventRow(event) {
-  const row = el('div', { className: `event-row level-${event.level}` });
-  if (/(passed|accepted|created|pr_created|branch_pushed)/.test(event.type)) row.classList.add('type-passed');
-  if (/(failed|error|blocked|cancelled|violation)/.test(event.type)) row.classList.add('type-failed');
+  const meta = eventTypeMeta(event.type);
+  const row = el('div', {
+    className: `event-row level-${event.level}${meta?.rowClass ? ` ${meta.rowClass}` : ''}`,
+  });
   const typeSuffix = event.taskId ? ` · ${shortId(event.taskId, 12)}` : '';
+  const marker = meta?.icon
+    ? el('span', {
+        className: `event-icon tone-${meta.tone || 'gray'}`,
+        text: meta.icon,
+        title: meta.label ? `${meta.label}（${event.type}）` : event.type,
+      })
+    : el('span', { className: 'event-dot' });
   row.append(
     el('span', { className: 'event-time', text: fmtClock(event.createdAt), title: fmtDateTimeFull(event.createdAt) }),
-    el('span', { className: 'event-dot' }),
+    marker,
     el('div', { className: 'event-main' }, [
       el('span', { className: 'event-message', text: event.message || event.type }),
       el('span', { className: 'event-type', text: `${event.type}${typeSuffix}`, title: `${event.type}\n${fmtDateTimeFull(event.createdAt)}` }),
@@ -1529,13 +2058,28 @@ function renderTopbar() {
   renderAuditPill(state?.audit);
   renderAgentPills(state?.agents);
   renderGithubPill(state?.github);
+  renderApprovalsButton(state);
   renderSseStatus();
+}
+
+function renderApprovalsButton() {
+  if (!dom.approvalsBtn) return;
+  const count = pendingApprovals().length;
+  dom.approvalsBtn.classList.toggle('has-items', count > 0);
+  dom.approvalsBtn.setAttribute('aria-label', count ? `打开审批中心，${count} 项待审批` : '打开审批中心');
+  dom.approvalsBtn.title = count
+    ? `审批中心 · ${count} 项待处理（批准不会自动合并主分支或部署）`
+    : '审批中心 · 暂无待审批项（批准不会自动合并主分支或部署）';
+  if (!dom.approvalsCount) return;
+  dom.approvalsCount.hidden = count <= 0;
+  dom.approvalsCount.textContent = count > 99 ? '99+' : String(count);
 }
 
 function renderBudget(budget) {
   const data = budget || {};
   if (!app.state) {
     if (dom.budgetTokensValue) dom.budgetTokensValue.textContent = '—';
+    if (dom.budgetGlmValue) dom.budgetGlmValue.textContent = '—';
     if (dom.budgetCostValue) dom.budgetCostValue.textContent = '—';
     if (dom.budgetTokensBar) dom.budgetTokensBar.style.width = '0%';
     if (dom.budgetCostBar) dom.budgetCostBar.style.width = '0%';
@@ -1547,6 +2091,7 @@ function renderBudget(budget) {
   }
   const maxTokens = toNumber(data.maxTokens);
   const usedTokens = toNumber(data.usedTokens, toNumber(data.breakdown?.tokens));
+  const budgetUsed = toNumber(data.usedBudgetTokens, usedTokens);
   const maxCost = toNumber(data.maxCostCny);
   const usedCost = toNumber(data.usedCostCny, toNumber(data.breakdown?.costCny));
   const tokensPercent = Number.isFinite(Number(data.tokensPercent))
@@ -1561,8 +2106,13 @@ function renderBudget(budget) {
       : 0;
 
   if (dom.budgetTokensValue) {
-    dom.budgetTokensValue.textContent = `${fmtTokens(usedTokens)} / ${fmtTokens(maxTokens)} · ${fmtPercent(tokensPercent)}`;
-    dom.budgetTokensValue.title = `已用 ${fmtTokens(usedTokens)} / 上限 ${fmtTokens(maxTokens)} tokens`;
+    dom.budgetTokensValue.textContent = `${fmtTokens(budgetUsed)} / ${fmtTokens(maxTokens)} · ${fmtPercent(tokensPercent)}`;
+    dom.budgetTokensValue.title = `预算折算已用 ${fmtTokens(budgetUsed)} / 上限 ${fmtTokens(maxTokens)} tokens；原始用量 ${fmtTokens(usedTokens)}（缓存读取按 ${data.cacheTokenWeight ?? 0.1} 折算）`;
+  }
+  if (dom.budgetGlmValue) {
+    const glm = data.glm || {};
+    dom.budgetGlmValue.textContent = `${fmtTokens(toNumber(glm.tokens))} · ${fmtCostCny(toNumber(glm.costCny), maxCost)}（不受预算）`;
+    dom.budgetGlmValue.title = `GLM 真实用量：输入 ${fmtTokens(toNumber(glm.tokensIn))} · 输出 ${fmtTokens(toNumber(glm.tokensOut))} · 缓存 ${fmtTokens(toNumber(glm.tokensCache))}；真实费用 ${fmtCostCny(toNumber(glm.costCny), maxCost)}；不计入工作台 token/费用上限`;
   }
   if (dom.budgetCostValue) {
     dom.budgetCostValue.textContent = `${fmtCostCny(usedCost, maxCost)} / ¥${fmtCost(maxCost)} · ${fmtPercent(costPercent)}`;
@@ -1577,10 +2127,12 @@ function renderBudget(budget) {
     const breakdown = data.breakdown || {};
     dom.budgetWidget.title = [
       '全局预算消耗（所有运行累计）',
-      `tokens：${fmtTokens(usedTokens)} / ${fmtTokens(maxTokens)}`,
+      `预算折算 tokens：${fmtTokens(budgetUsed)} / ${fmtTokens(maxTokens)}`,
+      `原始 tokens：${fmtTokens(usedTokens)}（缓存按 ${data.cacheTokenWeight ?? 0.1} 折算）`,
       `tokens 明细：输入 ${fmtTokens(breakdown.tokensIn)} · 输出 ${fmtTokens(breakdown.tokensOut)} · 缓存 ${fmtTokens(breakdown.tokensCache)}`,
       `成本：${fmtCostCny(usedCost)} / ¥${fmtCost(maxCost)}`,
       `剩余：${fmtTokens(data.remainingTokens)} tokens · ¥${fmtCost(data.remainingCostCny)}`,
+      '费用来源：以各运行 attempts 记录为准（厂商返回 / 估算 / UNKNOWN 混合累计）',
     ].join('\n');
   }
 }
@@ -1705,15 +2257,117 @@ function renderSidebar() {
 }
 
 function buildSidebarError(error, retry) {
-  return el('div', { className: 'project-empty' }, [
+  const authFailed = error && error.status === 401;
+  const forbidden = error && error.status === 403;
+  const children = [
     el('p', { text: `项目列表加载失败：${error.message}` }),
+  ];
+  if (authFailed) {
+    children.push(el('p', { className: 'project-empty-hint', text: '会话 Cookie 缺失或已失效：刷新页面后服务器会重新写入 HttpOnly Cookie。' }));
+  } else if (forbidden) {
+    children.push(el('p', { className: 'project-empty-hint', text: '请求被安全策略拒绝（Host / Origin / CSRF / 限流）；请确认通过 http://127.0.0.1:4477 访问。' }));
+  }
+  children.push(
     el('button', {
       className: 'button button-ghost button-sm',
-      text: '重试',
+      text: authFailed || forbidden ? '刷新页面' : '重试',
       attrs: { type: 'button' },
-      on: { click: retry },
+      on: {
+        click: authFailed || forbidden ? () => window.location.reload() : retry,
+      },
     }),
-  ]);
+  );
+  return el('div', { className: 'project-empty' }, children);
+}
+
+function agentShortLabel(kind) {
+  const key = String(kind || 'auto').toLowerCase();
+  if (key === 'dsh') return 'DSH';
+  if (key === 'claude') return 'Claude';
+  if (key === 'custom') return '自定义';
+  return '自动';
+}
+
+function auditProviderDisplay(provider) {
+  const key = String(provider || 'auto').toLowerCase();
+  if (key === 'auto') {
+    const active = app.state?.audit?.active;
+    if (active?.label) return `自动 · ${active.label}${active.model ? ` / ${active.model}` : ''}`;
+    return '自动（未配置）';
+  }
+  return AUDIT_PROVIDER_LABELS[key] || provider || '—';
+}
+
+function auditProviderShort(provider) {
+  const key = String(provider || 'auto').toLowerCase();
+  if (key === 'auto') {
+    const active = app.state?.audit?.active;
+    return active?.label ? `自动·${active.label}` : '自动';
+  }
+  return AUDIT_PROVIDER_LABELS[key] || key.toUpperCase();
+}
+
+function projectCiRequired(project) {
+  return !flagOff(project?.ci_required);
+}
+
+function projectRemoteAuthorized(project) {
+  return flagOn(project?.remote_push_authorized);
+}
+
+function projectAllowLocalAcceptance(project) {
+  return !flagOff(project?.allow_local_acceptance);
+}
+
+function budgetSummaryOf(project) {
+  const budget = project?.budget_json && typeof project.budget_json === 'object' ? project.budget_json : {};
+  const tokens = toNumber(budget.max_tokens_per_run);
+  const cost = toNumber(budget.max_cost_cny_per_run);
+  const attempts = toNumber(budget.max_attempts);
+  const wallClock = toNumber(budget.max_wall_clock_ms);
+  const parts = [];
+  if (tokens > 0) parts.push(`${fmtTokens(tokens)} tokens/次`);
+  if (cost > 0) parts.push(`¥${fmtCost(cost)}/次`);
+  if (attempts > 0) parts.push(`最多 ${attempts} 次尝试`);
+  if (wallClock > 0) parts.push(`时长 ${fmtDurationMs(wallClock)}`);
+  if (!parts.length) {
+    return { text: '预算跟随全局', title: '项目未设置独立预算：使用全局 tokens / 成本上限与默认尝试次数' };
+  }
+  return { text: parts.join(' · '), title: `项目预算（单次运行上限）：${parts.join('，')}` };
+}
+
+function shortBudgetText(project) {
+  const budget = project?.budget_json && typeof project.budget_json === 'object' ? project.budget_json : {};
+  const tokens = toNumber(budget.max_tokens_per_run);
+  const cost = toNumber(budget.max_cost_cny_per_run);
+  if (tokens > 0 && cost > 0) return `预算 ${fmtTokens(tokens)} / ¥${fmtCost(cost)}`;
+  if (tokens > 0) return `预算 ${fmtTokens(tokens)} tok`;
+  if (cost > 0) return `预算 ¥${fmtCost(cost)}`;
+  return '预算跟随全局';
+}
+
+function projectTag(label, options = {}) {
+  return el('span', {
+    className: `project-tag${options.tone ? ` tone-${options.tone}` : ''}`,
+    title: options.title || label,
+    text: label,
+  });
+}
+
+function verificationBadge(status, options = {}) {
+  const meta = verificationMetaOf(status?.code || status);
+  const title = [`验证状态：${meta.code}`, meta.label, meta.note, options.title].filter(Boolean).join('\n');
+  return el(
+    'span',
+    {
+      className: `verify-badge tone-${meta.tone}${options.small ? ' is-small' : ''}`,
+      title,
+    },
+    [
+      el('span', { className: 'verify-badge-code', text: meta.code }),
+      options.showLabel === false ? null : el('span', { className: 'verify-badge-label', text: meta.label }),
+    ],
+  );
 }
 
 function buildProjectItem(project) {
@@ -1722,12 +2376,70 @@ function buildProjectItem(project) {
   const latestNode = latestRun
     ? runBadge(latestRun.status)
     : el('span', { className: 'chip tone-gray', text: '未运行' });
+  const verifyStatus = latestRun ? verificationStatusOf(latestRun) : '';
+  const verifySha = latestRun ? verifiedShaOf(latestRun) : '';
+  const verifyNode = verifyStatus
+    ? verificationBadge(verifyStatus, {
+        showLabel: false,
+        small: true,
+        title: [
+          verifySha ? `验证 commit ${fmtShortSha(verifySha, 10)}` : '',
+          latestRun.status === 'awaiting_acceptance' ? '运行状态：AWAITING_ACCEPTANCE（等待人工验收）' : '',
+        ]
+          .filter(Boolean)
+          .join('\n') || undefined,
+      })
+    : null;
+  const budget = budgetSummaryOf(project);
+  const ciRequired = projectCiRequired(project);
+  const remoteAuthorized = projectRemoteAuthorized(project);
+  const allowLocal = projectAllowLocalAcceptance(project);
+  const contractCount = Array.isArray(project.contract_files) ? project.contract_files.length : 0;
+  const tags = el('span', { className: 'project-tags' }, [
+    verifyNode,
+    latestRun && latestRun.status === 'awaiting_acceptance'
+      ? projectTag('待验收', { tone: 'cyan', title: '运行状态：awaiting_acceptance（等待人工验收）' })
+      : null,
+    projectTag(`Agent ${agentShortLabel(project.agent_kind)}`, {
+      title: `默认 Agent：${agentLabel(project.agent_kind)}`,
+    }),
+    projectTag(`审计 ${auditProviderShort(project.audit_provider)}`, {
+      title: `独立审计模型：${auditProviderDisplay(project.audit_provider)}`,
+    }),
+    projectTag(shortBudgetText(project), { tone: 'blue', title: budget.title }),
+    projectTag(ciRequired ? 'CI 必需' : 'CI 非必需', {
+      tone: ciRequired ? 'blue' : 'gray',
+      title: ciRequired
+        ? '项目要求远端 CI（ci_required=true）；远端交付需要 CI_PASSED 才能验收'
+        : '项目不要求远端 CI（ci_required=false）',
+    }),
+    projectTag(remoteAuthorized ? '远端已授权' : '远端未授权', {
+      tone: remoteAuthorized ? 'cyan' : 'amber',
+      title: remoteAuthorized
+        ? '项目已授权远端推送（remote_push_authorized=true），运行完成后可推送计划分支并创建 PR'
+        : '项目未授权远端推送（remote_push_authorized=false）：运行只在本地保留计划分支，不会推送或创建 PR',
+    }),
+    allowLocal ? null : projectTag('本地验收禁用', { tone: 'amber', title: '项目不允许本地验收（allow_local_acceptance=false）' }),
+    contractCount ? projectTag(`契约 ${contractCount} 文件`, { title: (project.contract_files || []).join('\n') }) : null,
+  ]);
   const item = el(
     'button',
     {
       className: `project-item${selected ? ' is-selected' : ''}`,
       attrs: { type: 'button', 'aria-pressed': selected ? 'true' : 'false' },
-      title: [project.name, project.local_path || project.repo_url || '', project.test_command || '未配置测试命令'].filter(Boolean).join('\n'),
+      title: [
+        project.name,
+        project.local_path || project.repo_url || '',
+        project.test_command || '未配置测试命令',
+        `默认 Agent：${agentLabel(project.agent_kind)} · 审计：${auditProviderDisplay(project.audit_provider)}`,
+        `项目预算：${budget.text}`,
+        ciRequired ? '要求远端 CI' : '不要求远端 CI',
+        remoteAuthorized ? '已授权远端推送' : '未授权远端推送（不会推送/创建 PR）',
+        allowLocal ? '允许本地验收（需显式确认）' : '不允许本地验收',
+        latestRun ? `最近运行验证状态：${verificationMetaOf(verifyStatus).code}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
       on: { click: () => selectProject(project.id) },
     },
     [
@@ -1748,6 +2460,7 @@ function buildProjectItem(project) {
           title: latestRun ? `最近运行：${fmtDateTime(latestRun.created_at)}` : `创建于 ${fmtDateTimeFull(project.created_at)}`,
         }),
       ]),
+      tags,
     ],
   );
   return item;
@@ -1783,6 +2496,7 @@ function renderAll() {
   renderWorkspace();
   renderStatusPanel();
   renderEventsChrome();
+  syncApprovalsModal(false);
 }
 
 function renderWelcomeStats() {
@@ -1804,11 +2518,13 @@ function renderWorkspace() {
   renderProjectHeader(project);
   syncGoalForm(project);
   renderRuns(project);
+  renderLoops();
   if (app.selectedRunId) {
     dom.runDetailView.hidden = false;
     renderRunDetail();
   } else {
     dom.runDetailView.hidden = true;
+    hideRunPanels();
   }
 }
 
@@ -1865,6 +2581,15 @@ function renderProjectHeader(project) {
     actions,
   ]);
 
+  const latestRun = project.latestRun || null;
+  const verifyStatus = latestRun ? verificationStatusOf(latestRun) : '';
+  const budget = budgetSummaryOf(project);
+  const ciRequired = projectCiRequired(project);
+  const remoteAuthorized = projectRemoteAuthorized(project);
+  const allowLocal = projectAllowLocalAcceptance(project);
+  const contractFiles = Array.isArray(project.contract_files) ? project.contract_files : [];
+  const latestCostSource = latestRun ? costSourceOfRun(latestRun) : null;
+
   const facts = el('div', { className: 'project-facts' }, [
     factNode('分支', project.default_branch || 'main', { mono: true }),
     factNode('测试命令', project.test_command || '未配置', {
@@ -1881,7 +2606,52 @@ function renderProjectHeader(project) {
     factNode('创建于', fmtRelative(project.created_at), { title: fmtDateTimeFull(project.created_at) }),
   ]);
 
-  dom.projectHeader.append(headerTop, facts);
+  const v2Facts = el('div', { className: 'project-facts project-facts-v2' }, [
+    factNode('审计模型', auditProviderDisplay(project.audit_provider), {
+      tone: 'purple',
+      title: '项目级独立审计提供方（auto 表示跟随全局可用模型）',
+    }),
+    factNode('项目预算', budget.text, { tone: 'blue', title: budget.title }),
+    factNode(ciRequired ? 'CI 要求 · 必需' : 'CI 要求 · 非必需', ciRequired ? '远端交付需 CI_PASSED' : '本地验证即可交付', {
+      tone: ciRequired ? 'cyan' : 'gray',
+      title: ciRequired
+        ? 'ci_required=true：远端交付必须 GitHub Actions 通过并绑定 commit'
+        : 'ci_required=false：项目不要求远端 CI，可按本地验证交付',
+    }),
+    factNode(remoteAuthorized ? '远端已授权' : '远端未授权', remoteAuthorized ? '可推送并创建 PR' : '仅本地计划分支', {
+      tone: remoteAuthorized ? 'cyan' : 'amber',
+      title: remoteAuthorized
+        ? 'remote_push_authorized=true：运行完成后可推送计划分支、创建草稿 PR 并轮询 CI'
+        : 'remote_push_authorized=false：不会推送远端、不会创建 PR',
+    }),
+    factNode('本地验收', allowLocal ? '允许（需显式确认）' : '禁止', {
+      tone: allowLocal ? '' : 'amber',
+      title: allowLocal
+        ? 'allow_local_acceptance=true：LOCAL_VERIFIED 时可用 confirmLocalOnly 显式确认本地验收'
+        : 'allow_local_acceptance=false：仅允许 CI_PASSED 后验收',
+    }),
+    verifyStatus
+      ? factNode('最新验证', verificationMetaOf(verifyStatus).code, {
+          tone: verificationMetaOf(verifyStatus).tone,
+          title: [
+            `最新运行 ${latestRun.id}`,
+            `验证状态：${verifyStatus}`,
+            verificationMetaOf(verifyStatus).note,
+          ].join('\n'),
+        })
+      : factNode('最新验证', '未知', { tone: 'gray', title: '最近运行没有 verification_status（旧版后端或尚未完成）' }),
+    contractFiles.length
+      ? factNode('契约文件', `${contractFiles.length} 个`, { mono: true, tone: 'cyan', title: contractFiles.join('\n') })
+      : null,
+    latestRun
+      ? factNode('最近消耗', `↑${fmtTokens(latestRun.spent_json?.tokens)} · ${fmtRunCost(latestRun)}`, {
+          tone: latestCostSource?.tone || '',
+          title: `最近运行 ${latestRun.id}\n费用来源：${latestCostSource?.label || 'UNKNOWN'}\n${latestCostSource?.note || ''}`,
+        })
+      : null,
+  ].filter(Boolean));
+
+  dom.projectHeader.append(headerTop, facts, v2Facts);
 }
 
 function updateGoalPanelSub(project) {
@@ -1893,6 +2663,8 @@ function updateGoalPanelSub(project) {
   const parts = [];
   parts.push(project.test_command ? `测试命令：${project.test_command}` : '未配置测试命令');
   parts.push(`默认 Agent：${agentLabel(project.agent_kind)}`);
+  if (projectCiRequired(project)) parts.push('远端交付需 CI_PASSED');
+  if (!projectRemoteAuthorized(project)) parts.push('远端未授权（仅本地交付）');
   parts.push('验收标准将逐条独立审计');
   dom.goalPanelSub.textContent = parts.join(' · ');
 }
@@ -2011,10 +2783,22 @@ function renderRuns(project) {
   for (const run of runs) {
     const selected = run.id === app.selectedRunId;
     const mode = MODE_LABELS[run.mode] || run.mode || '—';
+    const verifyStatus = verificationStatusOf(run);
+    const costSource = costSourceOfRun(run);
     const metaChildren = [
       el('span', { text: mode }),
       el('span', { text: `创建 ${fmtRelative(run.created_at)}`, title: fmtDateTimeFull(run.created_at) }),
     ];
+    if (verifyStatus) {
+      const runSha = verifiedShaOf(run);
+      metaChildren.push(
+        verificationBadge(verifyStatus, {
+          small: true,
+          showLabel: false,
+          title: runSha ? `验证 commit ${fmtShortSha(runSha, 10)}` : undefined,
+        }),
+      );
+    }
     if (run.stop_reason) {
       metaChildren.push(el('span', { className: 'muted', text: truncateText(run.stop_reason, 46), title: run.stop_reason }));
     }
@@ -2023,7 +2807,13 @@ function renderRuns(project) {
       {
         className: `run-item${selected ? ' is-selected' : ''}`,
         attrs: { type: 'button', 'aria-pressed': selected ? 'true' : 'false' },
-        title: run.goal || '',
+        title: [
+          run.goal || '',
+          verifyStatus ? `验证状态：${verifyStatus}` : '',
+          `费用来源：${costSource.label}（${costSource.note}）`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
         on: { click: () => selectRun(run.id, { scroll: true }) },
       },
       [
@@ -2035,8 +2825,8 @@ function renderRuns(project) {
         el('span', { className: 'run-item-side' }, [
           el('span', {
             className: 'run-item-spent',
-            text: `↑${fmtTokens(run.spent_json?.tokens)} · ¥${fmtCost(run.spent_json?.costCny)}`,
-            title: '该运行累计消耗',
+            text: `↑${fmtTokens(run.spent_json?.tokens)} · ${fmtRunCost(run)}`,
+            title: `该运行累计消耗\n费用来源：${costSource.label}\n${costSource.note}`,
           }),
           el('span', { className: 'run-item-time', text: fmtRelative(run.updated_at || run.created_at) }),
         ]),
@@ -2050,6 +2840,187 @@ function truncateText(value, maxLength) {
   const text = String(value || '');
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength)}…`;
+}
+
+// ============================================================
+// 研发循环面板（数据来自 GET /api/state 的 loops 字段）
+// ============================================================
+function loopStatusMeta(status) {
+  const key = String(status || 'unknown').toLowerCase();
+  return LOOP_STATUS[key] || { label: key || '未知', tone: 'gray' };
+}
+
+function normalizeLoop(rawLoop) {
+  const loop = rawLoop && typeof rawLoop === 'object' ? rawLoop : {};
+  const progress = loop.progress && typeof loop.progress === 'object' ? loop.progress : {};
+  const project = loop.project && typeof loop.project === 'object' ? loop.project : {};
+  const maxRounds = Math.max(0, toNumber(loop.maxRounds ?? loop.max_rounds ?? progress.maxRounds));
+  const round = Math.max(0, toNumber(loop.round ?? progress.round));
+  const history = Array.isArray(loop.history) ? loop.history : Array.isArray(loop.history_json) ? loop.history_json : [];
+  const rawPercent = Number(loop.percent ?? progress.percent);
+  const percent = Number.isFinite(rawPercent)
+    ? Math.max(0, Math.min(100, rawPercent))
+    : maxRounds > 0
+      ? Math.max(0, Math.min(100, Math.round((round / maxRounds) * 100)))
+      : 0;
+  return {
+    id: String(loop.id || ''),
+    projectId: String(loop.projectId || loop.project_id || project.id || ''),
+    projectName: String(project.name || loop.projectName || loop.project_name || ''),
+    goal: String(loop.goal || ''),
+    mode: String(loop.mode || 'plan'),
+    status: String(loop.status || 'unknown').toLowerCase(),
+    round,
+    maxRounds,
+    percent,
+    stopReason: String(loop.stopReason ?? loop.stop_reason ?? '').trim(),
+    currentRunId: String(loop.currentRunId || loop.current_run_id || ''),
+    lastRunId: String(loop.lastRunId || loop.last_run_id || ''),
+    updatedAt: loop.updatedAt || loop.updated_at || '',
+    history,
+  };
+}
+
+function normalizeLoopHistoryEntry(rawEntry, index) {
+  const item = rawEntry && typeof rawEntry === 'object' ? rawEntry : {};
+  const task = item.task && typeof item.task === 'object' ? item.task : {};
+  return {
+    round: toNumber(item.round, index + 1),
+    title: String(task.title || item.title || (typeof item.task === 'string' ? item.task : '') || '未记录任务'),
+    status: String(item.status || item.verification || '').toLowerCase(),
+    commit: String(item.commit || item.sha || ''),
+    runId: String(item.runId || item.run_id || ''),
+    finishedAt: item.finishedAt || item.finished_at || '',
+  };
+}
+
+function loopHistoryStatusMeta(status) {
+  const raw = String(status || '').trim();
+  if (!raw) return { label: '未记录', tone: 'gray' };
+  if (VERIFICATION_STATUS[raw.toUpperCase()]) return VERIFICATION_STATUS[raw.toUpperCase()];
+  return RUN_STATUS[raw.toLowerCase()] || { label: raw, tone: 'gray' };
+}
+
+function buildLoopHistory(loop) {
+  const history = Array.isArray(loop.history) ? loop.history : [];
+  const recent = history.slice(-LOOP_HISTORY_LIMIT).map(normalizeLoopHistoryEntry).reverse();
+  const block = el('div', { className: 'loop-history' }, [
+    el('div', { className: 'loop-history-head' }, [
+      el('span', { className: 'loop-history-title', text: '最近历史' }),
+      el('span', { className: 'loop-history-count', text: history.length ? `${history.length} 条` : '暂无' }),
+    ]),
+  ]);
+  if (!recent.length) {
+    block.append(el('p', { className: 'loop-history-empty', text: '暂无历史轮次' }));
+    return block;
+  }
+  const list = el('ol', { className: 'loop-history-list' });
+  for (const entry of recent) {
+    const meta = loopHistoryStatusMeta(entry.status);
+    list.append(
+      el('li', { className: 'loop-history-item' }, [
+        el('span', { className: 'loop-history-round', text: `第 ${entry.round} 轮` }),
+        el('span', { className: 'loop-history-main' }, [
+          el('span', { className: 'loop-history-task', text: entry.title, title: entry.title }),
+          el('span', { className: 'loop-history-meta' }, [
+            badge(meta.label, meta.tone),
+            entry.commit ? el('span', { className: 'mono', text: fmtShortSha(entry.commit) }) : null,
+            entry.finishedAt ? el('span', { text: fmtRelative(entry.finishedAt), title: fmtDateTimeFull(entry.finishedAt) }) : null,
+          ].filter(Boolean)),
+        ]),
+      ]),
+    );
+  }
+  block.append(list);
+  return block;
+}
+
+function buildLoopItem(loop) {
+  const meta = loopStatusMeta(loop.status);
+  const title = [
+    loop.id ? `循环 ${loop.id}` : '研发循环',
+    `status=${loop.status || 'unknown'}`,
+    `round=${loop.round}`,
+    `maxRounds=${loop.maxRounds}`,
+    `stopReason=${loop.stopReason || '—'}`,
+  ].join(' · ');
+  const head = el('div', { className: 'loop-item-head' }, [
+    badge(meta.label, meta.tone),
+    el('div', { className: 'loop-item-titles' }, [
+      el('span', { className: 'loop-item-goal', text: loop.goal || '（未记录循环目标）', title: loop.goal || '' }),
+      el('span', { className: 'loop-item-meta' }, [
+        loop.projectName ? el('span', { text: `项目：${loop.projectName}` }) : null,
+        loop.id ? el('span', { className: 'mono', text: shortId(loop.id, 14) }) : null,
+        loop.updatedAt ? el('span', { text: `更新 ${fmtRelative(loop.updatedAt)}`, title: fmtDateTimeFull(loop.updatedAt) }) : null,
+      ].filter(Boolean)),
+    ]),
+    el('span', { className: 'loop-item-round', text: `第 ${loop.round} / ${loop.maxRounds || '—'} 轮` }),
+  ]);
+  const track = el('div', {
+    className: 'progress-track loop-progress',
+    attrs: {
+      role: 'progressbar',
+      'aria-valuemin': '0',
+      'aria-valuemax': String(loop.maxRounds || 0),
+      'aria-valuenow': String(loop.round),
+      'aria-label': '研发循环轮次进度',
+    },
+  }, [el('span', { className: 'progress-fill', style: { width: `${loop.percent}%` } })]);
+  const facts = el('div', { className: 'loop-facts' }, [
+    el('span', { className: 'loop-fact' }, [
+      el('span', { className: 'loop-fact-label', text: '状态' }),
+      el('span', { className: 'mono', text: loop.status || 'unknown' }),
+    ]),
+    el('span', { className: 'loop-fact' }, [
+      el('span', { className: 'loop-fact-label', text: '轮次' }),
+      el('span', { className: 'mono', text: `${loop.round} / ${loop.maxRounds || '—'}` }),
+    ]),
+    el('span', { className: 'loop-fact' }, [
+      el('span', { className: 'loop-fact-label', text: '停因' }),
+      el('span', { className: loop.stopReason ? 'loop-stop' : 'loop-stop is-empty', text: loop.stopReason || '—', title: loop.stopReason || '' }),
+    ]),
+  ]);
+  return el('article', {
+    className: 'loop-item',
+    title,
+    attrs: {
+      'data-loop-status': loop.status,
+      'data-loop-round': String(loop.round),
+      'data-loop-max-rounds': String(loop.maxRounds),
+      'data-loop-stop-reason': loop.stopReason,
+    },
+  }, [head, track, facts, buildLoopHistory(loop)]);
+}
+
+function renderLoops() {
+  if (!dom.loopList || !dom.loopsEmpty) return;
+  const loaded = !!app.state;
+  const loops = Array.isArray(app.state?.loops)
+    ? app.state.loops.map(normalizeLoop).filter((loop) => loop.id || loop.goal)
+    : [];
+  if (dom.loopsSub) {
+    if (!loaded) dom.loopsSub.textContent = app.stateError ? '状态加载失败' : '加载中…';
+    else if (!loops.length) dom.loopsSub.textContent = '暂无研发循环 · 循环启动后可在此查看轮次与历史';
+    else dom.loopsSub.textContent = `共 ${loops.length} 个循环 · 展示状态、轮次、停因与最近历史`;
+  }
+  clearNode(dom.loopList);
+  dom.loopsEmpty.hidden = !loaded || loops.length > 0;
+  dom.loopList.hidden = !loaded || loops.length === 0;
+  for (const loop of loops) dom.loopList.append(buildLoopItem(loop));
+}
+
+async function refreshLoopsPanel() {
+  const button = dom.loopsRefreshBtn;
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  button.classList.add('is-spinning');
+  try {
+    // refreshAll 会重新请求 GET /api/state，随后通过 renderAll -> renderLoops 更新面板。
+    await refreshAll({ silent: false, reason: 'loops-manual' });
+  } finally {
+    button.disabled = false;
+    button.classList.remove('is-spinning');
+  }
 }
 
 // ============================================================
@@ -2078,9 +3049,18 @@ function ciMeta(ci) {
   return { label: 'Actions 状态未知', tone: 'gray' };
 }
 
+function hideRunPanels() {
+  for (const node of [dom.verifyPanel, dom.runApprovalsPanel]) {
+    if (!node) continue;
+    node.hidden = true;
+    clearNode(node);
+  }
+}
+
 function renderRunSkeleton() {
   clearNode(dom.runHeader);
   clearNode(dom.taskList);
+  hideRunPanels();
   dom.tasksSub.textContent = '加载中…';
   dom.runHeader.append(
     el('div', { className: 'skeleton skeleton-line is-half' }),
@@ -2093,6 +3073,7 @@ function renderRunSkeleton() {
 function renderRunError() {
   clearNode(dom.runHeader);
   clearNode(dom.taskList);
+  hideRunPanels();
   dom.tasksSub.textContent = '加载失败';
   const projectId = app.selectedProjectId;
   dom.runHeader.append(
@@ -2123,6 +3104,7 @@ function renderRunDetail() {
     dom.runDetailView.hidden = true;
     clearNode(dom.runHeader);
     clearNode(dom.taskList);
+    hideRunPanels();
     return;
   }
   dom.runDetailView.hidden = false;
@@ -2132,13 +3114,15 @@ function renderRunDetail() {
     else renderRunSkeleton();
     return;
   }
-  renderRunHeader(run);
+  const info = deriveRunInfo(run);
+  renderRunHeader(run, info);
+  renderVerificationPanel(run, info);
+  renderRunApprovalsPanel(run);
   renderTasks(run);
 }
 
-function renderRunHeader(run) {
+function renderRunHeader(run, info) {
   clearNode(dom.runHeader);
-  const info = deriveRunInfo(run);
   const statusMeta = RUN_STATUS[run.status] || { label: run.status || '未知', tone: 'gray' };
   dom.runHeader.style.setProperty('--run-accent', TONE_VARS[statusMeta.tone] || TONE_VARS.gray);
 
@@ -2154,6 +3138,7 @@ function renderRunHeader(run) {
     el('span', { className: 'run-id-chip', text: run.id, title: `运行 ID：${run.id}` }),
     badge(statusMeta.label, statusMeta.tone),
     badge(MODE_LABELS[run.mode] || run.mode || '—', 'purple'),
+    info.verificationStatus ? verificationBadge(info.verificationStatus, { small: true }) : null,
     info.acceptedAt ? badge('人工验收 · 未合并', 'cyan') : null,
   ]);
 
@@ -2163,7 +3148,7 @@ function renderRunHeader(run) {
     el('h2', { className: 'run-goal', text: run.goal || '（无目标描述）' }),
   ]);
 
-  const headerTop = el('div', { className: 'run-header-top' }, [heading, buildRunControls(run)]);
+  const headerTop = el('div', { className: 'run-header-top' }, [heading, buildRunControls(run, info)]);
 
   const metaGrid = el('div', { className: 'run-meta-grid' }, [
     buildPlanBranchMeta(info),
@@ -2174,18 +3159,49 @@ function renderRunHeader(run) {
     buildRunTimeMeta(run),
   ]);
 
+  const plan = acceptancePlan(run);
   const banners = el('div', { className: 'run-banners' });
   if (run.status === 'awaiting_acceptance') {
-    banners.append(
-      buildBanner(
-        'cyan',
-        '◈',
-        '全部任务已通过测试与独立审计，等待人工验收。验收仅记录结果，不会合并主分支。',
-      ),
-    );
+    if (plan.mode === 'local') {
+      banners.append(
+        buildBanner(
+          'cyan',
+          '◈',
+          `仅本地验证（LOCAL_VERIFIED，commit ${fmtShortSha(info.verifiedSha, 10)}）：验收需显式确认本地交付（confirmLocalOnly=true）；项目未允许本地验收时不可验收。`,
+        ),
+      );
+    } else if (info.verificationStatus === 'CI_PASSED') {
+      banners.append(
+        buildBanner(
+          'green',
+          '✓',
+          `远端 CI 已通过（CI_PASSED，commit ${fmtShortSha(info.verifiedSha, 10)}），等待人工验收。验收仅记录人工决定，不会合并主分支、不会部署。`,
+        ),
+      );
+    } else if (info.verificationStatus === 'CI_PENDING') {
+      banners.append(buildBanner('amber', '◷', 'GitHub CI 尚未完成（CI_PENDING）：完成前不能验收；可点击「刷新 CI」重新拉取状态。'));
+    } else if (info.verificationStatus === 'CI_FAILED') {
+      banners.append(buildBanner('red', '!', 'GitHub CI 未通过（CI_FAILED）：不能验收；请打开 CI 详情修复失败项或取消运行。'));
+    } else {
+      banners.append(
+        buildBanner(
+          'amber',
+          '?',
+          '当前服务未返回可识别的 verification_status（可能是旧版后端）：无法确认远端 CI 结果，请人工核对交付内容后再验收。',
+        ),
+      );
+    }
   }
   if (run.status === 'accepted' || info.acceptedAt) {
-    banners.append(buildBanner('green', '✓', `已记录人工验收（merged=false，未合并主分支）${info.acceptedAt ? ` · ${fmtDateTime(info.acceptedAt)}` : ''}`));
+    const acceptedVerification = run.result_json?.acceptedVerification || info.verificationStatus;
+    const acceptedSha = run.result_json?.acceptedSha || info.verifiedSha;
+    banners.append(
+      buildBanner(
+        'green',
+        '✓',
+        `已记录人工验收（${acceptedVerification || '验证状态未知'}${acceptedSha ? `，commit ${fmtShortSha(acceptedSha, 10)}` : ''}；merged=false，未合并主分支、未部署）${info.acceptedAt ? ` · ${fmtDateTime(info.acceptedAt)}` : ''}`,
+      ),
+    );
   }
   if (run.status === 'paused' || run.status === 'interrupted') {
     const text = run.stop_reason || (run.status === 'paused' ? '运行已暂停。' : '运行已中断。');
@@ -2203,7 +3219,12 @@ function renderRunHeader(run) {
     if (run.stop_reason && run.stop_reason.includes(reason)) continue;
     banners.append(buildBanner('amber', '⌁', `GitHub 发布待授权：${reason}`));
   }
-  if (info.ci && info.ci.conclusion === 'failure') {
+  if (info.pendingApprovalCount > 0) {
+    banners.append(
+      buildBanner('amber', '◈', `存在 ${info.pendingApprovalCount} 个待审批项（如 CI 闸门）。批准只记录人工决定，不会自动合并或部署；处理后仍可能需要恢复/重试运行。`),
+    );
+  }
+  if (info.ci && info.ci.conclusion === 'failure' && info.verificationStatus !== 'CI_FAILED') {
     banners.append(buildBanner('red', '!', 'GitHub Actions 未通过，请打开 PR 检查失败日志后再决定是否验收。'));
   }
   if (info.publish.localOnly === true && !info.blockedReasons.length) {
@@ -2222,7 +3243,9 @@ function renderRunHeader(run) {
     el('span', { className: 'sep', text: '·' }),
     el('span', { text: `排队 ${counts.queued}` }),
     el('span', { className: 'sep', text: '·' }),
-    el('span', { className: 'mono', text: `↑${fmtTokens(run.spent_json?.tokens)} tokens · ¥${fmtCost(run.spent_json?.costCny)}` }),
+    el('span', { className: 'mono', text: `本次运行 ↑${fmtTokens(info.spent.tokens)} tokens · ${fmtRunCost(run)}` }),
+    el('span', { className: 'sep', text: '·' }),
+    buildCostSourceChip(run),
   ]);
 
   dom.runHeader.append(headerTop, metaGrid);
@@ -2230,7 +3253,7 @@ function renderRunHeader(run) {
   dom.runHeader.append(statsLine);
 }
 
-function buildRunControls(run) {
+function buildRunControls(run, info = deriveRunInfo(run)) {
   const wrap = el('div', { className: 'run-controls' });
   const busy = app.runActionPending;
   const counts = summarizeTaskCounts(run.tasks);
@@ -2253,11 +3276,23 @@ function buildRunControls(run) {
     }
     wrap.append(makeButton('取消运行', 'cancel', 'button-danger'));
   } else if (run.status === 'awaiting_acceptance') {
+    const plan = acceptancePlan(run);
+    const label = plan.mode === 'local' ? '验收（本地确认）' : '验收（仅记录，不合并）';
     wrap.append(
-      makeButton('验收（仅记录，不合并）', 'accept', 'button-accept', {
-        title: '仅记录人工验收结果，不会合并任何分支',
+      makeButton(label, 'accept', 'button-accept', {
+        disabled: !plan.allowed,
+        title: plan.allowed
+          ? plan.mode === 'local'
+            ? '仅本地验证：确认后将发送 confirmLocalOnly=true，按本地交付记录验收；不会合并主分支或部署。'
+            : '仅记录人工验收结果，不会合并主分支、不会部署。'
+          : plan.reason,
       }),
     );
+    if (info.pendingApprovalCount > 0) {
+      wrap.append(
+        el('span', { className: 'chip tone-amber', text: `${info.pendingApprovalCount} 项待审批`, title: '打开顶栏「审批」查看待审批项' }),
+      );
+    }
   } else {
     const label =
       run.status === 'accepted'
@@ -2317,11 +3352,31 @@ function buildPrMeta(info) {
 
 function buildCiMeta(info) {
   const children = [];
-  if (info.ci) {
-    const meta = ciMeta(info.ci);
-    children.push(badge(meta.label, meta.tone));
-    if (info.ci.error) children.push(el('span', { className: 'meta-empty', text: '查询失败', title: info.ci.error }));
-    else if (info.ci.note) children.push(el('span', { className: 'meta-empty', text: info.ci.note, title: info.ci.note }));
+  const live = info.verifyCi && (info.verifyCi.status || info.verifyCi.conclusion) ? info.verifyCi : null;
+  const legacy = info.ci
+    ? {
+        status: info.ci.status || '',
+        conclusion: info.ci.conclusion || '',
+        note: info.ci.note || '',
+        error: info.ci.error || '',
+        url: '',
+        meta: ciMeta(info.ci),
+      }
+    : null;
+  const source = live || legacy;
+  if (source) {
+    children.push(badge(source.meta.label, source.meta.tone));
+    if (live && live.url) {
+      children.push(
+        el('a', {
+          className: 'pr-link ci-link',
+          text: 'CI 详情',
+          attrs: { href: live.url, target: '_blank', rel: 'noopener noreferrer', title: live.url },
+        }),
+      );
+    }
+    if (source.error) children.push(el('span', { className: 'meta-empty', text: '查询失败', title: source.error }));
+    else if (source.note) children.push(el('span', { className: 'meta-empty', text: truncateText(source.note, 48), title: source.note }));
     children.push(
       el('button', {
         className: 'button button-ghost button-sm ci-refresh',
@@ -2339,7 +3394,6 @@ function buildCiMeta(info) {
 
 function buildRunBudgetMeta(run) {
   const spentTokens = toNumber(run.spent_json?.tokens);
-  const spentCost = toNumber(run.spent_json?.costCny);
   const maxTokens = toNumber(run.budget_json?.maxTokens, toNumber(app.state?.budget?.maxTokens));
   const maxCost = toNumber(run.budget_json?.maxCostCny, toNumber(app.state?.budget?.maxCostCny));
   const percent = maxTokens ? Math.min(100, (spentTokens / maxTokens) * 100) : 0;
@@ -2350,10 +3404,15 @@ function buildRunBudgetMeta(run) {
     el('span', { text: fmtPercent(percent) }),
   ]);
   const costLine = el('div', { className: 'meta-budget-top' }, [
-    el('span', { text: `${fmtCostCny(spentCost, maxCost)} / ¥${fmtCost(maxCost)}` }),
+    el('span', { text: `${fmtRunCost(run)} / ¥${fmtCost(maxCost)}` }),
     el('span', { className: 'meta-empty', text: '成本上限' }),
   ]);
-  return metaItem('运行预算', [el('div', { className: 'meta-budget' }, [top, el('span', { className: 'progress-track' }, [fill]), costLine])]);
+  const sourceLine = el('div', { className: 'meta-budget-top meta-budget-source' }, [
+    buildCostSourceChip(run, { block: true }),
+  ]);
+  return metaItem('运行预算 · 本次消耗', [
+    el('div', { className: 'meta-budget' }, [top, el('span', { className: 'progress-track' }, [fill]), costLine, sourceLine]),
+  ]);
 }
 
 function buildRunDurationMeta(run) {
@@ -2368,6 +3427,350 @@ function buildRunTimeMeta(run) {
     el('span', { text: `创建 ${fmtDateTime(run.created_at)}` }),
     run.ended_at ? el('span', { className: 'meta-empty', text: `结束 ${fmtDateTime(run.ended_at)}` }) : el('span', { className: 'meta-empty', text: `更新 ${fmtRelative(run.updated_at)}` }),
   ]);
+}
+
+// ============================================================
+// v2：运行详情 · 验证状态区
+// ============================================================
+function verifyMetaItem(label, valueNode) {
+  return el('div', { className: 'verify-item' }, [
+    el('span', { className: 'verify-item-label', text: label }),
+    el('div', { className: 'verify-item-value' }, valueNode),
+  ]);
+}
+
+function renderVerificationPanel(run, info) {
+  const panel = dom.verifyPanel;
+  if (!panel) return;
+  clearNode(panel);
+  const meta = info.verification;
+  const plan = acceptancePlan(run);
+  const sha = info.verifiedSha;
+  panel.hidden = false;
+  panel.className = `panel verify-panel tone-${meta.tone}`;
+
+  const head = el('div', { className: 'panel-head verify-head' }, [
+    el('div', { className: 'panel-heading' }, [
+      el('h2', { className: 'panel-title', text: '验证状态' }),
+      el('p', { className: 'panel-sub', text: verificationSubText(run, info) }),
+    ]),
+    el('span', { className: `verify-status-badge tone-${meta.tone}` }, [
+      el('span', { className: 'verify-status-code', text: meta.code }),
+      el('span', { className: 'verify-status-label', text: meta.label }),
+    ]),
+  ]);
+
+  const shaChildren = [];
+  if (sha) {
+    shaChildren.push(el('span', { className: 'mono verify-sha', text: fmtShortSha(sha, 12), title: sha }));
+    shaChildren.push(
+      el('button', {
+        className: 'copy-inline',
+        text: '复制',
+        title: '复制完整验证 commit SHA',
+        attrs: { type: 'button' },
+        on: { click: () => copyWithToast(sha, '验证 commit SHA 已复制') },
+      }),
+    );
+  } else {
+    shaChildren.push(el('span', { className: 'meta-empty', text: '未绑定验证 commit' }));
+  }
+
+  const ciChildren = [];
+  if (info.verifyCi && (info.verifyCi.status || info.verifyCi.conclusion)) {
+    ciChildren.push(badge(info.verifyCi.meta.label, info.verifyCi.meta.tone));
+    if (info.verifyCi.url) {
+      ciChildren.push(
+        el('a', {
+          className: 'pr-link ci-link',
+          text: '打开 CI 详情',
+          attrs: { href: info.verifyCi.url, target: '_blank', rel: 'noopener noreferrer', title: info.verifyCi.url },
+        }),
+      );
+    }
+  } else {
+    ciChildren.push(el('span', { className: 'meta-empty', text: '无 CI 记录（未推送或项目未要求远端 CI）' }));
+  }
+
+  const project = (app.runDetail && app.runDetail.project) || currentProject() || null;
+  const ciRequired = projectCiRequired(project);
+  const remoteAuthorized = projectRemoteAuthorized(project);
+  const allowLocal = projectAllowLocalAcceptance(project);
+  const acceptanceChildren = [];
+  if (plan.mode === 'local') {
+    acceptanceChildren.push(el('span', { className: 'chip tone-cyan', text: '本地验收（需 confirmLocalOnly）' }));
+  } else if (plan.mode === 'ci') {
+    acceptanceChildren.push(el('span', { className: 'chip tone-green', text: '远端验收（CI_PASSED）' }));
+  } else if (plan.mode === 'legacy') {
+    acceptanceChildren.push(el('span', { className: 'chip tone-amber', text: '旧版流程（验证状态未知）' }));
+  } else {
+    acceptanceChildren.push(el('span', { className: 'meta-empty', text: '当前不可验收' }));
+  }
+  if (!allowLocal) acceptanceChildren.push(el('span', { className: 'meta-empty', text: '· 项目不允许本地验收' }));
+
+  const grid = el('div', { className: 'verify-grid' }, [
+    verifyMetaItem('验证 commit', shaChildren),
+    verifyMetaItem('CI 状态', ciChildren),
+    verifyMetaItem('验收方式', acceptanceChildren),
+    verifyMetaItem('交付要求', [
+      el('span', {
+        text: ciRequired ? (remoteAuthorized ? '远端 CI 必需（CI_PASSED）' : '项目要求 CI，但远端未授权') : '不要求远端 CI（本地验证即可）',
+      }),
+    ]),
+  ]);
+
+  const guidance = el('p', { className: 'verify-guidance', text: verificationGuidance(run, info, plan) });
+
+  const actions = el('div', { className: 'verify-actions' });
+  if (run.status === 'awaiting_acceptance') {
+    const acceptButton = el('button', {
+      className: 'button button-accept',
+      text: plan.allowed
+        ? plan.mode === 'local'
+          ? '确认本地验收（不合并）'
+          : '确认验收（仅记录，不合并）'
+        : '验收不可用',
+      title: plan.allowed
+        ? plan.mode === 'local'
+          ? '将弹出确认并发送 { confirmLocalOnly: true }；仅记录本地交付，不合并主分支、不部署。'
+          : '验收只记录人工决定，不会合并主分支或部署。'
+        : plan.reason,
+      attrs: { type: 'button', disabled: plan.allowed && !app.runActionPending ? undefined : true },
+      on: { click: () => performRunAction('accept') },
+    });
+    actions.append(acceptButton);
+    actions.append(
+      el('button', {
+        className: 'button button-ghost button-sm',
+        text: app.runActionPending ? '刷新中…' : '刷新 CI 状态',
+        title: '重新拉取 GitHub Actions 状态（POST /api/runs/:id/ci-refresh）',
+        attrs: { type: 'button', disabled: app.runActionPending ? true : undefined },
+        on: { click: () => performRunAction('ci-refresh') },
+      }),
+    );
+    if (!plan.allowed && plan.reason) {
+      actions.append(el('span', { className: 'verify-blocked', text: plan.reason }));
+    }
+  } else if (run.status === 'accepted') {
+    actions.append(el('span', { className: 'chip tone-green', text: '已验收 · 未合并主分支 · 未部署' }));
+  } else if (info.pendingApprovalCount > 0) {
+    actions.append(
+      el('button', {
+        className: 'button button-ghost button-sm',
+        text: `查看 ${info.pendingApprovalCount} 个待审批项`,
+        attrs: { type: 'button' },
+        on: { click: () => openApprovalsModal() },
+      }),
+    );
+  }
+
+  panel.append(head, el('div', { className: 'verify-body' }, [grid, guidance, actions]));
+}
+
+// ============================================================
+// v2：审批中心（顶栏弹窗 + 运行详情审批记录）
+// ============================================================
+function buildApprovalItem(approval, options = {}) {
+  const statusMeta = approvalStatusMeta(approval.status);
+  const pending = approval.status === 'pending';
+  const busy = app.approvalPending.has(approval.id);
+  const item = el('div', { className: `approval-item${pending ? ' is-pending' : ''}` });
+
+  item.append(
+    el('div', { className: 'approval-head' }, [
+      badge(statusMeta.label, statusMeta.tone),
+      el('span', { className: 'approval-type', text: approvalTypeLabel(approval.type) }),
+      el('span', { className: 'approval-title', text: approval.title || '（未命名审批项）' }),
+    ]),
+  );
+
+  const metaParts = [];
+  if (approval.runId) {
+    const found = findRun(approval.runId);
+    if (found?.run?.goal) metaParts.push(`运行目标：${truncateText(found.run.goal, 56)}`);
+    metaParts.push(`运行 ${shortId(approval.runId, 18)}`);
+  }
+  metaParts.push(`创建 ${fmtRelative(approval.createdAt)}`);
+  if (approval.decidedAt) {
+    metaParts.push(`${approval.status === 'approved' ? '批准' : '拒绝'}于 ${fmtDateTime(approval.decidedAt)}${approval.decidedBy ? ` · ${approval.decidedBy}` : ''}`);
+  }
+  item.append(
+    el('div', { className: 'approval-meta', title: fmtDateTimeFull(approval.createdAt) }, [
+      el('span', { text: metaParts.join(' · ') }),
+    ]),
+  );
+
+  const summary = approvalDetailsSummary(approval);
+  item.append(el('p', { className: 'approval-details', text: truncateText(summary, 300), title: summary }));
+
+  if (pending && options.showActions !== false) {
+    const actionChildren = [];
+    if (options.showView !== false && approval.runId) {
+      actionChildren.push(
+        el('button', {
+          className: 'button button-ghost button-sm',
+          text: '查看运行',
+          title: `打开运行 ${approval.runId}`,
+          attrs: { type: 'button', disabled: busy ? true : undefined },
+          on: {
+            click: () => {
+              closeModal({ silent: true });
+              selectRun(approval.runId, { scroll: true });
+            },
+          },
+        }),
+      );
+    }
+    actionChildren.push(
+      el('button', {
+        className: 'button button-accept button-sm',
+        text: busy ? '处理中…' : '批准',
+        title: '记录批准决定；不会自动合并主分支、不会部署',
+        attrs: { type: 'button', disabled: busy ? true : undefined },
+        on: { click: () => decideApproval(approval, 'approve') },
+      }),
+      el('button', {
+        className: 'button button-danger button-sm',
+        text: busy ? '处理中…' : '拒绝',
+        title: '记录拒绝决定；不会自动合并主分支、不会部署',
+        attrs: { type: 'button', disabled: busy ? true : undefined },
+        on: { click: () => decideApproval(approval, 'reject') },
+      }),
+    );
+    item.append(el('div', { className: 'approval-actions' }, actionChildren));
+  }
+  return item;
+}
+
+async function decideApproval(approval, decision) {
+  const id = approval?.id;
+  if (!id || app.approvalPending.has(id)) return;
+  app.approvalPending.add(id);
+  syncApprovalsModal(true);
+  if (app.runDetail) renderRunApprovalsPanel(app.runDetail);
+  try {
+    await apiRequest('POST', `/api/approvals/${encodeURIComponent(id)}/${decision}`, { decidedBy: 'human' });
+    toast(
+      decision === 'approve' ? '已记录批准决定（不会自动合并主分支，也不会部署）' : '已记录拒绝决定（不会自动合并主分支，也不会部署）',
+      decision === 'approve' ? 'success' : 'warn',
+      { duration: 5200, force: true },
+    );
+    await refreshAll({ silent: true, reason: 'approval' });
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    app.approvalPending.delete(id);
+    syncApprovalsModal(true);
+    if (app.runDetail) renderRunApprovalsPanel(app.runDetail);
+  }
+}
+
+function approvalsSignature() {
+  const list = pendingApprovals();
+  return `${list.map((item) => `${item.id}:${item.status}`).join('|')}::${[...app.approvalPending].sort().join(',')}`;
+}
+
+function buildApprovalsModalBody() {
+  const list = pendingApprovals();
+  const wrap = el('div', { className: 'approval-modal' });
+  wrap.append(
+    el('div', { className: 'approval-warning' }, [
+      el('span', { className: 'approval-warning-icon', text: '!' }),
+      el('div', { className: 'approval-warning-body' }, [
+        el('p', { className: 'approval-warning-title', text: '批准仅记录人工决定：不会自动合并主分支，也不会部署。' }),
+        el('p', {
+          className: 'approval-warning-text',
+          text: '审批项通常来自 CI 闸门等安全门禁。批准 / 拒绝后仍需要你自行决定是否合并 PR、是否重新运行或重试失败任务。',
+        }),
+      ]),
+    ]),
+  );
+  if (!list.length) {
+    wrap.append(
+      el('div', { className: 'approval-empty' }, [
+        el('span', { className: 'approval-empty-icon', text: '✓' }),
+        el('p', { className: 'approval-empty-title', text: '当前没有待审批项' }),
+        el('p', { className: 'approval-empty-text', text: 'CI 闸门阻塞、远端推送待授权等需要人工决策的事项会出现在这里。' }),
+      ]),
+    );
+    return wrap;
+  }
+  wrap.append(el('div', { className: 'approval-list' }, list.map((approval) => buildApprovalItem(approval))));
+  wrap.append(
+    el('p', {
+      className: 'approval-note',
+      text: `数据来源：GET /api/state 的 approvals · 当前 ${list.length} 项待处理。决定会通过 POST /api/approvals/:id/approve|reject 记录。`,
+    }),
+  );
+  return wrap;
+}
+
+function syncApprovalsModal(force) {
+  if (!app.modal.open || app.modal.type !== 'approvals') return;
+  const signature = approvalsSignature();
+  if (!force && signature === app.modal.approvalsSig) return;
+  app.modal.approvalsSig = signature;
+  const list = pendingApprovals();
+  dom.modalTitle.textContent = list.length ? `审批中心 · ${list.length} 项待处理` : '审批中心';
+  clearNode(dom.modalBody);
+  dom.modalBody.append(buildApprovalsModalBody());
+}
+
+function openApprovalsModal() {
+  app.modal.approvalsSig = '';
+  const refreshButton = el('button', {
+    className: 'button button-ghost',
+    text: '刷新审批',
+    attrs: { type: 'button' },
+    on: {
+      click: async () => {
+        await refreshAll({ silent: false, reason: 'approvals' });
+        syncApprovalsModal(true);
+      },
+    },
+  });
+  const closeButton = el('button', {
+    className: 'button button-primary',
+    text: '关闭',
+    attrs: { type: 'button' },
+    on: { click: () => closeModal() },
+  });
+  openModal({
+    type: 'approvals',
+    title: '审批中心',
+    body: el('div', { className: 'approval-modal' }),
+    footer: [refreshButton, closeButton],
+    wide: true,
+  });
+  syncApprovalsModal(true);
+}
+
+function renderRunApprovalsPanel(run) {
+  const panel = dom.runApprovalsPanel;
+  if (!panel) return;
+  const approvals = normalizeApprovals(run?.approvals);
+  if (!approvals.length) {
+    panel.hidden = true;
+    clearNode(panel);
+    return;
+  }
+  const pending = approvals.filter((item) => item.status === 'pending').length;
+  clearNode(panel);
+  panel.hidden = false;
+  panel.append(
+    el('div', { className: 'panel-head' }, [
+      el('div', { className: 'panel-heading' }, [
+        el('h2', { className: 'panel-title', text: '本次运行审批' }),
+        el('p', {
+          className: 'panel-sub',
+          text: pending ? `${pending} 项待处理 · 批准只记录人工决定，不会自动合并或部署` : `全部已处理 · ${approvals.length} 条记录`,
+        }),
+      ]),
+      el('span', { className: 'policy-chip', text: '批准不会自动合并 / 部署' }),
+    ]),
+    el('div', { className: 'approval-list run-approval-list' }, approvals.map((approval) => buildApprovalItem(approval, { showView: false }))),
+    el('p', { className: 'panel-foot-note', text: '审批用于 CI 闸门等安全决策；批准不会自动合并主分支、不会部署、不会自动推送远端。' }),
+  );
 }
 
 // ============================================================
@@ -2611,6 +4014,7 @@ function buildTaskBody(task) {
     const list = el('div', { className: 'attempt-list' });
     for (const attempt of attempts) {
       const statusMeta = ATTEMPT_STATUS[attempt.status] || { label: attempt.status || '—', tone: 'gray' };
+      const costSource = costSourceOfAttempt(attempt);
       const main = el('div', { className: 'attempt-main' }, [
         el('div', { className: 'attempt-title' }, [
           el('span', { text: STAGE_LABELS[attempt.stage] || attempt.stage || '执行' }),
@@ -2624,10 +4028,12 @@ function buildTaskBody(task) {
         el('div', { className: 'attempt-row' }, [
           el('span', { className: 'attempt-tag', text: `#${attempt.attemptNo || '—'}` }),
           main,
-          el('span', { className: 'attempt-nums', title: 'Token / 成本 / 耗时' }, [
-            el('span', { text: `↑${fmtTokens(attempt.tokens)} · ${fmtCostCny(attempt.costCny)}` }),
+          el('span', { className: 'attempt-nums', title: `Token / 成本 / 耗时\n费用来源：${costSource.label}\n${costSource.note}` }, [
+            el('span', { text: `↑${fmtTokens(attempt.tokens)} · ${attempt.costCny > 0 ? fmtCostCny(attempt.costCny) : '费用未知'}` }),
             el('br'),
             el('span', { text: fmtDurationMs(attempt.durationMs) }),
+            el('br'),
+            el('span', { className: `attempt-cost-source tone-${costSource.tone}`, text: `来源 ${costSource.label}` }),
           ]),
         ]),
       );
@@ -2913,32 +4319,38 @@ async function performRunAction(action) {
     return;
   }
 
-  const confirmOptions =
-    action === 'cancel'
-      ? {
-          title: '取消运行',
-          message: '取消后当前运行会标记为已取消，未完成的任务不会继续执行。已产生的提交、审计记录与产物会保留。',
-          warning: '此操作不可撤销；如需继续开发，需要重新发起运行。',
-          confirmText: '确认取消',
-          tone: 'danger',
-        }
-      : action === 'accept'
-        ? {
-            title: '记录人工验收',
-            message: '将把当前运行标记为「已验收」。验收完成后仍可查看任务、审计与产物。',
-            highlight: '仅记录验收结果，不会合并主分支，也不会自动发布或修改远端仓库。你可以随后自行在 GitHub 上决定是否合并 PR。',
-            confirmText: '确认验收（不合并）',
-            tone: 'accept',
-          }
-        : action === 'retry'
-          ? {
-              title: '重试失败任务',
-              message: '将把所有失败 / 阻塞任务重置为排队状态并重新执行，可能产生额外的 tokens 与成本消耗。',
-              warning: '已通过任务的提交与审计记录会保留；失败任务的旧尝试会保留在历史记录中。',
-              confirmText: '重试失败任务',
-              tone: 'warn',
-            }
-          : null;
+  const run = app.runDetail && app.runDetail.id === runId ? app.runDetail : null;
+  let acceptPlan = null;
+  let confirmOptions = null;
+  if (action === 'accept') {
+    if (!run) {
+      toast('运行详情尚未加载，请稍后重试', 'warn');
+      return;
+    }
+    const info = deriveRunInfo(run);
+    acceptPlan = acceptancePlan(run);
+    if (!acceptPlan.allowed) {
+      toast(acceptPlan.reason || '当前验证状态不允许验收', 'warn', { duration: 6000, force: true });
+      return;
+    }
+    confirmOptions = buildAcceptConfirmOptions(run, info, acceptPlan);
+  } else if (action === 'cancel') {
+    confirmOptions = {
+      title: '取消运行',
+      message: '取消后当前运行会标记为已取消，未完成的任务不会继续执行。已产生的提交、审计记录与产物会保留。',
+      warning: '此操作不可撤销；如需继续开发，需要重新发起运行。',
+      confirmText: '确认取消',
+      tone: 'danger',
+    };
+  } else if (action === 'retry') {
+    confirmOptions = {
+      title: '重试失败任务',
+      message: '将把所有失败 / 阻塞任务重置为排队状态并重新执行，可能产生额外的 tokens 与成本消耗。',
+      warning: '已通过任务的提交与审计记录会保留；失败任务的旧尝试会保留在历史记录中。',
+      confirmText: '重试失败任务',
+      tone: 'warn',
+    };
+  }
 
   if (confirmOptions) {
     const confirmed = await confirmDialog(confirmOptions);
@@ -2962,8 +4374,15 @@ async function performRunAction(action) {
       result = await apiRequest('POST', `/api/runs/${encodeURIComponent(runId)}/cancel`);
       toast('运行已取消', 'warn');
     } else if (action === 'accept') {
-      result = await apiRequest('POST', `/api/runs/${encodeURIComponent(runId)}/accept`);
-      toast('已记录人工验收；工作台未合并主分支', 'success', { duration: 5500 });
+      const body = acceptPlan?.confirmLocalOnly ? { confirmLocalOnly: true } : {};
+      result = await apiRequest('POST', `/api/runs/${encodeURIComponent(runId)}/accept`, body);
+      toast(
+        acceptPlan?.confirmLocalOnly
+          ? '已按本地交付记录验收（confirmLocalOnly=true）；未合并主分支、未部署'
+          : '已记录人工验收（未合并主分支、未部署）',
+        'success',
+        { duration: 5500 },
+      );
     } else {
       throw new ApiError(`未知操作：${action}`, 0, 'UNKNOWN_ACTION');
     }
@@ -3065,6 +4484,45 @@ function modalFormField(options) {
   return field;
 }
 
+function buildCheckboxField(options) {
+  const input = el('input', {
+    attrs: {
+      type: 'checkbox',
+      id: options.id,
+      checked: options.checked ? true : undefined,
+    },
+  });
+  const label = el('label', { className: 'checkbox-field', attrs: { for: options.id } }, [
+    input,
+    el('span', { className: 'checkbox-body' }, [
+      el('span', { className: 'checkbox-title', text: options.title }),
+      el('span', { className: 'checkbox-desc', text: options.desc }),
+    ]),
+  ]);
+  return { input, label };
+}
+
+function formSectionHead(title, hint) {
+  return el('div', { className: 'form-section-head is-full' }, [
+    el('span', { className: 'form-section-title', text: title }),
+    hint ? el('span', { className: 'form-section-hint', text: hint }) : null,
+  ]);
+}
+
+function buildNumberInput(options) {
+  return el('input', {
+    attrs: {
+      type: 'number',
+      id: options.id,
+      min: options.min !== undefined ? String(options.min) : undefined,
+      max: options.max !== undefined ? String(options.max) : undefined,
+      step: options.step !== undefined ? String(options.step) : undefined,
+      placeholder: options.placeholder || '',
+      inputmode: 'decimal',
+    },
+  });
+}
+
 function openAddProjectModal() {
   const nameInput = el('input', {
     attrs: {
@@ -3093,26 +4551,82 @@ function openAddProjectModal() {
       spellcheck: 'false',
     },
   });
-  const agentSelect = el(
-    'select',
-    { attrs: { id: 'newProjectAgent' } },
-    [
-      el('option', { text: 'auto · 自动选择（推荐）', attrs: { value: 'auto' } }),
-      el('option', { text: 'dsh · DeepSeek Harness', attrs: { value: 'dsh' } }),
-      el('option', { text: 'claude · Claude Code', attrs: { value: 'claude' } }),
-    ],
-  );
-  const protectInput = el('input', { attrs: { type: 'checkbox', id: 'newProjectProtect', checked: true } });
-  const protectField = el('label', { className: 'checkbox-field', attrs: { for: 'newProjectProtect' } }, [
-    protectInput,
-    el('span', { className: 'checkbox-body' }, [
-      el('span', { className: 'checkbox-title', text: '保护测试目录' }),
-      el('span', {
-        className: 'checkbox-desc',
-        text: '自动加入 tests/**、test/**、**/*.test.js 等受保护路径，防止 Agent 通过修改验收测试来「通过」。',
-      }),
+  const agentSelect = el('select', { attrs: { id: 'newProjectAgent' } }, [
+    el('option', { text: 'auto · 自动选择（推荐）', attrs: { value: 'auto' } }),
+    el('option', { text: 'dsh · DeepSeek Harness', attrs: { value: 'dsh' } }),
+    el('option', { text: 'claude · Claude Code', attrs: { value: 'claude' } }),
+  ]);
+  const auditSelect = el('select', { attrs: { id: 'newProjectAudit' } }, [
+    el('option', { text: 'auto · 跟随全局可用审计模型（推荐）', attrs: { value: 'auto' } }),
+    el('option', { text: 'openai · GPT', attrs: { value: 'openai' } }),
+    el('option', { text: 'glm · GLM', attrs: { value: 'glm' } }),
+    el('option', { text: 'deepseek · DeepSeek', attrs: { value: 'deepseek' } }),
+  ]);
+  const permissionSelect = el('select', { attrs: { id: 'newProjectPermission' } }, [
+    el('option', { text: '自动 · 跟随全局策略（推荐）', attrs: { value: '' } }),
+    el('option', { text: 'read-only · 只读', attrs: { value: 'read-only' } }),
+    el('option', { text: 'workspace-write · 工作区写入', attrs: { value: 'workspace-write' } }),
+    el('option', { text: 'danger-full-access · 完全访问（默认被策略拒绝）', attrs: { value: 'danger-full-access' } }),
+  ]);
+  const contractInput = el('textarea', {
+    attrs: { id: 'newProjectContracts', rows: '2', placeholder: '例如：README.md, docs/API.md（逗号或换行分隔）' },
+  });
+  const allowedCommandsInput = el('textarea', {
+    attrs: { id: 'newProjectAllowedCommands', rows: '2', placeholder: '每行一条；留空则使用上方测试命令作为 allowlist' },
+  });
+  const testEnvInput = el('input', {
+    attrs: {
+      type: 'text',
+      id: 'newProjectTestEnv',
+      placeholder: '例如：NODE_ENV,CI（逗号分隔；测试进程只继承白名单环境变量）',
+      autocomplete: 'off',
+      spellcheck: 'false',
+    },
+  });
+  const maxTokensInput = buildNumberInput({ id: 'newProjectMaxTokens', min: 1, step: 1000, placeholder: '例如 3000000' });
+  const maxCostInput = buildNumberInput({ id: 'newProjectMaxCost', min: 0.01, step: 0.01, placeholder: '例如 30' });
+  const maxAttemptsInput = buildNumberInput({ id: 'newProjectMaxAttempts', min: 1, max: 10, step: 1, placeholder: '例如 2' });
+
+  const protect = buildCheckboxField({
+    id: 'newProjectProtect',
+    checked: true,
+    title: '保护测试目录',
+    desc: '自动加入 tests/**、test/**、**/*.test.js 等受保护路径，防止 Agent 通过修改验收测试来「通过」。',
+  });
+  const ciRequired = buildCheckboxField({
+    id: 'newProjectCiRequired',
+    checked: app.state?.verification?.ciRequiredByDefault !== false,
+    title: '要求远端 CI（ci_required）',
+    desc: '远端交付必须 GitHub Actions 通过（CI_PASSED）并绑定 commit 才能验收；仅在已授权远端推送时生效。',
+  });
+  const allowLocal = buildCheckboxField({
+    id: 'newProjectAllowLocal',
+    checked: true,
+    title: '允许本地验收（allow_local_acceptance）',
+    desc: '仅本地验证（LOCAL_VERIFIED）时，可在界面显式确认本地交付（confirmLocalOnly=true）后验收。',
+  });
+  const remotePush = buildCheckboxField({
+    id: 'newProjectRemotePush',
+    checked: false,
+    title: '授权远端推送（remote_push_authorized）· 默认关闭',
+    desc: '勾选后运行结束会推送计划分支并创建草稿 PR（仍受 GitHub Token 与策略限制）；不勾选则只在本地保留计划分支。',
+  });
+
+  const budgetGrid = el('div', { className: 'budget-input-grid' }, [
+    el('div', { className: 'budget-sub-field' }, [
+      el('span', { className: 'budget-sub-label', text: 'max_tokens_per_run' }),
+      maxTokensInput,
+    ]),
+    el('div', { className: 'budget-sub-field' }, [
+      el('span', { className: 'budget-sub-label', text: 'max_cost_cny_per_run' }),
+      maxCostInput,
+    ]),
+    el('div', { className: 'budget-sub-field' }, [
+      el('span', { className: 'budget-sub-label', text: 'max_attempts' }),
+      maxAttemptsInput,
     ]),
   ]);
+
   const formError = el('p', { className: 'form-error', attrs: { hidden: true } });
   const form = el(
     'form',
@@ -3122,6 +4636,7 @@ function openAddProjectModal() {
     },
     [
       el('div', { className: 'form-grid' }, [
+        formSectionHead('基础信息', '名称与仓库必填；测试命令留空时自动检测'),
         modalFormField({ label: '项目名称 *', control: nameInput, id: 'newProjectName' }),
         modalFormField({
           label: '默认 Agent',
@@ -3142,11 +4657,55 @@ function openAddProjectModal() {
           full: true,
           hint: '留空则自动检测 npm test / pytest / go test 等；测试命令是任务通过的必要条件。',
         }),
-        el('div', { className: 'form-field is-full' }, [protectField]),
+        modalFormField({
+          label: '审计模型',
+          control: el('div', { className: 'form-select-wrap' }, [auditSelect]),
+          id: 'newProjectAudit',
+          hint: '独立审计必须与编码模型不同族；auto 跟随全局可用模型。',
+        }),
+        modalFormField({
+          label: 'Agent 权限（可选，DSH）',
+          control: el('div', { className: 'form-select-wrap' }, [permissionSelect]),
+          id: 'newProjectPermission',
+          hint: '留空跟随全局策略；danger-full-access 默认被安全策略拒绝。',
+        }),
+        formSectionHead('高级配置（可选）', '缺省字段不会发送，服务使用全局默认值'),
+        modalFormField({
+          label: '契约文件（contractFiles）',
+          control: contractInput,
+          id: 'newProjectContracts',
+          full: true,
+          hint: '审计会重点核对的接口/文档文件；逗号或换行分隔，例如 README.md, docs/API.md。',
+        }),
+        modalFormField({
+          label: '允许的测试命令（allowedTestCommands）',
+          control: allowedCommandsInput,
+          id: 'newProjectAllowedCommands',
+          full: true,
+          hint: '每行一条，测试命令必须精确命中 allowlist；留空则使用测试命令本身。',
+        }),
+        modalFormField({
+          label: '测试环境变量白名单（testEnvAllowlist）',
+          control: testEnvInput,
+          id: 'newProjectTestEnv',
+          full: true,
+          hint: '逗号分隔；测试进程只继承这些环境变量，绝不会继承 API Key。',
+        }),
+        el('div', { className: 'form-field is-full' }, [
+          el('label', { text: '运行预算（单次运行上限，可选）' }),
+          budgetGrid,
+          el('p', { className: 'form-hint', text: '留空的字段不会发送：max_tokens_per_run / max_cost_cny_per_run / max_attempts。' }),
+        ]),
+        el('div', { className: 'form-field is-full checkbox-grid' }, [
+          protect.label,
+          ciRequired.label,
+          allowLocal.label,
+          remotePush.label,
+        ]),
         formError,
       ]),
       el('div', { className: 'confirm-warning' }, [
-        '工作台只创建隔离分支与 PR，不会合并主分支，也不会修改受保护的测试目录。',
+        '工作台只创建隔离分支与 PR，不会合并主分支，也不会修改受保护的测试目录。远端推送默认关闭；勾选授权后也只推送计划分支并创建草稿 PR，批准/验收都不会自动合并或部署。',
       ]),
     ],
   );
@@ -3163,6 +4722,23 @@ function openAddProjectModal() {
     attrs: { type: 'submit', form: 'addProjectForm' },
   });
 
+  const showFormError = (message, focusNode) => {
+    formError.textContent = message;
+    formError.hidden = false;
+    if (focusNode && typeof focusNode.focus === 'function') focusNode.focus();
+  };
+
+  const readBudgetNumber = (input, label, options = {}) => {
+    const raw = input.value.trim();
+    if (!raw) return undefined;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) throw new Error(`${label} 必须是大于 0 的数字`);
+    if (options.integer && !Number.isInteger(value)) throw new Error(`${label} 必须是整数`);
+    if (options.min !== undefined && value < options.min) throw new Error(`${label} 不能小于 ${options.min}`);
+    if (options.max !== undefined && value > options.max) throw new Error(`${label} 不能大于 ${options.max}`);
+    return value;
+  };
+
   let submitting = false;
   form.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
@@ -3176,30 +4752,59 @@ function openAddProjectModal() {
     const name = nameInput.value.trim();
     const repo = repoInput.value.trim();
     if (!name) {
-      formError.textContent = '请填写项目名称';
-      formError.hidden = false;
-      nameInput.focus();
+      showFormError('请填写项目名称', nameInput);
       return;
     }
     if (!repo) {
-      formError.textContent = '请填写仓库地址或本地路径';
-      formError.hidden = false;
-      repoInput.focus();
+      showFormError('请填写仓库地址或本地路径', repoInput);
       return;
     }
+
+    let payload;
+    try {
+      payload = {
+        name,
+        repo,
+        protectTests: !!protect.input.checked,
+        agentKind: agentSelect.value || 'auto',
+        ciRequired: !!ciRequired.input.checked,
+        allowLocalAcceptance: !!allowLocal.input.checked,
+        remotePushAuthorized: !!remotePush.input.checked,
+      };
+      const testCommand = testInput.value.trim();
+      if (testCommand) payload.testCommand = testCommand;
+      const auditProvider = auditSelect.value;
+      if (auditProvider && auditProvider !== 'auto') payload.auditProvider = auditProvider;
+      const contractFiles = parseTagList(contractInput.value);
+      if (contractFiles.length) payload.contractFiles = contractFiles;
+      const allowedTestCommands = parseTagList(allowedCommandsInput.value);
+      if (allowedTestCommands.length) payload.allowedTestCommands = allowedTestCommands;
+      const testEnvAllowlist = parseTagList(testEnvInput.value);
+      if (testEnvAllowlist.length) payload.testEnvAllowlist = testEnvAllowlist;
+      const agentPermission = permissionSelect.value;
+      if (agentPermission) payload.agentPermission = agentPermission;
+
+      const budget = {};
+      const maxTokens = readBudgetNumber(maxTokensInput, 'max_tokens_per_run', { integer: true, min: 1 });
+      if (maxTokens !== undefined) budget.max_tokens_per_run = Math.round(maxTokens);
+      const maxCost = readBudgetNumber(maxCostInput, 'max_cost_cny_per_run', { min: 0.01 });
+      if (maxCost !== undefined) budget.max_cost_cny_per_run = Math.round(maxCost * 10000) / 10000;
+      const maxAttempts = readBudgetNumber(maxAttemptsInput, 'max_attempts', { integer: true, min: 1, max: 10 });
+      if (maxAttempts !== undefined) budget.max_attempts = maxAttempts;
+      if (Object.keys(budget).length) payload.budget = budget;
+    } catch (error) {
+      showFormError(error.message);
+      toast(error.message, 'warn');
+      return;
+    }
+
     formError.hidden = true;
     submitting = true;
     submitButton.disabled = true;
     cancelButton.disabled = true;
     submitButton.textContent = '正在添加…';
     try {
-      const project = await apiRequest('POST', '/api/projects', {
-        name,
-        repo,
-        testCommand: testInput.value.trim() || undefined,
-        protectTests: !!protectInput.checked,
-        agentKind: agentSelect.value || 'auto',
-      });
+      const project = await apiRequest('POST', '/api/projects', payload);
       closeModal({ silent: true });
       toast(`项目「${project?.name || name}」已添加`, 'success');
       const ok = await refreshAll({ silent: true, reason: 'project-created' });
@@ -3216,8 +4821,7 @@ function openAddProjectModal() {
         toast('项目已添加，但列表刷新失败，请点击右上角刷新', 'warn');
       }
     } catch (error) {
-      formError.textContent = error.message;
-      formError.hidden = false;
+      showFormError(error.message);
       toast(error.message, 'error');
     } finally {
       submitting = false;
@@ -3264,36 +4868,48 @@ function helpSection(title, children) {
 
 function openHelpModal() {
   const steps = [
-    { title: '打开工作台', desc: '确认右上角「实时已连接」；如果显示断开，页面仍会每 5 秒轮询状态兜底。' },
-    { title: '添加项目', desc: '点击左侧「+ 添加」：填写名称，关联 GitHub 仓库 / owner/repo / 本地绝对路径，设置测试命令并保护测试目录。' },
+    { title: '打开工作台', desc: '确认右上角「实时已连接」；如果显示断开，页面仍会每 5 秒轮询状态兜底。浏览器通过 HttpOnly Cookie 自动认证，无需手动填 Token。' },
+    { title: '添加项目', desc: '点击左侧「+ 添加」：填写名称，关联 GitHub 仓库 / owner/repo / 本地绝对路径，设置测试命令与受保护目录；高级配置可设置契约文件、测试命令 allowlist、环境变量白名单、Agent 权限与运行预算。' },
     { title: '输入目标与验收标准', desc: '在产品目标中描述交付结果；验收标准每行一条。独立审计模型会逐条核对并给出 pass / fail / unproven 与证据。' },
     { title: '启动自动开发', desc: '选择「单任务执行」或「自动多任务规划」后启动。工作台会创建隔离分支、调度 Coding Agent、运行测试与独立审计。' },
-    { title: '查看进度与证据', desc: '任务流水线展示状态、尝试次数、Agent、审计得分与 commit；点击任务可展开验收证据、findings、失败原因与产物。' },
-    { title: '最终验收入口', desc: '全部任务通过后状态变为「等待验收」，点击「验收（仅记录，不合并）」记录结果。工作台永不自动合并主分支。' },
+    { title: '查看进度与证据', desc: '任务流水线展示状态、尝试次数、Agent、审计得分、commit 与费用来源；点击任务可展开验收证据、findings、失败原因与产物。' },
+    { title: '检查验证状态', desc: '运行详情顶部展示 verification_status、verified_sha、CI 状态与链接：LOCAL_VERIFIED 需显式确认本地验收（confirmLocalOnly=true）；CI_PENDING / CI_FAILED 不能验收；CI_PASSED 可正常验收。' },
+    { title: '处理审批项', desc: '顶栏「审批」显示待审批数：CI 闸门、远端推送待授权等会出现在审批中心。批准 / 拒绝只记录人工决定，不会自动合并主分支或部署。' },
+    { title: '最终验收', desc: '验证通过后由你点击验收记录结果。工作台永不自动合并主分支、不会部署；是否合并 PR 由你自行决定。' },
   ];
   const safetyList = el('ul', { className: 'help-list' }, [
     el('li', {}, [el('strong', { text: '不合并主分支：' }), document.createTextNode('只创建计划分支与草稿 PR，是否合并由你决定。')]),
+    el('li', {}, [el('strong', { text: '验证门禁：' }), document.createTextNode('远端交付必须 CI_PASSED 且绑定 commit；本地验收需显式 confirmLocalOnly 且项目允许。')]),
+    el('li', {}, [el('strong', { text: '审批边界：' }), document.createTextNode('审批中心只记录人工批准 / 拒绝，不触发合并、部署或自动推送。')]),
     el('li', {}, [el('strong', { text: '测试保护：' }), document.createTextNode('受保护路径由策略层强制校验，Agent 无法通过改测试「通过」。')]),
     el('li', {}, [el('strong', { text: '独立审计：' }), document.createTextNode('审计模型未参与编码，逐条核对验收标准；unproven 不计为通过。')]),
     el('li', {}, [el('strong', { text: '不伪造成功：' }), document.createTextNode('测试失败或审计失败会暂停并记录原因，可人工恢复或重试失败任务。')]),
-    el('li', {}, [el('strong', { text: '预算兜底：' }), document.createTextNode('全局 tokens / 成本耗尽时自动暂停，避免超出预算。')]),
+    el('li', {}, [el('strong', { text: '预算兜底：' }), document.createTextNode('全局 / 项目 tokens 与成本耗尽时自动暂停；费用来源区分厂商返回 / 估算 / UNKNOWN。')]),
   ]);
   const projectList = el('ul', { className: 'help-list' }, [
     el('li', {}, [el('strong', { text: 'GitHub 仓库：' }), document.createTextNode('填写完整地址或 owner/repo，工作台会克隆到本地 projects 目录。')]),
     el('li', {}, [el('strong', { text: '本地项目：' }), document.createTextNode('填写绝对路径；若尚未初始化 git，工作台会建立基线提交。')]),
-    el('li', {}, [el('strong', { text: '测试命令：' }), document.createTextNode('留空时自动检测 npm test / pytest / go test / cargo test。')]),
-    el('li', {}, [el('strong', { text: 'Agent 选择：' }), document.createTextNode('auto 由调度器决定；也可固定 dsh / claude，便于对照。')]),
+    el('li', {}, [el('strong', { text: '测试命令：' }), document.createTextNode('留空时自动检测 npm test / pytest / go test / cargo test；测试命令必须命中 allowlist。')]),
+    el('li', {}, [el('strong', { text: '高级配置：' }), document.createTextNode('契约文件、allowedTestCommands、testEnvAllowlist、agentPermission、ciRequired、allowLocalAcceptance、remotePushAuthorized 与预算均为可选，缺省不发送。')]),
+    el('li', {}, [el('strong', { text: '远端授权：' }), document.createTextNode('remotePushAuthorized 默认不勾选：不勾选时运行只在本地保留计划分支，不会推送或创建 PR。')]),
+  ]);
+  const verificationList = el('ul', { className: 'help-list' }, [
+    el('li', {}, [el('strong', { text: 'LOCAL_VERIFIED：' }), document.createTextNode('仅本地验证。验收会弹确认并发送 { confirmLocalOnly: true }；项目 allow_local_acceptance=false 时不可验收。')]),
+    el('li', {}, [el('strong', { text: 'CI_PENDING / CI_FAILED：' }), document.createTextNode('远端 CI 未完成或失败，验收按钮禁用；可点击「刷新 CI 状态」重新拉取。')]),
+    el('li', {}, [el('strong', { text: 'CI_PASSED：' }), document.createTextNode('CI 通过且绑定 verified_sha，可正常验收；验收不合并、不部署。')]),
+    el('li', {}, [el('strong', { text: '认证与错误：' }), document.createTextNode('401 表示 API 认证失败，刷新页面即可重新获取 Cookie；403 表示被 Host / Origin / CSRF / 限流策略拒绝。')]),
   ]);
   const realtimeList = el('ul', { className: 'help-list' }, [
     el('li', {}, [el('strong', { text: '实时通道：' }), document.createTextNode('EventSource 连接 GET /api/stream，连接断开时自动重连。')]),
     el('li', {}, [el('strong', { text: '轮询兜底：' }), document.createTextNode('每 5 秒请求 GET /api/state；SSE 断开时顶栏状态会变灰。')]),
-    el('li', {}, [el('strong', { text: '事件流：' }), document.createTextNode('只保留最近 300 条，可按级别着色；关闭「自动滚动」可停留阅读。')]),
+    el('li', {}, [el('strong', { text: '事件流：' }), document.createTextNode('只保留最近 300 条，可按级别与类型着色（含审计未知 / 审计错误 / CI 闸门 / 审批决定 / 测试命令回退 / 受保护路径违规 / Agent 进度）。')]),
     el('li', {}, [el('strong', { text: '产物查看：' }), document.createTextNode('点击产物文件会在右侧抽屉中加载文本（提示词 / diff / 测试证据 / 审计原文）。')]),
   ]);
 
   const body = el('div', { className: 'help-body' }, [
     helpSection('推荐使用流程', [helpStepList(steps)]),
     helpSection('安全边界与质量门禁', [safetyList]),
+    helpSection('验证、验收与审批', [verificationList]),
     helpSection('项目接入提示', [projectList]),
     helpSection('实时状态与产物', [realtimeList]),
     helpSection('当前环境', [
@@ -3304,6 +4920,14 @@ function openHelpModal() {
         el('dd', { text: app.state?.audit?.note || '—' }),
         el('dt', { text: 'GitHub' }),
         el('dd', { text: app.state?.github?.note || (app.state?.github?.configured ? '已连接' : '未连接') }),
+        el('dt', { text: '验证策略' }),
+        el('dd', {
+          text: app.state?.verification?.note
+            ? app.state.verification.note
+            : '远端验收需要 CI_PASSED 且绑定 commit SHA；本地验收需显式确认',
+        }),
+        el('dt', { text: '待审批' }),
+        el('dd', { text: `${pendingApprovals().length} 项` }),
         el('dt', { text: '策略' }),
         el('dd', {
           text: app.state?.policy
@@ -3366,9 +4990,32 @@ function renderStatusPanel() {
   dom.statusPanel.append(body);
   if (!state) {
     if (app.stateError) {
+      const error = app.stateError;
+      const authFailed = error.status === 401;
+      const forbidden = error.status === 403;
       body.append(
-        el('p', { className: 'status-note', text: `无法连接工作台服务：${app.stateError.message}` }),
+        el('p', { className: 'status-note', text: `无法连接工作台服务：${error.message}` }),
+        authFailed
+          ? el('p', {
+              className: 'status-note',
+              text: '会话 Cookie 缺失或已失效：刷新页面后服务器会重新写入 HttpOnly SameSite=Strict Cookie。',
+            })
+          : null,
+        forbidden
+          ? el('p', {
+              className: 'status-note',
+              text: '请求被安全策略拒绝：请确认通过 http://127.0.0.1:4477 访问，且不是跨站 / 跨域请求。',
+            })
+          : null,
         el('div', { className: 'empty-actions' }, [
+          authFailed || forbidden
+            ? el('button', {
+                className: 'button button-primary button-sm',
+                text: '刷新页面',
+                attrs: { type: 'button' },
+                on: { click: () => window.location.reload() },
+              })
+            : null,
           el('button', {
             className: 'button button-ghost button-sm',
             text: '重试',
@@ -3391,6 +5038,7 @@ function renderStatusPanel() {
     statusRow('Agent 槽位', `${toNumber(slots.active)} / ${toNumber(slots.limit)}${toNumber(slots.queued) ? ` · 排队 ${toNumber(slots.queued)}` : ''}`),
     statusRow('活跃运行', String((state.activeRunIds || []).length)),
     statusRow('任务总数', String(totalTasks)),
+    statusRow('待审批', `${pendingApprovals().length} 项`, '审批中心：批准不会自动合并主分支或部署'),
   );
 
   const agentsBlock = el('div', { className: 'status-block' }, [el('span', { className: 'status-block-title', text: 'Agent 状态' })]);
@@ -3446,6 +5094,36 @@ function renderStatusPanel() {
     }),
   ]);
   body.append(githubBlock);
+
+  const approvals = pendingApprovals();
+  const approvalsBlock = el('div', { className: 'status-block' }, [
+    el('span', { className: 'status-block-title', text: '审批中心' }),
+    approvals.length
+      ? el('p', { className: 'status-note', text: `${approvals.length} 项待处理：${approvals.slice(0, 2).map((item) => item.title || approvalTypeLabel(item.type)).join('；')}${approvals.length > 2 ? '…' : ''}` })
+      : el('p', { className: 'status-note', text: '暂无待审批项。批准 / 拒绝只记录人工决定，不会自动合并或部署。' }),
+    approvals.length
+      ? el('button', {
+          className: 'button button-ghost button-sm',
+          text: '打开审批中心',
+          attrs: { type: 'button' },
+          on: { click: () => openApprovalsModal() },
+        })
+      : null,
+  ]);
+  body.append(approvalsBlock);
+
+  const verificationBlock = el('div', { className: 'status-block' }, [
+    el('span', { className: 'status-block-title', text: '验证 / 验收策略' }),
+    el('p', {
+      className: 'status-note',
+      text: state.verification?.note || '远端验收需要 CI_PASSED 且绑定 commit SHA；本地验收需显式确认',
+    }),
+    el('p', {
+      className: 'status-note',
+      text: '验收只记录人工决定：不合并主分支、不部署；待审批项需在审批中心处理。',
+    }),
+  ]);
+  body.append(verificationBlock);
 
   body.append(
     el('p', {

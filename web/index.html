@@ -42,6 +42,13 @@
             <div class="budget-bar budget-bar-tokens"><span class="budget-fill" id="budgetTokensBar"></span></div>
           </div>
           <div class="budget-divider" aria-hidden="true"></div>
+          <div class="budget-item" title="GLM 按用户授权不受工作台预算上限；真实用量独立记录">
+            <div class="budget-top">
+              <span class="budget-label">GLM</span>
+              <span class="budget-value" id="budgetGlmValue">—</span>
+            </div>
+          </div>
+          <div class="budget-divider" aria-hidden="true"></div>
           <div class="budget-item">
             <div class="budget-top">
               <span class="budget-label">成本</span>
@@ -66,6 +73,14 @@
             <span class="status-label" id="sseLabel">实时连接中</span>
           </span>
           <div class="topbar-actions">
+            <button type="button" class="approvals-btn" id="approvalsBtn" title="审批中心（批准不会自动合并或部署）" aria-label="打开审批中心">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                <path d="M10 2.4 17 5.9v5.3c0 3.5-2.7 5.8-7 7-4.3-1.2-7-3.5-7-7V5.9l7-3.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                <path d="m7.1 9.7 2.1 2.1 3.7-4.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <span class="approvals-label">审批</span>
+              <span class="approvals-count" id="approvalsCount" hidden>0</span>
+            </button>
             <button type="button" class="icon-button" id="refreshBtn" title="立即刷新数据" aria-label="立即刷新数据">
               <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
                 <path d="M16.2 9.1a6.3 6.3 0 1 1-1.9-4.4M16.4 3.6v4.2h-4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
@@ -238,8 +253,37 @@
               <div class="run-list" id="runList"></div>
             </section>
 
+            <section class="panel loops-panel" id="loopsPanel" aria-labelledby="loopsTitle">
+              <div class="panel-head">
+                <div class="panel-heading">
+                  <h2 class="panel-title" id="loopsTitle">研发循环</h2>
+                  <p class="panel-sub" id="loopsSub">加载中…</p>
+                </div>
+                <button
+                  type="button"
+                  class="button button-ghost button-sm loops-refresh"
+                  id="loopsRefreshBtn"
+                  title="重新拉取 /api/state 并更新研发循环面板"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                    <path d="M16.2 9.1a6.3 6.3 0 1 1-1.9-4.4M16.4 3.6v4.2h-4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  刷新
+                </button>
+              </div>
+              <div class="loop-list" id="loopList" aria-live="polite"></div>
+              <div class="empty-state" id="loopsEmpty" hidden>
+                <span class="empty-icon" aria-hidden="true">∞</span>
+                <p class="empty-title">暂无研发循环</p>
+                <p class="empty-text">持续研发循环启动后，这里会显示每个循环的状态、轮次进度、停止原因与最近历史。</p>
+              </div>
+              <p class="panel-foot-note">循环只创建隔离分支与待验收 PR；工作台不会自动合并主分支，也不会部署。</p>
+            </section>
+
             <section class="run-detail" id="runDetailView" hidden>
               <header class="panel run-header" id="runHeader"></header>
+              <section class="panel verify-panel" id="verifyPanel" hidden></section>
+              <section class="panel run-approvals-panel" id="runApprovalsPanel" hidden></section>
               <section class="panel tasks-panel" id="tasksPanel">
                 <div class="panel-head">
                   <div class="panel-heading">
