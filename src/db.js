@@ -783,7 +783,7 @@ export class Store {
   markRunningAttemptsInterrupted() {
     const now = nowIso();
     return this.db
-      .prepare("UPDATE attempts SET status='interrupted', updated_at=? WHERE status='running'")
+      .prepare("UPDATE attempts SET status='interrupted', cost_source=CASE WHEN cost_cny=0 AND tokens_in=0 AND tokens_out=0 AND tokens_cache=0 THEN 'unknown' ELSE cost_source END, error=CASE WHEN error='' THEN '工作台进程中断：厂商最终用量未返回，费用/Tokens 标记为未知（不伪造为 0）' ELSE error END, updated_at=? WHERE status='running'")
       .run(now).changes;
   }
 

@@ -253,25 +253,56 @@ export class LoopManager {
   completeRound(loop, project, run) {
     const tasks = this.store.listTasks({ runId: run.id });
     const task = tasks[0] || {};
-    const branch = run.result_json?.planBranch || '';
-    // 让下一轮基于累积后的计划分支（隔离克隆内安全切换；不影响外部项目）
-    if (branch) {
-      try {
-        spawnSync('git', ['checkout', branch], { cwd: project.local_path, encoding: 'utf8' });
-      } catch {
-        /* ignore */
-      }
-      this.store.updateProject(project.id, { default_branch: branch });
-    }
     const history = Array.isArray(loop.history_json) ? [...loop.history_json] : [];
+    // 幂等：同一 run/commit 不重复入历史，避免恢复后重复轮次/重复提交语义
+    if (history.some((h) => h.runId === run.id || (task.head_commit && h.commit === task.head_commit))) {
+      this.store.updateLoop(loop.id, { current_run_id: '', status: loop.round >= loop.max_rounds ? 'completed' : 'running' });
+      this.emit(loop, 'loop_round_duplicate_skipped', `检测到已完成轮次的重复通知，已跳过：${run.id}`);
+      return;
+    }
+    // 任务完成判定：必须 passed 且验证状态可信；UNKNOWN/FAILED 不得推进
+    const verification = String(run.verification_status || '');
+    const allowed = verification === 'LOCAL_VERIFIED' || verification === 'CI_PASSED';
+    if (task.status !== 'passed' || !allowed) {
+      const reason = `循环拒绝推进：任务 ${task.id || '?'} 状态=${task.status || '?'}，验证=${verification || 'UNKNOWN'}（UNKNOWN 不得视为 PASS）`;
+      this.store.updateLoop(loop.id, { status: 'paused', stop_reason: reason });
+      this.emit(loop, 'loop_paused', reason, 'warn', { runId: run.id });
+      return;
+    }
+    const commit = task.head_commit || run.result_json?.planHead || '';
+    const branch = run.result_json?.planBranch || '';
+    if (!commit || !branch) {
+      const reason = '循环拒绝推进：缺少实际 commit 或计划分支（不推进到错误基线）';
+      this.store.updateLoop(loop.id, { status: 'paused', stop_reason: reason });
+      this.emit(loop, 'loop_paused', reason, 'warn', { runId: run.id });
+      return;
+    }
+    // Git 状态安全：先核对分支 ref 与任务 commit 一致，再切换基线；失败必须停止而不是继续
+    const ref = spawnSync('git', ['-C', project.local_path, 'rev-parse', '--verify', `refs/heads/${branch}`], { encoding: 'utf8' });
+    if (ref.status !== 0 || String(ref.stdout || '').trim() !== commit) {
+      const reason = `循环拒绝推进：计划分支 ${branch} 未指向任务 commit ${commit.slice(0, 12)}（rev-parse 失败或 SHA 不一致）`;
+      this.store.updateLoop(loop.id, { status: 'paused', stop_reason: reason });
+      this.emit(loop, 'loop_paused', reason, 'error', { runId: run.id });
+      return;
+    }
+    const checkout = spawnSync('git', ['-C', project.local_path, 'checkout', branch], { encoding: 'utf8' });
+    if (checkout.status !== 0) {
+      const reason = `循环拒绝推进：git checkout ${branch} 失败（exit=${checkout.status}）：${String(checkout.stderr || '').slice(0, 300)}`;
+      this.store.updateLoop(loop.id, { status: 'paused', stop_reason: reason });
+      this.emit(loop, 'loop_paused', reason, 'error', { runId: run.id });
+      return;
+    }
+    this.store.updateProject(project.id, { default_branch: branch });
     history.push({
       round: loop.round + 1,
       runId: run.id,
       task: { title: task.title || '', description: task.description || '' },
-      status: run.verification_status || run.status,
-      commit: task.head_commit || run.result_json?.planHead || '',
+      status: verification,
+      commit,
       branch,
-      audit: this.store.listAudits(task.id).map((a) => ({ provider: a.provider, verdict: a.verdict, score: a.score })),
+      baseCommit: task.base_commit || '',
+      verification: task.verification_json || null,
+      audit: this.store.listAudits(task.id).map((a) => ({ id: a.id, provider: a.provider, verdict: a.verdict, score: a.score, status: a.verification_status })),
       finishedAt: nowIso(),
     });
     const nextRound = loop.round + 1;
@@ -283,7 +314,7 @@ export class LoopManager {
       status: nextStatus,
       stop_reason: nextStatus === 'completed' ? `已完成 ${nextRound} 轮` : '',
     });
-    this.emit(loop, 'loop_round_completed', `第 ${nextRound}/${loop.max_rounds} 轮通过：${task.title || run.id}（${run.verification_status || run.status}，commit ${String(task.head_commit || '').slice(0, 8)}）`, 'info', { runId: run.id, commit: task.head_commit, verification: run.verification_status });
+    this.emit(loop, 'loop_round_completed', `第 ${nextRound}/${loop.max_rounds} 轮通过：${task.title || run.id}（${verification}，commit ${String(commit).slice(0, 8)}）`, 'info', { runId: run.id, commit, verification });
     if (nextStatus === 'completed') this.emit(loop, 'loop_completed', `研发循环完成：${nextRound} 轮`);
   }
 }
