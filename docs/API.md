@@ -116,6 +116,57 @@
 - `GET /api/state` 新增 `loops` 字段。
 - 循环每轮使用单任务 run；通过内部验证后自动进入下一轮；无真实任务/达到上限/失败/授权阻塞时停止，不制造任务。
 
+## 执行能力（v2.2）
+
+- `GET /api/executor` → `{ok:true,data:{isolation,container,fallback,note}}`（只读，沿用 `/api/*` Token/Cookie 认证）
+  - 路由实现位置：`src/server.js` 中 `pathname === '/api/executor'` 分支；该分支**复用 `/api/isolation` 的同一套能力探测**
+    （`detectIsolationCapabilities()` 缓存快照 + `containerCapabilities(config)`），不新增依赖，并把响应**显式归一化**为下列字段，
+    因此字段形状可直接与源码逐项核对。
+  - `isolation`：宿主隔离能力快照：
+    `{platform, kernelIsolation, kernelAvailable, docker:{available,engine,version,reason}, sandboxExec:{available,engine,reason}, restrictedRuntime, note}`。
+    `kernelIsolation` 为 `docker | sandbox-exec | BLOCKED`；`kernelAvailable` 表示是否有内核级隔离；
+    `restrictedRuntime` 为受限独立运行环境的 `{available, controls[], limitations[]}`（无内核级隔离时的实际执行环境）。
+  - `container`：Docker 容器执行可用性：
+    `{testExecution, agentExecution, docker:{available,version,reason}, image:{name,available,id,reason}, agentBackends, network:{test,agent}, security[], note}`。
+    - `testExecution`（布尔）：容器内执行测试命令可用（Docker daemon 与运行时镜像 `ai-workbench-runtime:2.2` 齐备）；
+      项目配置 `test_isolation=docker` 时以此为门禁，不可用则 fail-closed 阻塞。
+    - `agentExecution`（布尔）：容器内执行 Claude Code Agent 可用（同一 Docker/镜像条件）；项目配置 `agent_isolation=docker` 时
+      以此为门禁，不可用则 fail-closed 阻塞（仅 Claude 支持容器执行，见 `agentBackends`）。
+    - `network`：测试容器默认 `none`（无网络），Agent 容器默认 `bridge`（模型端点需要网络）。
+    - `security`：容器安全边界清单（`--cap-drop ALL`、只读 rootfs、最小挂载、非 root、资源限制等）。
+  - `fallback`：容器不可用或项目未要求容器时的执行方式 `{mode:"restricted", available:true, note}`——宿主受限独立运行环境
+    （独立 HOME/TMPDIR、最小环境变量）；项目显式要求 docker 隔离时不降级、直接阻塞。
+  - `note`：固定口径说明字符串。
+  - 响应示例（Docker daemon 与镜像均可用）：
+    ```json
+    {
+      "ok": true,
+      "data": {
+        "isolation": {
+          "platform": "darwin",
+          "kernelIsolation": "docker",
+          "kernelAvailable": true,
+          "docker": { "available": true, "engine": "docker", "version": "28.3.0", "reason": "" },
+          "sandboxExec": { "available": false, "engine": "sandbox-exec", "reason": "嵌套沙箱中被拒绝" },
+          "restrictedRuntime": { "available": true, "controls": ["..."], "limitations": ["..."] },
+          "note": "检测到 Docker daemon，可在配置允许时使用容器执行"
+        },
+        "container": {
+          "testExecution": true,
+          "agentExecution": true,
+          "docker": { "available": true, "version": "28.3.0", "reason": "" },
+          "image": { "name": "ai-workbench-runtime:2.2", "available": true, "id": "sha256:…", "reason": "" },
+          "agentBackends": ["claude"],
+          "network": { "test": "none", "agent": "bridge" },
+          "security": ["--network none(test)", "--cap-drop ALL", "…"],
+          "note": "Docker 容器执行可用（测试/Claude Agent）"
+        },
+        "fallback": { "mode": "restricted", "available": true, "note": "容器执行不可用或项目未要求容器时，…" },
+        "note": "GET /api/executor 汇报执行能力：…"
+      }
+    }
+    ```
+
 ## 审批中心
 
 - `GET /api/approvals?status=pending|all` → 待人工审批项（CI 闸门、远端推送等）

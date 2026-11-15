@@ -364,6 +364,44 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       return sendJson(res, 200, { ok: true, data: { ...caps, container: containerCapabilities(config), projectModes: store.listProjects().map((p) => ({ id: p.id, name: p.name, mode: isolationModeForProject(config, p) })) } });
     }
 
+    // 只读：执行能力接口（v2.2）。复用 /api/isolation 的同一套能力探测
+    // （detectIsolationCapabilities 缓存快照 + containerCapabilities），不新增依赖；
+    // 响应字段在本路由内显式归一化，形状与 docs/API.md「执行能力（v2.2）」逐字段对应。
+    if (pathname === '/api/executor' && method === 'GET') {
+      const caps = isolation();
+      const container = containerCapabilities(config);
+      return sendJson(res, 200, {
+        ok: true,
+        data: {
+          isolation: {
+            platform: caps.platform,
+            kernelIsolation: caps.kernelIsolation,
+            kernelAvailable: caps.kernelAvailable,
+            docker: { available: !!caps.docker.available, engine: caps.docker.engine, version: caps.docker.version, reason: caps.docker.reason },
+            sandboxExec: { available: !!caps.sandboxExec.available, engine: caps.sandboxExec.engine, reason: caps.sandboxExec.reason },
+            restrictedRuntime: caps.restrictedRuntime,
+            note: caps.note,
+          },
+          container: {
+            testExecution: !!container.testExecution,
+            agentExecution: !!container.agentExecution,
+            docker: { available: !!container.docker.available, version: container.docker.version, reason: container.docker.reason },
+            image: { name: container.image.name, available: !!container.image.available, id: container.image.id, reason: container.image.reason },
+            agentBackends: container.agentBackends,
+            network: { test: container.network.test, agent: container.network.agent },
+            security: container.security,
+            note: container.note,
+          },
+          fallback: {
+            mode: 'restricted',
+            available: true,
+            note: '容器执行不可用或项目未要求容器时，测试/Agent 在宿主受限独立运行环境执行（独立 HOME/TMPDIR、最小环境变量，无内核级隔离）；项目显式要求 docker 隔离时按 fail-closed 阻塞，不降级提权',
+          },
+          note: 'GET /api/executor 汇报执行能力：isolation 为宿主隔离能力快照，container.testExecution / container.agentExecution 表示在 Docker 容器内执行测试 / Claude Agent 的可用性（Docker daemon 与运行时镜像齐备）。探测复用 /api/isolation 同源实现，不新增依赖。',
+        },
+      });
+    }
+
     if (pathname === '/api/budget' && method === 'GET') {
       return sendJson(res, 200, { ok: true, data: orchestrator.budget() });
     }
