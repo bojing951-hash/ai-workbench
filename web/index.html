@@ -246,6 +246,33 @@
               <div class="run-list" id="runList"></div>
             </section>
 
+            <section class="panel loops-panel" id="loopsPanel" aria-labelledby="loopsTitle">
+              <div class="panel-head">
+                <div class="panel-heading">
+                  <h2 class="panel-title" id="loopsTitle">研发循环</h2>
+                  <p class="panel-sub" id="loopsSub">加载中…</p>
+                </div>
+                <button
+                  type="button"
+                  class="button button-ghost button-sm loops-refresh"
+                  id="loopsRefreshBtn"
+                  title="重新拉取 /api/state 并更新研发循环面板"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                    <path d="M16.2 9.1a6.3 6.3 0 1 1-1.9-4.4M16.4 3.6v4.2h-4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  刷新
+                </button>
+              </div>
+              <div class="loop-list" id="loopList" aria-live="polite"></div>
+              <div class="empty-state" id="loopsEmpty" hidden>
+                <span class="empty-icon" aria-hidden="true">∞</span>
+                <p class="empty-title">暂无研发循环</p>
+                <p class="empty-text">持续研发循环启动后，这里会显示每个循环的状态、轮次进度、停止原因与最近历史。</p>
+              </div>
+              <p class="panel-foot-note">循环只创建隔离分支与待验收 PR；工作台不会自动合并主分支，也不会部署。</p>
+            </section>
+
             <section class="run-detail" id="runDetailView" hidden>
               <header class="panel run-header" id="runHeader"></header>
               <section class="panel verify-panel" id="verifyPanel" hidden></section>

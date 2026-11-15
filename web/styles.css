@@ -1847,6 +1847,208 @@ button:disabled {
 }
 
 /* ============================================================
+   研发循环面板
+   ============================================================ */
+.loops-panel {
+  padding-bottom: 6px;
+}
+
+.loops-refresh {
+  gap: 6px;
+}
+
+.loops-refresh svg {
+  width: 14px;
+  height: 14px;
+}
+
+.loops-refresh.is-spinning svg {
+  animation: spin 0.9s linear infinite;
+}
+
+.loop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 8px;
+}
+
+.loop-item {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.loop-item-head {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.loop-item-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.loop-item-goal {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loop-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-4);
+}
+
+.loop-item-round {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.loop-progress {
+  margin: 0;
+}
+
+.loop-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.loop-fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.loop-fact-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-4);
+}
+
+.loop-stop {
+  max-width: min(100%, 520px);
+  overflow: hidden;
+  color: var(--amber);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loop-stop.is-empty {
+  color: var(--text-4);
+}
+
+.loop-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.loop-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.loop-history-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.loop-history-count {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-4);
+}
+
+.loop-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.loop-history-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.loop-history-round {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--text-4);
+  white-space: nowrap;
+}
+
+.loop-history-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.loop-history-task {
+  font-size: 11px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loop-history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  font-size: 9.5px;
+  color: var(--text-4);
+}
+
+.loop-history-empty {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--text-4);
+}
+
+@media (max-width: 640px) {
+  .loop-list {
+    padding: 0 8px 8px;
+  }
+}
+
+/* ============================================================
    运行详情
    ============================================================ */
 .run-detail {

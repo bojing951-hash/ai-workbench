@@ -61,9 +61,52 @@
 
 ## Provider 用量（v2.1）
 
-- `GET /api/usage/providers` → `{ok:true,data:{byProvider,glm,nonGlm,budget,note}}`
-  - GLM 调用不受工作台内部 token/费用上限（用户授权），但真实 tokens/cache/cost 完整记录并在 `glm` 单列；
-  - DeepSeek/OpenAI 等仍受原预算约束；`budget` 字段给出约束口径的用量与余量。
+- `GET /api/usage/providers` → `{ok:true,data:{byProvider,glm,nonGlm,budget,note}}`（只读，沿用 `/api/*` Token/Cookie 认证）
+  - 路由实现位置：`src/server.js` 中 `pathname === '/api/usage/providers'` 分支；该分支把 `orchestrator.budget()` 的快照
+    **显式归一化**为下列字段，因此字段形状可直接与源码逐项核对。
+  - `byProvider`：按 provider 聚合的原始用量明细，键为 provider 名（如 `glm`、`deepseek`、`openai`、`unknown`），
+    每项固定为 `{tokensIn,tokensOut,tokensCache,tokens,costCny}`；`tokens = tokensIn + tokensOut + tokensCache`，不做预算折算。
+  - `glm`：GLM 的 `{tokensIn,tokensOut,tokensCache,tokens,costCny}` 单列；无 GLM 调用时返回同结构的零值对象。
+    GLM 调用不受工作台内部 token/费用上限（用户授权），但真实 tokens/cache/cost 完整记录；不会被计入 `nonGlm`。
+  - `nonGlm`：剔除预算豁免 provider（`exemptProviders`，默认仅 `glm`）后，其余 provider 的
+    `{tokensIn,tokensOut,tokensCache,tokens,costCny,names}` 汇总；`names` 列出被汇总的 provider（不含 `glm`），仍受原预算约束。
+  - `budget`：约束口径的用量与余量：
+    `{maxTokens,usedTokens,remainingTokens,maxCostCny,usedCostCny,remainingCostCny,cacheTokenWeight,tokensPercent,costPercent}`。
+    路由遍历 `byProvider`，**跳过 `exemptProviders`（默认 `glm`）**后按
+    `tokensIn + tokensOut + tokensCache × cacheTokenWeight` 汇总 `usedTokens`（四舍五入为整数；
+    `remainingTokens` 与百分比按未取整的加权用量计算），
+    `usedCostCny` 为同一批 provider 的 `costCny` 之和（保留 4 位小数）；`remainingTokens` / `remainingCostCny`
+    分别为 `maxTokens` / `maxCostCny` 减去对应用量并下限截断为 0；`tokensPercent` / `costPercent`
+    为用量占上限的百分比（保留 1 位小数，上限截断为 100；上限为 0 时记 0）。
+  - `note`：固定口径说明字符串，内容为「GLM 用量完整记录并在 glm 单列，不受工作台内部 token/费用上限约束；
+    nonGlm 汇总其余非豁免 provider，budget 为其预算约束口径的用量与余量（缓存 token 按 cacheTokenWeight 折算）；
+    byProvider 为各 provider 的原始 tokens/cost 明细。」
+  - 响应示例（默认预算配置 `maxTokens=3000000`、`maxCostCny=30`，含一次 GLM 调用与一次 DeepSeek 调用）：
+    ```json
+    {
+      "ok": true,
+      "data": {
+        "byProvider": {
+          "glm": { "tokensIn": 100, "tokensOut": 50, "tokensCache": 1000, "tokens": 1150, "costCny": 1.5 },
+          "deepseek": { "tokensIn": 100, "tokensOut": 50, "tokensCache": 1000, "tokens": 1150, "costCny": 0.1 }
+        },
+        "glm": { "tokensIn": 100, "tokensOut": 50, "tokensCache": 1000, "tokens": 1150, "costCny": 1.5 },
+        "nonGlm": { "tokensIn": 100, "tokensOut": 50, "tokensCache": 1000, "tokens": 1150, "costCny": 0.1, "names": ["deepseek"] },
+        "budget": {
+          "maxTokens": 3000000,
+          "usedTokens": 250,
+          "remainingTokens": 2999750,
+          "maxCostCny": 30,
+          "usedCostCny": 0.1,
+          "remainingCostCny": 29.9,
+          "cacheTokenWeight": 0.1,
+          "tokensPercent": 0,
+          "costPercent": 0.3
+        },
+        "note": "GLM 用量完整记录并在 glm 单列，不受工作台内部 token/费用上限约束；nonGlm 汇总其余非豁免 provider，budget 为其预算约束口径的用量与余量（缓存 token 按 cacheTokenWeight 折算）；byProvider 为各 provider 的原始 tokens/cost 明细。"
+      }
+    }
+    ```
 
 ## 研发循环（v2.1）
 
