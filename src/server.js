@@ -5,11 +5,14 @@
  */
 import http from 'node:http';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { PolicyError } from './policy.js';
 import { VERSION } from './orchestrator.js';
+import { assertSafeWriteRequest, isAllowedHost, redactForResponse, resolveWithin, WriteRateLimiter } from './security.js';
 
 const MAX_BODY = 2 * 1024 * 1024;
+const writeLimiter = new WriteRateLimiter({ windowMs: 60_000, max: 120 });
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -32,18 +35,18 @@ function sendJson(res, status, data) {
   res.end(body);
 }
 
-function sendError(res, status, code, message, details = {}) {
-  sendJson(res, status, { ok: false, error: { code, message, details } });
+function sendError(res, status, code, message, details = {}, config = null) {
+  sendJson(res, status, { ok: false, error: { code, message: config ? redactForResponse(message, config) : message, details } });
 }
 
-async function readBody(req) {
+async function readBody(req, maxBody = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY) {
-        reject(new PolicyError('BODY_TOO_LARGE', '请求体过大（上限 2MB）'));
+      if (size > maxBody) {
+        reject(new PolicyError('BODY_TOO_LARGE', '请求体过大'));
         req.destroy();
         return;
       }
@@ -70,6 +73,30 @@ function mapErrorStatus(err) {
 
 export function createApp({ config, store, orchestrator }) {
   const webDir = path.join(config.paths.root, 'web');
+  const maxBody = Number(config.security?.maxBodyBytes || MAX_BODY);
+  // P0-5：API 身份认证。优先使用显式 Token；否则每次启动生成随机 Token，
+  // 写入 data/api-token（0600），浏览器通过 SameSite=Strict Cookie 获得，脚本通过文件读取。
+  const apiToken = config.security?.apiToken || crypto.randomBytes(24).toString('hex');
+  const apiTokenFile = path.join(config.paths.dataDir, 'api-token');
+  try {
+    fs.writeFileSync(apiTokenFile, apiToken, { mode: 0o600 });
+    fs.chmodSync(apiTokenFile, 0o600);
+  } catch {
+    /* ignore */
+  }
+  const parseCookieToken = (req) => {
+    const raw = String(req.headers.cookie || '');
+    for (const part of raw.split(';')) {
+      const [k, ...rest] = part.trim().split('=');
+      if (k === 'wb_token') return rest.join('=');
+    }
+    return '';
+  };
+  const requireApiAuth = (req) => {
+    const auth = String(req.headers.authorization || '');
+    const provided = auth.startsWith('Bearer ') ? auth.slice(7) : (req.headers['x-workbench-token'] || parseCookieToken(req));
+    return provided === apiToken;
+  };
   const server = http.createServer(async (req, res) => {
     try {
       await route(req, res);
@@ -83,7 +110,7 @@ export function createApp({ config, store, orchestrator }) {
         return;
       }
       const status = mapErrorStatus(err);
-      sendError(res, status, err?.code || 'INTERNAL_ERROR', err?.message || String(err), err?.details || {});
+      sendError(res, status, err?.code || 'INTERNAL_ERROR', err?.message || String(err), err?.details || {}, config);
     }
   });
 
@@ -110,9 +137,21 @@ export function createApp({ config, store, orchestrator }) {
   heartbeat.unref?.();
 
   async function route(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+    const host = req.headers.host || '';
+    if (!isAllowedHost(host, config)) {
+      return sendError(res, 403, 'HOST_FORBIDDEN', `拒绝非本机 Host：${host}`);
+    }
+    const url = new URL(req.url, `http://${host || '127.0.0.1'}`);
     const pathname = decodeURIComponent(url.pathname);
     const method = req.method || 'GET';
+    if (method !== 'GET' && method !== 'HEAD') {
+      try {
+        assertSafeWriteRequest(req, config);
+        writeLimiter.check();
+      } catch (err) {
+        return sendError(res, 403, err.code || 'WRITE_FORBIDDEN', err.message, {}, config);
+      }
+    }
 
     // ---------- SSE ----------
     if (pathname === '/api/stream' && method === 'GET') {
@@ -135,8 +174,20 @@ export function createApp({ config, store, orchestrator }) {
     }
 
     // ---------- API ----------
+    if (pathname !== '/api/health' && !requireApiAuth(req)) {
+      return sendError(res, 401, 'API_AUTH_REQUIRED', '未认证的 API 请求（Token 见 data/api-token 或浏览器 Cookie）');
+    }
+
     if (pathname === '/api/health' && method === 'GET') {
-      return sendJson(res, 200, { ok: true, version: VERSION, at: new Date().toISOString() });
+      return sendJson(res, 200, {
+        ok: true,
+        version: VERSION,
+        at: new Date().toISOString(),
+        verification: {
+          ciRequiredByDefault: true,
+          note: '远端验收需要 CI_PASSED 且绑定 commit SHA；本地验收需显式确认',
+        },
+      });
     }
 
     if (pathname === '/api/state' && method === 'GET') {
@@ -173,7 +224,7 @@ export function createApp({ config, store, orchestrator }) {
     }
 
     if (pathname === '/api/projects' && method === 'POST') {
-      const body = await readBody(req);
+      const body = await readBody(req, maxBody);
       const project = await orchestrator.createProject(body);
       return sendJson(res, 201, { ok: true, data: project });
     }
@@ -187,7 +238,7 @@ export function createApp({ config, store, orchestrator }) {
         return sendJson(res, 200, { ok: true, data: { ...project, runs: store.listRuns(projectId, 20), plans: store.listPlans(projectId) } });
       }
       if (method === 'PATCH' || method === 'PUT') {
-        const body = await readBody(req);
+        const body = await readBody(req, maxBody);
         const project = orchestrator.updateProject(projectId, body);
         return sendJson(res, 200, { ok: true, data: project });
       }
@@ -196,7 +247,7 @@ export function createApp({ config, store, orchestrator }) {
     const projectRunsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/runs$/);
     if (projectRunsMatch) {
       if (method === 'POST') {
-        const body = await readBody(req);
+        const body = await readBody(req, maxBody);
         const result = await orchestrator.startRun({ ...body, projectId: projectRunsMatch[1] });
         return sendJson(res, 201, { ok: true, data: result });
       }
@@ -228,18 +279,19 @@ export function createApp({ config, store, orchestrator }) {
     if (runActionMatch && method === 'POST') {
       const [, runId, action] = runActionMatch;
       if (action === 'pause') {
-        const body = await readBody(req).catch(() => ({}));
+        const body = await readBody(req, maxBody).catch(() => ({}));
         return sendJson(res, 200, { ok: true, data: orchestrator.pauseRun(runId, body.reason || '人工暂停', 'manual') });
       }
       if (action === 'resume') {
-        const body = await readBody(req).catch(() => ({}));
+        const body = await readBody(req, maxBody).catch(() => ({}));
         return sendJson(res, 200, { ok: true, data: await orchestrator.resumeRun(runId, { retryFailed: !!body.retryFailed }) });
       }
       if (action === 'cancel') {
         return sendJson(res, 200, { ok: true, data: orchestrator.cancelRun(runId) });
       }
       if (action === 'accept') {
-        return sendJson(res, 200, { ok: true, data: orchestrator.acceptRun(runId) });
+        const body = await readBody(req, maxBody).catch(() => ({}));
+        return sendJson(res, 200, { ok: true, data: orchestrator.acceptRun(runId, { confirmLocalOnly: !!body.confirmLocalOnly }) });
       }
       if (action === 'ci-refresh') {
         return sendJson(res, 200, { ok: true, data: await orchestrator.refreshCi(runId) });
@@ -260,6 +312,20 @@ export function createApp({ config, store, orchestrator }) {
       return res.end(content);
     }
 
+    if (pathname === '/api/approvals' && method === 'GET') {
+      const status = url.searchParams.get('status') || 'pending';
+      return sendJson(res, 200, { ok: true, data: store.listApprovals({ status: status === 'all' ? '' : status }) });
+    }
+
+    const approvalMatch = pathname.match(/^\/api\/approvals\/([^/]+)\/(approve|reject)$/);
+    if (approvalMatch && method === 'POST') {
+      const body = await readBody(req, maxBody).catch(() => ({}));
+      return sendJson(res, 200, {
+        ok: true,
+        data: orchestrator.decideApproval(approvalMatch[1], { decision: approvalMatch[2] === 'approve' ? 'approved' : 'rejected', decidedBy: body.decidedBy || 'human' }),
+      });
+    }
+
     if (pathname === '/api/budget' && method === 'GET') {
       return sendJson(res, 200, { ok: true, data: orchestrator.budget() });
     }
@@ -269,8 +335,10 @@ export function createApp({ config, store, orchestrator }) {
 
   function serveStatic(pathname, res) {
     let rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
-    const abs = path.resolve(webDir, rel);
-    if (!abs.startsWith(path.resolve(webDir) + path.sep) && abs !== path.resolve(webDir, 'index.html')) {
+    let abs;
+    try {
+      abs = resolveWithin(webDir, rel);
+    } catch {
       return sendError(res, 403, 'FORBIDDEN', '非法路径');
     }
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
@@ -278,14 +346,29 @@ export function createApp({ config, store, orchestrator }) {
       const index = path.join(webDir, 'index.html');
       if (fs.existsSync(index)) {
         const content = fs.readFileSync(index);
-        res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' });
+        res.writeHead(200, {
+          'Content-Type': MIME['.html'], 'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+          'Set-Cookie': `wb_token=${apiToken}; HttpOnly; SameSite=Strict; Path=/`,
+        });
         return res.end(content);
       }
       return sendError(res, 404, 'NOT_FOUND', '页面不存在');
     }
     const ext = path.extname(abs).toLowerCase();
     const content = fs.readFileSync(abs);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    const headers = {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'",
+    };
+    if (path.basename(abs) === 'index.html' || pathname === '/') {
+      headers['Set-Cookie'] = `wb_token=${apiToken}; HttpOnly; SameSite=Strict; Path=/`;
+    }
+    res.writeHead(200, headers);
     return res.end(content);
   }
 
