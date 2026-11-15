@@ -26,8 +26,9 @@
 - 测试：`npm test` 180/180 通过
 - 独立审计：DeepSeek（与 Claude/GLM 编码模型族独立）**PASS 88**
 - GitHub：草稿 PR #1（draft/open/未合并），Actions CI **success**，verification_status=**CI_PASSED**，verified_sha=`a8d4fe61…`
-- PR：https://github.com/bojing951-hash/ai-workbench/pull/1
-- CI：https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912
+- W 任务证据 PR（早期 draft）：https://github.com/bojing951-hash/ai-workbench/pull/1
+- **最终 v2.0.0 候选 PR（draft）**：https://github.com/bojing951-hash/ai-workbench/pull/2 ，Actions CI success（https://github.com/bojing951-hash/ai-workbench/actions/runs/43707764842）
+- W 任务 CI：https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912
 
 ### A：Global Opportunity Engine
 - 接入：只读配置 + 工作区隔离副本（权威树未被修改）；基线 `architecture/research-v2` 快照

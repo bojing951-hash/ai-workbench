@@ -1,0 +1,18 @@
+{
+  "type": "v2-final-pr",
+  "at": "2026-11-15T11:12:36.654923+00:00",
+  "pr": {
+    "number": 2,
+    "url": "https://github.com/bojing951-hash/ai-workbench/pull/2",
+    "draft": true,
+    "merged": false,
+    "head": "v2.0.0",
+    "base": "main",
+    "ci": {
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43707764842"
+    }
+  },
+  "note": "最终 v2.0.0 候选 draft PR；CI success；未合并。PR #1 为 W 任务生成的早期 draft PR，保留作为任务证据。"
+}
