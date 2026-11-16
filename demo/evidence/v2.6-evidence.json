@@ -1,0 +1,117 @@
+{
+  "type": "v2.6-process-visibility",
+  "version": "2.6.0",
+  "at": "2026-11-16T02:57:00+08:00",
+  "entries": [
+    {
+      "id": "guide",
+      "title": "工作台如何工作",
+      "hash": "#/guide",
+      "steps": 11,
+      "source": "frontend static explanation; technical details actual APIs"
+    },
+    {
+      "id": "live",
+      "title": "研发实况",
+      "hash": "#/live",
+      "api": "GET /api/live",
+      "realMetrics": 6,
+      "realEvents": 19,
+      "currentActive": false,
+      "defaultProject": "Consumption Decision Lab"
+    },
+    {
+      "id": "replay",
+      "title": "历史回放",
+      "hash": "#/replay",
+      "api": "GET /api/replay/consumption",
+      "acts": 5,
+      "stats": {
+        "loops": 7,
+        "runs": 8,
+        "tasks": 8,
+        "attempts": 17,
+        "audits": 4,
+        "events": 207,
+        "commits": 5,
+        "passedTasks": 2,
+        "failedTasks": 3,
+        "blockedTasks": 1,
+        "stalled": 10,
+        "humanProductCodeEdits": 0,
+        "externalTestHarnessFix": 1,
+        "costCny": 17.4896015904,
+        "durationMs": 6260000
+      }
+    }
+  ],
+  "tests": {
+    "command": "npm test",
+    "total": 212,
+    "pass": 212,
+    "log": "demo/evidence/v2.6-tests.txt"
+  },
+  "browser": {
+    "tool": "Playwright Chromium",
+    "desktop": "1440x1000",
+    "mobile": "390x844",
+    "pageErrors": 0,
+    "mobileOverflow": 0,
+    "guideSteps": 11,
+    "liveMetrics": 6,
+    "liveEvents": 19,
+    "replayTasks": 8,
+    "replayAttempts": 17,
+    "replayAudits": 4,
+    "commits": 5,
+    "diffLoaded": true,
+    "emptyState": true,
+    "log": "demo/evidence/v2.6-browser-test.txt",
+    "screenshots": [
+      "demo/evidence/v2.6-guide.png",
+      "demo/evidence/v2.6-live.png",
+      "demo/evidence/v2.6-replay-audit.png",
+      "demo/evidence/v2.6-replay-summary.png",
+      "demo/evidence/v2.6-mobile.png",
+      "demo/evidence/v2.6-empty.png"
+    ],
+    "mobileLiveOverflow": 0,
+    "pollingPreservedDetails": true,
+    "liveFailureShowsError": true,
+    "backExitsInsight": true,
+    "emptySuccessState": true
+  },
+  "constraints": {
+    "productCode": "未修改",
+    "productTasks": "未重跑",
+    "aB": "未访问/操作；新接口按名称过滤",
+    "budget": "未修改",
+    "mergeDeploy": "未合并/未部署",
+    "history": "只读；新模块只 SELECT/read/git log"
+  },
+  "limitations": [
+    "当前没有活跃运行，实况显示最近一次真实运行并明确空闲",
+    "原始聊天记录未入库；第一幕使用项目/loop/契约原文",
+    "个别失败审计无最终 commit，显示未记录",
+    "本 UI 任务未使用 DSH 审计预算；独立审查为独立只读 agent"
+  ],
+  "replayStats": {
+    "loops": 7,
+    "runs": 8,
+    "tasks": 8,
+    "attempts": 17,
+    "audits": 4,
+    "events": 207,
+    "commits": 5,
+    "finalCommit": "1ad754d1d113c3c6a23da618fba92103b936e836",
+    "finalAudit": "PASS 100 4/4",
+    "costCny": 17.4896015904
+  },
+  "independentAudit": {
+    "reviewer": "ui-auditor independent read-only agent",
+    "initial": "FAIL P0 found",
+    "afterFixes": "PASS no P0; P1 fixed",
+    "path": "demo/evidence/v2.6-independent-audit.md",
+    "dshAudit": "NOT RUN / no budget authorization for this UI task"
+  }
+}

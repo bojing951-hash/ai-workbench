@@ -166,11 +166,45 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS loops (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  goal TEXT NOT NULL,
+  mode TEXT DEFAULT 'plan',
+  status TEXT NOT NULL DEFAULT 'running',
+  round INTEGER DEFAULT 0,
+  max_rounds INTEGER DEFAULT 3,
+  queue_json TEXT DEFAULT '[]',
+  history_json TEXT DEFAULT '[]',
+  contract_files_json TEXT DEFAULT '[]',
+  current_run_id TEXT DEFAULT '',
+  last_run_id TEXT DEFAULT '',
+  stop_reason TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approvals (
+  id TEXT PRIMARY KEY,
+  run_id TEXT DEFAULT '',
+  task_id TEXT DEFAULT '',
+  type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  title TEXT NOT NULL,
+  details_json TEXT DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  decided_at TEXT DEFAULT '',
+  decided_by TEXT DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id, seq);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id, attempt_no);
 CREATE INDEX IF NOT EXISTS idx_audits_task ON audits(task_id);
 CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+CREATE INDEX IF NOT EXISTS idx_loops_project ON loops(project_id, status);
 `;
 
 function parseRow(row, jsonFields = {}) {
@@ -200,6 +234,92 @@ export class Store {
     this.db.exec('PRAGMA synchronous = NORMAL;');
     this.db.exec('PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  migrate() {
+    const columns = {
+      projects: [
+        ['budget_json', "TEXT DEFAULT '{}'"],
+        ['agent_config_json', "TEXT DEFAULT '{}'"],
+        ['contract_files', "TEXT DEFAULT '[]'"],
+        ['ci_required', 'INTEGER DEFAULT 1'],
+        ['allow_local_acceptance', 'INTEGER DEFAULT 1'],
+        ['remote_push_authorized', 'INTEGER DEFAULT 0'],
+        ['write_owner', "TEXT DEFAULT ''"],
+        ['lease_expires_at', "TEXT DEFAULT ''"],
+        ['lease_fence', 'INTEGER DEFAULT 0'],
+      ],
+      runs: [
+        ['verification_status', "TEXT DEFAULT 'LOCAL_VERIFIED'"],
+        ['verified_sha', "TEXT DEFAULT ''"],
+        ['ci_status', "TEXT DEFAULT ''"],
+        ['ci_url', "TEXT DEFAULT ''"],
+        ['ci_checked_at', "TEXT DEFAULT ''"],
+        ['wall_deadline', "TEXT DEFAULT ''"],
+        ['parent_run_id', "TEXT DEFAULT ''"],
+        ['lease_owner', "TEXT DEFAULT ''"],
+        ['lease_expires_at', "TEXT DEFAULT ''"],
+        ['lease_fence', 'INTEGER DEFAULT 0'],
+        ['reconciliation_json', "TEXT DEFAULT '{}'"],
+        ['request_key', "TEXT DEFAULT ''"],
+      ],
+      loops: [
+        ['pending_task_json', "TEXT DEFAULT '{}'"],
+        ['auto_repair_count', 'INTEGER DEFAULT 0'],
+        ['auto_retry_count', 'INTEGER DEFAULT 0'],
+      ],
+      tasks: [
+        ['verification_json', "TEXT DEFAULT '{}'"],
+        ['failure_signature', "TEXT DEFAULT ''"],
+        ['repeated_failures', 'INTEGER DEFAULT 0'],
+      ],
+      attempts: [
+        ['cost_reported', 'INTEGER DEFAULT 0'],
+        ['cost_source', "TEXT DEFAULT 'estimated'"],
+        ['provider', "TEXT DEFAULT ''"],
+        ['model', "TEXT DEFAULT ''"],
+        ['provider_known', 'INTEGER DEFAULT 0'],
+        ['provider_source', "TEXT DEFAULT ''"],
+        ['failure_class', "TEXT DEFAULT ''"],
+      ],
+      audits: [
+        ['budget_scope', "TEXT DEFAULT 'global'"],
+        ['verification_status', "TEXT DEFAULT ''"],
+        ['evidence_hash', "TEXT DEFAULT ''"],
+        ['diff_hash', "TEXT DEFAULT ''"],
+        ['independence', "TEXT DEFAULT 'unknown'"],
+        ['provider_known', 'INTEGER DEFAULT 0'],
+        ['provider_source', "TEXT DEFAULT ''"],
+        ['failure_class', "TEXT DEFAULT ''"],
+      ],
+    };
+    for (const [table, cols] of Object.entries(columns)) {
+      for (const [name, ddl] of cols) {
+        try {
+          this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`);
+        } catch {
+          /* 列已存在 */
+        }
+      }
+    }
+    try {
+      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS runs_request_key_unique ON runs(request_key) WHERE request_key<>''");
+    } catch {
+      /* 旧库可能已有重复非空 key；保留现状并让 startRun 的回查兜底 */
+    }
+    // 旧记录回填 provider（用于按模型族分开统计；不改动金额/用量）
+    try {
+      this.db.exec("UPDATE attempts SET provider='glm' WHERE (provider IS NULL OR provider='') AND agent_kind='claude'");
+      this.db.exec("UPDATE attempts SET provider='deepseek' WHERE (provider IS NULL OR provider='') AND agent_kind IN ('dsh','planning','deepseek')");
+      this.db.exec("UPDATE attempts SET provider='unknown' WHERE provider IS NULL OR provider=''");
+      // 历史记录：旧版按 agentKind 推断 provider；标记 known=1 并保留来源，避免重复/回退费用口径
+      this.db.exec("UPDATE attempts SET provider_known=1, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek') AND provider_known=0 AND provider_source=''");
+      this.db.exec("UPDATE attempts SET provider='unknown', provider_known=0, provider_source='legacy_unknown' WHERE provider NOT IN ('glm','deepseek','openai','anthropic') AND provider_source=''");
+      this.db.exec("UPDATE audits SET provider_known=1, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek','openai','anthropic') AND provider_known=0 AND provider_source=''");
+    } catch {
+      /* ignore */
+    }
   }
 
   close() {
@@ -215,8 +335,8 @@ export class Store {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO projects (id,name,description,repo_url,local_path,default_branch,test_command,language,agent_kind,audit_provider,protected_paths,config_json,status,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO projects (id,name,description,repo_url,local_path,default_branch,test_command,language,agent_kind,audit_provider,protected_paths,config_json,budget_json,agent_config_json,contract_files,ci_required,allow_local_acceptance,remote_push_authorized,status,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         p.id,
@@ -231,6 +351,12 @@ export class Store {
         p.auditProvider || 'auto',
         JSON.stringify(p.protectedPaths || []),
         JSON.stringify(p.config || {}),
+        JSON.stringify(p.budget || {}),
+        JSON.stringify(p.agentConfig || {}),
+        JSON.stringify(p.contractFiles || []),
+        p.ciRequired === false ? 0 : 1,
+        p.allowLocalAcceptance === false ? 0 : 1,
+        p.remotePushAuthorized ? 1 : 0,
         p.status || 'active',
         now,
         now,
@@ -242,6 +368,9 @@ export class Store {
     return parseRow(this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id), {
       protected_paths: [],
       config_json: {},
+      budget_json: {},
+      agent_config_json: {},
+      contract_files: [],
     });
   }
 
@@ -249,7 +378,7 @@ export class Store {
     return this.db
       .prepare('SELECT * FROM projects ORDER BY created_at DESC')
       .all()
-      .map((r) => parseRow(r, { protected_paths: [], config_json: {} }));
+      .map((r) => parseRow(r, { protected_paths: [], config_json: {}, budget_json: {}, agent_config_json: {}, contract_files: [] }));
   }
 
   updateProject(id, patch) {
@@ -258,7 +387,7 @@ export class Store {
     const merged = { ...current, ...patch };
     this.db
       .prepare(
-        `UPDATE projects SET name=?, description=?, repo_url=?, local_path=?, default_branch=?, test_command=?, language=?, agent_kind=?, audit_provider=?, protected_paths=?, config_json=?, status=?, updated_at=? WHERE id=?`,
+        `UPDATE projects SET name=?, description=?, repo_url=?, local_path=?, default_branch=?, test_command=?, language=?, agent_kind=?, audit_provider=?, protected_paths=?, config_json=?, budget_json=?, agent_config_json=?, contract_files=?, ci_required=?, allow_local_acceptance=?, remote_push_authorized=?, status=?, updated_at=? WHERE id=?`,
       )
       .run(
         merged.name,
@@ -272,6 +401,12 @@ export class Store {
         merged.audit_provider || 'auto',
         JSON.stringify(merged.protected_paths || []),
         JSON.stringify(merged.config_json || {}),
+        JSON.stringify(merged.budget_json || {}),
+        JSON.stringify(merged.agent_config_json || {}),
+        JSON.stringify(merged.contract_files || []),
+        merged.ci_required ? 1 : 0,
+        merged.allow_local_acceptance ? 1 : 0,
+        merged.remote_push_authorized ? 1 : 0,
         merged.status || 'active',
         nowIso(),
         id,
@@ -321,6 +456,9 @@ export class Store {
     const cur = this.getPlan(id);
     if (!cur) return null;
     const merged = { ...cur, ...patch };
+    if (typeof merged.verification_json === 'string') {
+      try { merged.verification_json = JSON.parse(merged.verification_json); } catch { merged.verification_json = {}; }
+    }
     this.db
       .prepare('UPDATE plans SET title=?, status=?, tasks_json=?, planner_meta_json=?, updated_at=? WHERE id=?')
       .run(
@@ -339,8 +477,8 @@ export class Store {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO runs (id,project_id,plan_id,goal,mode,status,current_task_id,budget_json,spent_json,stop_reason,result_json,started_at,ended_at,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO runs (id,project_id,plan_id,goal,mode,status,current_task_id,budget_json,spent_json,stop_reason,result_json,verification_status,verified_sha,ci_status,ci_url,ci_checked_at,wall_deadline,parent_run_id,request_key,started_at,ended_at,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         r.id,
@@ -354,6 +492,14 @@ export class Store {
         JSON.stringify(r.spent || { tokens: 0, costCny: 0 }),
         '',
         '{}',
+        r.verificationStatus || 'LOCAL_VERIFIED',
+        '',
+        '',
+        '',
+        '',
+        r.wallDeadline || '',
+        r.parentRunId || '',
+        r.requestKey || '',
         '',
         '',
         now,
@@ -368,6 +514,14 @@ export class Store {
       spent_json: {},
       result_json: {},
     });
+  }
+
+  getRunByRequestKey(requestKey) {
+    const key = String(requestKey || '').trim();
+    if (!key) return null;
+    return parseRow(this.db.prepare('SELECT * FROM runs WHERE request_key = ? ORDER BY created_at DESC LIMIT 1').get(key), {
+      budget_json: {}, spent_json: {}, result_json: {},
+    }) || null;
   }
 
   listRuns(projectId, limit = 20) {
@@ -388,9 +542,12 @@ export class Store {
     const cur = this.getRun(id);
     if (!cur) return null;
     const merged = { ...cur, ...patch };
+    if (typeof merged.verification_json === 'string') {
+      try { merged.verification_json = JSON.parse(merged.verification_json); } catch { merged.verification_json = {}; }
+    }
     this.db
       .prepare(
-        `UPDATE runs SET plan_id=?, status=?, current_task_id=?, budget_json=?, spent_json=?, stop_reason=?, result_json=?, started_at=?, ended_at=?, updated_at=? WHERE id=?`,
+        `UPDATE runs SET plan_id=?, status=?, current_task_id=?, budget_json=?, spent_json=?, stop_reason=?, result_json=?, verification_status=?, verified_sha=?, ci_status=?, ci_url=?, ci_checked_at=?, wall_deadline=?, parent_run_id=?, started_at=?, ended_at=?, updated_at=? WHERE id=?`,
       )
       .run(
         merged.plan_id || '',
@@ -400,6 +557,13 @@ export class Store {
         JSON.stringify(merged.spent_json || {}),
         merged.stop_reason || '',
         JSON.stringify(merged.result_json || {}),
+        merged.verification_status || 'LOCAL_VERIFIED',
+        merged.verified_sha || '',
+        merged.ci_status || '',
+        merged.ci_url || '',
+        merged.ci_checked_at || '',
+        merged.wall_deadline || '',
+        merged.parent_run_id || '',
         merged.started_at || '',
         merged.ended_at || '',
         nowIso(),
@@ -466,6 +630,7 @@ export class Store {
     return parseRow(this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id), {
       acceptance_json: [],
       result_json: {},
+      verification_json: {},
     });
   }
 
@@ -496,9 +661,12 @@ export class Store {
     const cur = this.getTask(id);
     if (!cur) return null;
     const merged = { ...cur, ...patch };
+    if (typeof merged.verification_json === 'string') {
+      try { merged.verification_json = JSON.parse(merged.verification_json); } catch { merged.verification_json = {}; }
+    }
     this.db
       .prepare(
-        `UPDATE tasks SET status=?, attempt=?, branch=?, base_commit=?, head_commit=?, worktree_path=?, session_id=?, blocked_reason=?, result_json=?, agent_kind=?, test_command=?, max_attempts=?, updated_at=? WHERE id=?`,
+        `UPDATE tasks SET status=?, attempt=?, branch=?, base_commit=?, head_commit=?, worktree_path=?, session_id=?, blocked_reason=?, result_json=?, verification_json=?, failure_signature=?, repeated_failures=?, agent_kind=?, test_command=?, max_attempts=?, updated_at=? WHERE id=?`,
       )
       .run(
         merged.status,
@@ -510,6 +678,9 @@ export class Store {
         merged.session_id || '',
         merged.blocked_reason || '',
         JSON.stringify(merged.result_json || {}),
+        JSON.stringify(merged.verification_json || {}),
+        merged.failure_signature || '',
+        Number(merged.repeated_failures || 0),
         merged.agent_kind || 'auto',
         merged.test_command || '',
         merged.max_attempts || 2,
@@ -531,7 +702,7 @@ export class Store {
     const row = this.db
       .prepare("SELECT * FROM tasks WHERE plan_id = ? AND status = 'queued' ORDER BY seq ASC LIMIT 1")
       .get(planId);
-    return parseRow(row, { acceptance_json: [], result_json: {} });
+    return parseRow(row, { acceptance_json: [], result_json: {}, verification_json: {} });
   }
 
   taskCounts(planId) {
@@ -556,8 +727,8 @@ export class Store {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,duration_ms,log_path,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,cost_reported,cost_source,provider,model,provider_known,provider_source,duration_ms,log_path,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         a.id,
@@ -576,6 +747,12 @@ export class Store {
         a.tokensOut || 0,
         a.tokensCache || 0,
         a.costCny || 0,
+        a.costReported ? 1 : 0,
+        a.costSource || (a.costReported ? 'vendor' : 'estimated'),
+        a.provider || '',
+        a.model || '',
+        a.providerKnown ? 1 : 0,
+        a.providerSource || '',
         a.durationMs || 0,
         a.logPath || '',
         now,
@@ -601,13 +778,20 @@ export class Store {
       tokens_out: patch.tokens_out ?? patch.tokensOut ?? cur.tokens_out,
       tokens_cache: patch.tokens_cache ?? patch.tokensCache ?? cur.tokens_cache,
       cost_cny: patch.cost_cny ?? patch.costCny ?? cur.cost_cny,
+      cost_reported: patch.cost_reported ?? patch.costReported ?? cur.cost_reported,
+      cost_source: patch.cost_source ?? patch.costSource ?? cur.cost_source,
+      provider: patch.provider ?? cur.provider,
+      model: patch.model ?? cur.model,
+      provider_known: patch.provider_known ?? patch.providerKnown ?? cur.provider_known,
+      provider_source: patch.provider_source ?? patch.providerSource ?? cur.provider_source,
+      failure_class: patch.failure_class ?? patch.failureClass ?? cur.failure_class,
       duration_ms: patch.duration_ms ?? patch.durationMs ?? cur.duration_ms,
       log_path: patch.log_path ?? patch.logPath ?? cur.log_path,
     };
     const merged = { ...cur, ...normalized };
     this.db
       .prepare(
-        `UPDATE attempts SET session_id=?, exit_code=?, status=?, error=?, feedback=?, tokens_in=?, tokens_out=?, tokens_cache=?, cost_cny=?, duration_ms=?, log_path=?, updated_at=? WHERE id=?`,
+        `UPDATE attempts SET session_id=?, exit_code=?, status=?, error=?, feedback=?, tokens_in=?, tokens_out=?, tokens_cache=?, cost_cny=?, cost_reported=?, cost_source=?, provider=?, model=?, provider_known=?, provider_source=?, failure_class=?, duration_ms=?, log_path=?, updated_at=? WHERE id=?`,
       )
       .run(
         merged.session_id || '',
@@ -619,6 +803,13 @@ export class Store {
         merged.tokens_out || 0,
         merged.tokens_cache || 0,
         merged.cost_cny || 0,
+        merged.cost_reported ? 1 : 0,
+        merged.cost_source || 'estimated',
+        merged.provider || '',
+        merged.model || '',
+        merged.provider_known ? 1 : 0,
+        merged.provider_source || '',
+        merged.failure_class || '',
         merged.duration_ms || 0,
         merged.log_path || '',
         nowIso(),
@@ -631,19 +822,20 @@ export class Store {
     return this.db.prepare('SELECT * FROM attempts WHERE task_id = ? ORDER BY created_at ASC').all(taskId);
   }
 
-  markRunningAttemptsInterrupted() {
+  markRunningAttemptsInterrupted(runIds = null) {
     const now = nowIso();
-    return this.db
-      .prepare("UPDATE attempts SET status='interrupted', updated_at=? WHERE status='running'")
-      .run(now).changes;
+    const ids = Array.isArray(runIds) ? runIds.filter(Boolean) : null;
+    if (ids && !ids.length) return 0;
+    const sql = `UPDATE attempts SET status='interrupted', cost_source=CASE WHEN cost_cny=0 AND tokens_in=0 AND tokens_out=0 AND tokens_cache=0 THEN 'unknown' ELSE cost_source END, error=CASE WHEN error='' THEN '工作台进程中断：厂商最终用量未返回，费用/Tokens 标记为未知（不伪造为 0）' ELSE error END, updated_at=? WHERE status='running'${ids ? ` AND run_id IN (${ids.map(() => '?').join(',')})` : ''}`;
+    return this.db.prepare(sql).run(now, ...(ids || [])).changes;
   }
 
   // ---------------- audits ----------------
   createAudit(a) {
     this.db
       .prepare(
-        `INSERT INTO audits (id,run_id,task_id,attempt_no,provider,model,verdict,score,criteria_json,findings_json,required_fixes_json,summary,tokens_in,tokens_out,cost_cny,raw_path,created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO audits (id,run_id,task_id,attempt_no,provider,model,provider_known,provider_source,budget_scope,verdict,score,criteria_json,findings_json,required_fixes_json,summary,tokens_in,tokens_out,cost_cny,raw_path,verification_status,evidence_hash,diff_hash,independence,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         a.id,
@@ -652,6 +844,9 @@ export class Store {
         a.attemptNo || 0,
         a.provider,
         a.model || '',
+        a.providerKnown ? 1 : 0,
+        a.providerSource || '',
+        a.budgetScope || 'global',
         a.verdict,
         a.score || 0,
         JSON.stringify(a.criteria || []),
@@ -662,6 +857,10 @@ export class Store {
         a.tokensOut || 0,
         a.costCny || 0,
         a.rawPath || '',
+        a.verificationStatus || (a.verdict === 'pass' ? 'PASS' : a.verdict === 'unknown' ? 'UNKNOWN' : 'FAIL'),
+        a.evidenceHash || '',
+        a.diffHash || '',
+        a.independence || 'unknown',
         nowIso(),
       );
     return this.getAudit(a.id);
@@ -759,17 +958,354 @@ export class Store {
   }
 
   // ---------------- stats ----------------
-  usageTotals() {
-    const attempts = this.db.prepare('SELECT COALESCE(SUM(tokens_in),0) a, COALESCE(SUM(tokens_out),0) b, COALESCE(SUM(tokens_cache),0) c, COALESCE(SUM(cost_cny),0) d FROM attempts').get();
-    const audits = this.db.prepare('SELECT COALESCE(SUM(tokens_in),0) a, COALESCE(SUM(tokens_out),0) b, COALESCE(SUM(cost_cny),0) c FROM audits').get();
-    const tokens = Number(attempts.a) + Number(attempts.b) + Number(attempts.c) + Number(audits.a) + Number(audits.b);
+  usageForProject(projectId) {
+    const attempts = this.db
+      .prepare(`SELECT COALESCE(SUM(a.tokens_in),0) a, COALESCE(SUM(a.tokens_out),0) b, COALESCE(SUM(a.tokens_cache),0) c, COALESCE(SUM(a.cost_cny),0) d
+                FROM attempts a JOIN runs r ON r.id = a.run_id WHERE r.project_id = ?`)
+      .get(projectId);
+    const audits = this.db
+      .prepare(`SELECT COALESCE(SUM(au.tokens_in),0) a, COALESCE(SUM(au.tokens_out),0) b, COALESCE(SUM(au.cost_cny),0) c
+                FROM audits au JOIN runs r ON r.id = au.run_id WHERE r.project_id = ?`)
+      .get(projectId);
+    const tokensIn = Number(attempts.a) + Number(audits.a);
+    const tokensOut = Number(attempts.b) + Number(audits.b);
+    const tokensCache = Number(attempts.c);
     return {
-      tokens,
-      tokensIn: Number(attempts.a) + Number(audits.a),
-      tokensOut: Number(attempts.b) + Number(audits.b),
-      tokensCache: Number(attempts.c),
+      tokens: tokensIn + tokensOut + tokensCache,
+      tokensIn,
+      tokensOut,
+      tokensCache,
       costCny: Number(attempts.d) + Number(audits.c),
     };
+  }
+
+  usageTotals() {
+    const attemptRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM attempts GROUP BY provider`).all();
+    const auditRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_in ELSE 0 END),0) tin, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_out ELSE 0 END),0) tout, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN cost_cny ELSE 0 END),0) cost FROM audits GROUP BY provider`).all();
+    const scoped = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost FROM audits WHERE budget_scope='project_audit' GROUP BY provider`).all();
+    const byProvider = {};
+    const ensure = (name) => {
+      const key = name || 'unknown';
+      if (!byProvider[key]) byProvider[key] = { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0, known: false };
+      return byProvider[key];
+    };
+    for (const r of attemptRows) {
+      const agg = ensure(r.provider || 'unknown');
+      agg.tokensIn += Number(r.tin);
+      agg.tokensOut += Number(r.tout);
+      agg.tokensCache += Number(r.tc);
+      agg.costCny += Number(r.cost);
+      agg.known = agg.known || Number(r.known) === 1;
+    }
+    for (const r of auditRows) {
+      const agg = ensure(r.provider || 'unknown');
+      agg.tokensIn += Number(r.tin);
+      agg.tokensOut += Number(r.tout);
+      agg.costCny += Number(r.cost);
+      agg.known = agg.known || Number(r.known) === 1;
+    }
+    for (const agg of Object.values(byProvider)) agg.tokens = agg.tokensIn + agg.tokensOut + agg.tokensCache;
+    const total = Object.values(byProvider).reduce((acc, a) => {
+      acc.tokensIn += a.tokensIn; acc.tokensOut += a.tokensOut; acc.tokensCache += a.tokensCache; acc.tokens += a.tokens; acc.costCny += a.costCny;
+      return acc;
+    }, { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 });
+    const projectAudit = scoped.reduce((acc, r) => { acc.tokensIn += Number(r.tin); acc.tokensOut += Number(r.tout); acc.tokens += Number(r.tin) + Number(r.tout); acc.costCny += Number(r.cost); return acc; }, { tokensIn: 0, tokensOut: 0, tokens: 0, costCny: 0 });
+    return { ...total, byProvider, projectAudit };
+  }
+
+  auditBudgetUsage(projectId) {
+    const rows = this.db.prepare("SELECT COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost, COUNT(*) calls FROM audits a JOIN runs r ON r.id=a.run_id WHERE r.project_id=? AND a.budget_scope='project_audit'").all(projectId);
+    const r = rows[0] || {};
+    return { tokens: Number(r.tin || 0) + Number(r.tout || 0), costCny: Number(r.cost || 0), calls: Number(r.calls || 0) };
+  }
+
+  usageForProject(projectId) {
+    const attemptRows = this.db.prepare(`SELECT a.provider, MAX(a.provider_known) known, COALESCE(SUM(a.tokens_in),0) tin, COALESCE(SUM(a.tokens_out),0) tout, COALESCE(SUM(a.tokens_cache),0) tc, COALESCE(SUM(a.cost_cny),0) cost FROM attempts a JOIN runs r ON r.id=a.run_id WHERE r.project_id=? GROUP BY a.provider`).all(projectId);
+    const auditRows = this.db.prepare(`SELECT au.provider, MAX(au.provider_known) known, COALESCE(SUM(au.tokens_in),0) tin, COALESCE(SUM(au.tokens_out),0) tout, COALESCE(SUM(au.cost_cny),0) cost FROM audits au JOIN runs r ON r.id=au.run_id WHERE r.project_id=? GROUP BY au.provider`).all(projectId);
+    const byProvider = {};
+    const ensure = (name) => { const k = name || 'unknown'; if (!byProvider[k]) byProvider[k] = { tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0,known:false }; return byProvider[k]; };
+    for (const r of attemptRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.tokensCache+=Number(r.tc); a.costCny+=Number(r.cost); a.known=a.known||Number(r.known)===1; }
+    for (const r of auditRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.costCny+=Number(r.cost); a.known=a.known||Number(r.known)===1; }
+    for (const a of Object.values(byProvider)) a.tokens=a.tokensIn+a.tokensOut+a.tokensCache;
+    const total = Object.values(byProvider).reduce((acc,a)=>{acc.tokensIn+=a.tokensIn;acc.tokensOut+=a.tokensOut;acc.tokensCache+=a.tokensCache;acc.tokens+=a.tokens;acc.costCny+=a.costCny;return acc;},{tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0});
+    return { ...total, byProvider };
+  }
+
+  activeRunForProject(projectId, excludeRunId = '') {
+    const rows = this.db
+      .prepare("SELECT * FROM runs WHERE project_id = ? AND status IN ('queued','running','paused','interrupted') ORDER BY created_at ASC")
+      .all(projectId);
+    return rows.map((r) => parseRow(r, { budget_json: {}, spent_json: {}, result_json: {} })).find((r) => r.id !== excludeRunId) || null;
+  }
+
+  createApproval(a) {
+    const now = nowIso();
+    this.db
+      .prepare('INSERT INTO approvals (id,run_id,task_id,type,status,title,details_json,created_at,updated_at,decided_at,decided_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(a.id, a.runId || '', a.taskId || '', a.type, a.status || 'pending', a.title || '', JSON.stringify(a.details || {}), now, now, '', '');
+    return this.getApproval(a.id);
+  }
+
+  getApproval(id) {
+    return parseRow(this.db.prepare('SELECT * FROM approvals WHERE id = ?').get(id), { details_json: {} });
+  }
+
+  listApprovals({ status = '', runId = '' } = {}) {
+    const where = [];
+    const params = [];
+    if (status) { where.push('status = ?'); params.push(status); }
+    if (runId) { where.push('run_id = ?'); params.push(runId); }
+    const sql = `SELECT * FROM approvals ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT 200`;
+    return this.db.prepare(sql).all(...params).map((r) => parseRow(r, { details_json: {} }));
+  }
+
+  updateApproval(id, patch) {
+    const cur = this.getApproval(id);
+    if (!cur) return null;
+    const merged = { ...cur, ...patch };
+    if (typeof merged.verification_json === 'string') {
+      try { merged.verification_json = JSON.parse(merged.verification_json); } catch { merged.verification_json = {}; }
+    }
+    this.db
+      .prepare('UPDATE approvals SET status=?, details_json=?, decided_at=?, decided_by=?, updated_at=? WHERE id=?')
+      .run(merged.status, JSON.stringify(merged.details_json || {}), merged.decided_at || '', merged.decided_by || '', nowIso(), id);
+    return this.getApproval(id);
+  }
+
+  createLoop(l) {
+    const now = nowIso();
+    this.db.prepare('INSERT INTO loops (id,project_id,goal,mode,status,round,max_rounds,queue_json,history_json,contract_files_json,current_run_id,last_run_id,stop_reason,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(l.id, l.projectId, l.goal, l.mode || 'plan', l.status || 'running', 0, l.maxRounds || 3, JSON.stringify(l.queue || []), JSON.stringify([]), JSON.stringify(l.contractFiles || []), '', '', '', now, now);
+    return this.getLoop(l.id);
+  }
+
+  getLoop(id) {
+    return parseRow(this.db.prepare('SELECT * FROM loops WHERE id=?').get(id), { queue_json: [], history_json: [], contract_files_json: [] });
+  }
+
+  listLoopsWithPending() {
+    return this.db.prepare("SELECT * FROM loops WHERE pending_task_json IS NOT NULL AND pending_task_json<>'' AND pending_task_json<>'{}' ORDER BY created_at ASC LIMIT 100").all()
+      .map((r) => parseRow(r, { queue_json: [], history_json: [], contract_files_json: [] }));
+  }
+
+  listLoops({ projectId = '', status = '' } = {}) {
+    const where = []; const params = [];
+    if (projectId) { where.push('project_id=?'); params.push(projectId); }
+    if (status) { where.push('status=?'); params.push(status); }
+    return this.db.prepare(`SELECT * FROM loops ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT 100`).all(...params)
+      .map((r) => parseRow(r, { queue_json: [], history_json: [], contract_files_json: [] }));
+  }
+
+  updateLoop(id, patch) {
+    const cur = this.getLoop(id); if (!cur) return null;
+    const m = { ...cur, ...patch };
+    this.db.prepare('UPDATE loops SET status=?,round=?,max_rounds=?,queue_json=?,history_json=?,contract_files_json=?,current_run_id=?,last_run_id=?,stop_reason=?,auto_repair_count=?,auto_retry_count=?,updated_at=? WHERE id=?')
+      .run(m.status, m.round, m.max_rounds, JSON.stringify(m.queue_json || []), JSON.stringify(m.history_json || []), JSON.stringify(m.contract_files_json || []), m.current_run_id || '', m.last_run_id || '', m.stop_reason || '', Number(m.auto_repair_count || 0), Number(m.auto_retry_count || 0), nowIso(), id);
+    return this.getLoop(id);
+  }
+
+  incrementLoopAutoRepair(loopId) {
+    this.db.prepare('UPDATE loops SET auto_repair_count=auto_repair_count+1, updated_at=? WHERE id=?').run(nowIso(), loopId);
+    return Number(this.db.prepare('SELECT auto_repair_count FROM loops WHERE id=?').get(loopId)?.auto_repair_count || 0);
+  }
+
+  incrementLoopAutoRetry(loopId) {
+    this.db.prepare('UPDATE loops SET auto_retry_count=auto_retry_count+1, updated_at=? WHERE id=?').run(nowIso(), loopId);
+    return Number(this.db.prepare('SELECT auto_retry_count FROM loops WHERE id=?').get(loopId)?.auto_retry_count || 0);
+  }
+
+  getLoopPending(loopId) {
+    const row = this.db.prepare('SELECT pending_task_json FROM loops WHERE id=?').get(loopId);
+    if (!row) return {};
+    try { return JSON.parse(row.pending_task_json || '{}') || {}; } catch { return {}; }
+  }
+
+  setLoopPending(loopId, pending) {
+    this.db.prepare('UPDATE loops SET pending_task_json=?, updated_at=? WHERE id=?').run(JSON.stringify(pending || {}), nowIso(), loopId);
+    return this.getLoopPending(loopId);
+  }
+
+  /**
+   * P0-2：原子完成“移除队列任务 + 清除 pending + 绑定 Run”。
+   * 进程在 startRun 之后、此事务之前崩溃时，pending 仍保留；恢复通过 requestKey 找到同一 Run，不重复创建。
+   */
+  claimLoopTask({ loopId, requestKey, runId }) {
+    const key = String(requestKey || '');
+    if (!key || !runId) throw new Error('claimLoopTask requires requestKey/runId');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT pending_task_json, queue_json, current_run_id FROM loops WHERE id=?').get(loopId);
+      if (!row) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'loop-not-found' }; }
+      let pending = {};
+      try { pending = JSON.parse(row.pending_task_json || '{}') || {}; } catch { pending = {}; }
+      if (pending.requestKey !== key) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'stale-pending-key' }; }
+      const queue = (() => { try { return JSON.parse(row.queue_json || '[]'); } catch { return []; } })();
+      const task = pending.task || {};
+      let removed = false;
+      if (Number.isInteger(pending.queueIndex) && pending.queueIndex >= 0 && queue[pending.queueIndex] && queue[pending.queueIndex].title === task.title) {
+        queue.splice(pending.queueIndex, 1); removed = true;
+      } else if (task.title) {
+        const idx = queue.findIndex((t) => t.title === task.title);
+        if (idx >= 0) { queue.splice(idx, 1); removed = true; }
+      }
+      if (Number.isInteger(pending.queueIndex) && pending.queueIndex >= 0 && !removed) {
+        this.db.exec('ROLLBACK');
+        return { ok: false, reason: 'queue-item-missing' };
+      }
+      this.db.prepare('UPDATE loops SET queue_json=?, pending_task_json=?, current_run_id=?, last_run_id=?, updated_at=? WHERE id=?').run(JSON.stringify(queue), '{}', runId, runId, nowIso(), loopId);
+      this.db.exec('COMMIT');
+      return { ok: true, removed, runId };
+    } catch (err) { try { this.db.exec('ROLLBACK'); } catch { /* ignore */ } throw err; }
+  }
+
+  /** 恢复 pending：拿掉已绑定 Run 的 pending，或把未创建 Run 的任务放回队列。 */
+  recoverLoopPending(loopId) {
+    const loop = this.getLoop(loopId);
+    if (!loop) return { changed: false, reason: 'loop-not-found' };
+    const pending = this.getLoopPending(loopId);
+    if (!pending.requestKey) return { changed: false };
+    const run = this.getRunByRequestKey(pending.requestKey);
+    if (run) {
+      const claimed = this.claimLoopTask({ loopId, requestKey: pending.requestKey, runId: run.id });
+      if (!claimed?.ok) return { changed: false, linked: false, runId: run.id, reason: claimed?.reason || 'claim-failed' };
+      return { changed: true, linked: true, runId: run.id };
+    }
+    const queue = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
+    const task = pending.task;
+    if (task && !queue.some((t) => t.title === task.title && (t.qualityIssueId || '') === (task.qualityIssueId || ''))) queue.unshift(task);
+    this.db.prepare('UPDATE loops SET queue_json=?, pending_task_json=?, updated_at=? WHERE id=?').run(JSON.stringify(queue), '{}', nowIso(), loopId);
+    return { changed: true, restored: true };
+  }
+
+  /**
+   * 原子获取项目写租约并返回单调递增的 fencing token。
+   * 过期租约不会“被视为仍然有效”；新执行者获取时 fence 自增，旧执行者的 token 永久失效。
+   */
+  acquireProjectLeaseFenced(projectId, owner, ttlMs = 90_000) {
+    const now = nowIso();
+    const expires = new Date(Date.now() + ttlMs).toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT write_owner, lease_expires_at, lease_fence FROM projects WHERE id=?').get(projectId);
+      if (!row) { this.db.exec('ROLLBACK'); return { ok: false, fence: 0, reason: 'project-not-found' }; }
+      const held = row.write_owner && row.write_owner !== owner && row.lease_expires_at && row.lease_expires_at > now;
+      if (held) { this.db.exec('ROLLBACK'); return { ok: false, fence: Number(row.lease_fence || 0), reason: 'lease-held-by-other' }; }
+      const nextFence = Number(row.lease_fence || 0) + 1;
+      this.db.prepare('UPDATE projects SET write_owner=?, lease_expires_at=?, lease_fence=?, updated_at=? WHERE id=?').run(owner, expires, nextFence, now, projectId);
+      this.db.exec('COMMIT');
+      return { ok: true, fence: nextFence, expiresAt: expires };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    }
+  }
+
+  /** 兼容旧调用：成功返回 true；新代码应使用带 fence 的版本。 */
+  acquireProjectLease(projectId, owner, ttlMs = 90_000) {
+    return this.acquireProjectLeaseFenced(projectId, owner, ttlMs).ok;
+  }
+
+  getProjectLease(projectId) {
+    return this.db.prepare('SELECT write_owner, lease_expires_at, lease_fence FROM projects WHERE id=?').get(projectId) || null;
+  }
+
+  /** 只有 owner + fence + 未过期同时匹配才续租；任何一项失败都视为失去写权。 */
+  renewProjectLeaseFenced(projectId, owner, fence, ttlMs = 90_000) {
+    const now = nowIso();
+    const expires = new Date(Date.now() + ttlMs).toISOString();
+    return this.db.prepare("UPDATE projects SET lease_expires_at=?, updated_at=? WHERE id=? AND write_owner=? AND lease_fence=? AND lease_expires_at>?").run(expires, now, projectId, owner, Number(fence), now).changes > 0;
+  }
+
+  renewProjectLease(projectId, owner, ttlMs = 90_000) {
+    const row = this.getProjectLease(projectId);
+    if (!row || row.write_owner !== owner) return false;
+    return this.renewProjectLeaseFenced(projectId, owner, row.lease_fence, ttlMs);
+  }
+
+  releaseProjectLeaseFenced(projectId, owner, fence) {
+    return this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='', updated_at=? WHERE id=? AND write_owner=? AND lease_fence=?").run(nowIso(), projectId, owner, Number(fence)).changes > 0;
+  }
+
+  releaseProjectLease(projectId, owner) {
+    return this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='', updated_at=? WHERE id=? AND write_owner=?").run(nowIso(), projectId, owner).changes > 0;
+  }
+
+  clearExpiredLeases() {
+    const now = nowIso();
+    // fence 不重置；新 owner 通过自增 fence 获得更高写权，旧 token 无法再写。
+    return { projects: this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='' WHERE lease_expires_at<>'' AND lease_expires_at<?").run(now).changes,
+      runs: this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE lease_expires_at<>'' AND lease_expires_at<?").run(now).changes };
+  }
+
+  /**
+   * 启动恢复：清理明显已死亡进程留下的租约。
+   * 只按 owner 里的 `wb:<pid>:` 判断进程是否存活；其他 Workbench 实例仍活着时不清，
+   * 避免两个 HTTP 服务共库时启动清租约互相抢写。
+   */
+  clearLeasesFromDeadProcesses() {
+    const alive = (pid) => {
+      const n = Number(pid);
+      if (!Number.isInteger(n) || n <= 0) return true; // 非标准 owner 不自动清，保持 fail-closed
+      if (n === process.pid) return true;
+      try { process.kill(n, 0); return true; } catch (err) { return err.code !== 'ESRCH'; }
+    };
+    const dead = (owner) => {
+      const m = String(owner || '').match(/^wb:(\d+):/);
+      return m ? !alive(m[1]) : false;
+    };
+    let projects = 0; let runs = 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of this.db.prepare("SELECT id, write_owner FROM projects WHERE write_owner<>''").all()) {
+        if (dead(row.write_owner)) {
+          this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='', updated_at=? WHERE id=? AND write_owner=?").run(nowIso(), row.id, row.write_owner);
+          projects += 1;
+        }
+      }
+      for (const row of this.db.prepare("SELECT id, lease_owner FROM runs WHERE lease_owner<>''").all()) {
+        if (dead(row.lease_owner)) {
+          this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE id=? AND lease_owner=?").run(row.id, row.lease_owner);
+          runs += 1;
+        }
+      }
+      this.db.exec('COMMIT');
+    } catch (err) { try { this.db.exec('ROLLBACK'); } catch { /* ignore */ } throw err; }
+    return { projects, runs };
+  }
+
+  /** run 租约不能覆盖其他有效执行者；fence 只能前进，不能回退。 */
+  setRunLeaseFenced(runId, owner, fence, ttlMs = 90_000) {
+    const now = nowIso();
+    const expires = new Date(Date.now() + ttlMs).toISOString();
+    let result;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT lease_owner, lease_expires_at, lease_fence FROM runs WHERE id=?').get(runId);
+      if (!row) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'run-not-found' }; }
+      const held = row.lease_owner && row.lease_owner !== owner && row.lease_expires_at && row.lease_expires_at > now;
+      if (held || Number(row.lease_fence || 0) > Number(fence)) {
+        this.db.exec('ROLLBACK');
+        return { ok: false, reason: held ? 'run-lease-held' : 'stale-fence', fence: Number(row.lease_fence || 0) };
+      }
+      result = this.db.prepare('UPDATE runs SET lease_owner=?, lease_expires_at=?, lease_fence=? WHERE id=? AND (lease_owner=? OR lease_owner=? OR lease_expires_at<?)').run(owner, expires, Number(fence), runId, '', owner, now);
+      this.db.exec('COMMIT');
+      return { ok: result.changes > 0, fence: Number(fence) };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    }
+  }
+
+  setRunLease(runId, owner, ttlMs = 90_000, fence = 0) {
+    return this.setRunLeaseFenced(runId, owner, fence, ttlMs);
+  }
+
+  clearRunLeaseFenced(runId, owner, fence) {
+    return this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE id=? AND lease_owner=? AND lease_fence=?").run(runId, owner, Number(fence)).changes > 0;
+  }
+
+  clearRunLease(runId) {
+    return this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE id=?").run(runId);
   }
 
   setMeta(key, value) {
