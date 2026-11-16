@@ -34,6 +34,18 @@ function classifyLoopFailure(evidence = []) {
   return 'unknown';
 }
 
+function qualityGateIncomplete(loop, project) {
+  const q = qualityConfig(project);
+  if (!q) return null;
+  const history = Array.isArray(loop?.history_json) ? loop.history_json : [];
+  const withQuality = [...history].reverse().find((h) => h && h.quality);
+  if (!withQuality) return { reason: '尚未执行质量评估，达到上限不能已完成' };
+  if (!withQuality.quality.allPass) return { reason: `质量矩阵未全部 PASS（${withQuality.quality.coverage?.pass || 0}/${withQuality.quality.coverage?.total || 0}）` };
+  const queue = Array.isArray(loop?.queue_json) ? loop.queue_json : [];
+  if (queue.length) return { reason: `任务队列仍有 ${queue.length} 项未清空（含质量/自动修复）` };
+  return null;
+}
+
 function safeJsonArray(value) {
   if (Array.isArray(value)) return value;
   try { const v = JSON.parse(String(value || '[]')); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -254,8 +266,15 @@ export class LoopManager {
         return;
       }
 
-      // 2) 轮次上限
+      // 2) 轮次上限：有质量门时，质量未 PASS/修复队列未清空绝不标记 completed。
       if (loop.round >= loop.max_rounds) {
+        const qIncomplete = qualityGateIncomplete(loop, project);
+        if (qIncomplete) {
+          const reason = `达到最大轮次 ${loop.max_rounds}，但不能完成：${qIncomplete.reason}；保留检查点等待继续/人工授权`;
+          this.store.updateLoop(id, { status: 'blocked', stop_reason: reason });
+          this.emit(loop, 'loop_blocked', reason, 'warn', { qualityGate: qIncomplete });
+          return;
+        }
         this.store.updateLoop(id, { status: 'completed', stop_reason: `已达到最大轮次 ${loop.max_rounds}` });
         this.emit(loop, 'loop_completed', `研发循环完成：${loop.round} 轮（达到上限）`);
         return;
@@ -269,8 +288,16 @@ export class LoopManager {
       const queued = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
       const hasQualityRepair = queued.some((t) => t && (t.qualityIssueId || t.autoRepair));
       // plan/queue 均允许质量/自动修复任务优先于新规划。
-      if (loop.mode === 'queue' || hasQualityRepair) {
+      // plan 模式恢复出的 pending 任务也必须被消费；普通队列任务仍按显式任务处理。
+      if (loop.mode === 'queue' || hasQualityRepair || queued.length > 0) {
         if (!queued.length) {
+          const qIncomplete = qualityGateIncomplete(loop, project);
+          if (qIncomplete) {
+            const reason = `队列已空但质量门未完成：${qIncomplete.reason}；不宣布完成`;
+            this.store.updateLoop(id, { status: 'blocked', stop_reason: reason });
+            this.emit(loop, 'loop_blocked', reason, 'warn', { qualityGate: qIncomplete });
+            return;
+          }
           this.store.updateLoop(id, { status: 'completed', stop_reason: '队列已空（没有伪造任务）' });
           this.emit(loop, 'loop_completed', '研发循环完成：没有更多真实任务（队列为空）');
           return;
@@ -326,6 +353,12 @@ export class LoopManager {
         this.store.updateLoop(id, { status: 'paused', stop_reason: 'Planner/队列返回了非法任务（UNKNOWN）' });
         this.emit(loop, 'loop_paused', 'Planner/队列返回非法任务，已暂停（不伪造任务）', 'warn');
         return;
+      }
+      // plan 模式/任何分支：Planner 生成的任务同样必须先持久化 pending，再带 requestKey 启动。
+      if (!pending) {
+        pending = { task, queueIndex: -1, requestKey: newId('claim'), at: nowIso() };
+        this.store.setLoopPending(id, pending);
+        this.emit(loop, 'loop_task_pending', `规划任务已持久化待认领：${task.title}（requestKey=${pending.requestKey}）`, 'info', { task: task.title, requestKey: pending.requestKey });
       }
 
       // 4) 启动本轮 run（单任务）
@@ -433,6 +466,8 @@ export class LoopManager {
       ended_at: nowIso(),
       current_task_id: '',
     });
+    const existingRepair = (Array.isArray(loop.queue_json) ? loop.queue_json : []).find((t) => t && t.autoRepair && t.repairOfRunId === run.id);
+    if (existingRepair) return true;
     const n = this.store.incrementLoopAutoRepair(loop.id);
     const repair = {
       title: `[Auto Repair ${n}/${maxAuto}] ${task.title}`,
@@ -524,7 +559,7 @@ export class LoopManager {
         if (qualityHead) {
           qualityWorktree = path.join(this.config.paths.worktreesDir, `quality-${run.id.slice(-8)}`);
           try {
-            await gitops.createWorktree(project.local_path, qualityWorktree, `wb/quality-${run.id.slice(-8)}`, qualityHead);
+            await gitops.createWorktree(project.local_path, qualityWorktree, `wb/quality-${run.id.slice(-8)}-${Date.now().toString(36)}`, qualityHead);
             // host-only 受信质量夹具需要依赖；Docker 中不应依赖宿主 node_modules。
             if (String(project?.config_json?.quality?.isolation || '') === 'host') {
               for (const name of ['node_modules', '.playwright-browsers']) {
@@ -535,9 +570,16 @@ export class LoopManager {
               }
             }
           } catch (err) {
-            this.emit(loop, 'quality_worktree_error', `无法创建质量检查 worktree：${err.message}`, 'warn');
-            qualityWorktree = '';
+            const reason = `无法创建质量检查 worktree（不能退回错误代码目录）：${err.message}`;
+            this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
+            this.emit(loop, 'quality_worktree_error', reason, 'error', { runId: run.id, qualityHead });
+            return;
           }
+        } else {
+          const reason = '缺少可验证的计划分支 commit，质量检查拒绝运行（不退回项目目录）';
+          this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
+          this.emit(loop, 'quality_worktree_error', reason, 'error', { runId: run.id });
+          return;
         }
         let qualityRun;
         try {
@@ -598,14 +640,20 @@ export class LoopManager {
       }
     }
     const nextRound = loop.round + 1;
-    const nextStatus = nextRound >= loop.max_rounds ? 'completed' : 'running';
-    this.store.updateLoop(loop.id, {
-      round: nextRound,
-      current_run_id: '',
-      history_json: history,
-      status: nextStatus,
-      stop_reason: nextStatus === 'completed' ? `已完成 ${nextRound} 轮${quality ? '，质量闭环通过' : ''}` : '',
-    });
+    let nextStatus = 'running';
+    let stopReason = '';
+    if (nextRound >= loop.max_rounds) {
+      const qIncomplete = qualityGateIncomplete({ ...loop, round: nextRound, history_json: history }, project);
+      if (qIncomplete) {
+        nextStatus = 'blocked';
+        stopReason = `达到最大轮次 ${loop.max_rounds} 但质量门未完成：${qIncomplete.reason}；保留检查点等待继续/人工授权`;
+        this.emit(loop, 'loop_blocked', stopReason, 'warn', { qualityGate: qIncomplete });
+      } else {
+        nextStatus = 'completed';
+        stopReason = `已完成 ${nextRound} 轮${quality ? '，质量闭环通过' : ''}`;
+      }
+    }
+    this.store.updateLoop(loop.id, { round: nextRound, current_run_id: '', history_json: history, status: nextStatus, stop_reason: stopReason });
     this.emit(loop, 'loop_round_completed', `第 ${nextRound}/${loop.max_rounds} 轮通过：${task.title || run.id}（${verification}，commit ${String(commit).slice(0, 8)}）`, 'info', { runId: run.id, commit, verification });
     if (nextStatus === 'completed') this.emit(loop, 'loop_completed', `研发循环完成：${nextRound} 轮${quality ? '，原始需求覆盖矩阵全部 PASS' : ''}`);
   }

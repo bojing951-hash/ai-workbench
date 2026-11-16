@@ -173,3 +173,16 @@ test('v2.8 P1-1：错位 criteria 不能位置回退冒充缺失条款', () => {
   assert.notEqual(m.requirements[0].status, 'PASS');
   assert.equal(m.allPass, false);
 });
+
+test('v2.9 可靠性：同一 Requirement ID 的冲突结果不得互相覆盖', () => {
+  const project = {
+    id: 'p', name: 'conflict', config_json: { quality: { quality_command: 'true', require_clause_evidence: false, requirements: [{ id: 'R1', title: '冲突需求', priority: 'P0', acceptance: ['a'] }] } },
+  };
+  const m = buildCoverageMatrix({ project, qualityRun: { ok: true, requirements: [
+    { id: 'R1', status: 'pass', evidence: '第一个结果证据足够长' },
+    { id: 'R1', status: 'fail', evidence: '第二个结果证据足够长' },
+  ] }, audits: [] });
+  assert.equal(m.requirements[0].status, 'UNKNOWN');
+  assert.equal(m.allPass, false);
+  assert.ok(m.p0p1.some((i) => i.id === 'requirement-conflict-R1' && i.evidence));
+});

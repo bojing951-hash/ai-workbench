@@ -38,7 +38,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '2.8.0';
+const VERSION = '2.9.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
@@ -258,6 +258,12 @@ export class Orchestrator {
     };
     for (const run of active) {
       if (run.status === 'running' || run.status === 'queued') {
+        const runTasks = this.store.listTasks({ runId: run.id });
+        if (run.status === 'queued' && runTasks.length === 0) {
+          this.store.updateRun(run.id, { status: RunStatus.FAILED, stop_reason: '启动恢复：发现半创建 Run（无 tasks），已清理，不占用项目', ended_at: nowIso() });
+          this.emit({ runId: run.id, projectId: run.project_id, type: 'run_orphan_cleaned', level: 'warn', message: '启动恢复清理半创建 Run（无 tasks）' });
+          continue;
+        }
         const lease = this.store.getProjectLease(run.project_id);
         if (lease?.write_owner && lease.lease_expires_at > nowIso() && lease.write_owner !== this.instanceId && ownerAlive(lease.write_owner)) {
           skippedLiveOwners.push(run.id);

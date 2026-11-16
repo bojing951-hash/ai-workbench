@@ -248,7 +248,11 @@ function normalizeIssue(issue, req, source) {
 export function buildCoverageMatrix({ project, qualityRun, audits = [] }) {
   const q = qualityConfig(project);
   const requirements = q ? q.requirements : [];
-  const byId = new Map((qualityRun.requirements || []).map((r) => [String(r.id || r.requirement_id || ''), r]));
+  const rawRequirements = Array.isArray(qualityRun.requirements) ? qualityRun.requirements : [];
+  const rawIdCounts = new Map();
+  for (const r of rawRequirements) { const id = String(r.id || r.requirement_id || ''); rawIdCounts.set(id, (rawIdCounts.get(id) || 0) + 1); }
+  const duplicateRequirementIds = new Set([...rawIdCounts.entries()].filter(([, n]) => n > 1).map(([id]) => id));
+  const byId = new Map(rawRequirements.map((r) => [String(r.id || r.requirement_id || ''), r]));
   const matrix = [];
   const issues = [];
   if (qualityRun.commandFailed) {
@@ -288,6 +292,11 @@ export function buildCoverageMatrix({ project, qualityRun, audits = [] }) {
     }));
     let status = rawStatus;
     let evidence = rawEvidence;
+    if (duplicateRequirementIds.has(String(req.id))) {
+      status = 'UNKNOWN';
+      evidence = `质量命令返回了重复的 Requirement ID「${req.id}」的结果，存在冲突，不能选择其中一条作为 PASS 证据`;
+      issues.push({ id: `requirement-conflict-${req.id}`, title: `需求结果冲突：${req.title}`, priority: 'P0', evidence, requirementId: req.id, hypothesis: false, source: 'quality-command' });
+    }
     // 质量命令明确 PASS 且带证据才 PASS；仅任务通过不算。
     if (status === 'PASS' && !evidenceIsConcrete(evidence) && !auditEvidence.length) status = 'UNKNOWN';
     if (status === 'PASS' && q?.requireClauseEvidence && !clausesAllPass) {

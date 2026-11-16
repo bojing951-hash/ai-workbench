@@ -3,402 +3,119 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#07080b" />
-    <meta name="description" content="AI 全自动软件开发工作台：添加项目、输入目标与验收标准，自动规划、编码、测试、独立审计并创建待验收 PR；新增“看见 AI”实况与历史回放。" />
-    <title>AI 开发工作台</title>
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f6f6f8" />
+    <meta name="description" content="用一句话告诉 AI 你想开发什么，Workbench 负责规划、编码、测试、独立审计与交付。" />
+    <title>AI Workbench · 把想法变成软件</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/chat.css" />
   </head>
   <body>
-    <a class="skip-link" href="#main">跳到主内容</a>
-
-    <div class="app-shell">
-      <header class="topbar" id="topbar">
-        <div class="brand">
-          <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true" focusable="false">
-            <defs>
-              <linearGradient id="brandGradient" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stop-color="#8f9dff" />
-                <stop offset="1" stop-color="#5eead4" />
-              </linearGradient>
-            </defs>
-            <rect x="1.5" y="1.5" width="33" height="33" rx="10.5" fill="url(#brandGradient)" />
-            <path d="M10.5 24.5V13.5l7.5 6.6 7.5-6.6v11" fill="none" stroke="#0a0c12" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
-            <circle cx="10.5" cy="13.5" r="2.1" fill="#0a0c12" />
-          </svg>
-          <div class="brand-text">
-            <span class="brand-name">AI 开发工作台</span>
-            <span class="brand-sub"><span id="versionText">v—</span><span class="brand-sep">/</span>本地编排器</span>
-          </div>
+    <a class="skip-link" href="#chatMain">跳到对话主内容</a>
+    <div class="app" id="app">
+      <div class="scrim" id="scrim" hidden></div>
+      <aside class="sidebar" id="sidebar" aria-label="工作台导航">
+        <div class="brand-row">
+          <button class="brand" id="brandBtn" type="button" aria-label="回到首页">
+            <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" width="32" height="32"><rect x="1" y="1" width="30" height="30" rx="9" fill="url(#bg)"/><path d="M9 22V11l7 6 7-6v11" fill="none" stroke="#0b0d12" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b9c4ff"/><stop offset="1" stop-color="#9ee7d8"/></linearGradient></defs></svg></span>
+            <span class="brand-copy"><strong>Workbench</strong><small>AI 软件开发</small></span>
+          </button>
+          <button class="icon-btn sidebar-close" id="sidebarClose" type="button" aria-label="收起侧栏">×</button>
         </div>
 
-        <div class="budget-widget" id="budgetWidget" title="全局预算消耗（所有运行累计）">
-          <div class="budget-item">
-            <div class="budget-top">
-              <span class="budget-label">Tokens</span>
-              <span class="budget-value" id="budgetTokensValue">—</span>
-            </div>
-            <div class="budget-bar budget-bar-tokens"><span class="budget-fill" id="budgetTokensBar"></span></div>
-          </div>
-          <div class="budget-divider" aria-hidden="true"></div>
-          <div class="budget-item" title="GLM 按用户授权不受工作台预算上限；真实用量独立记录">
-            <div class="budget-top">
-              <span class="budget-label">GLM</span>
-              <span class="budget-value" id="budgetGlmValue">—</span>
-            </div>
-          </div>
-          <div class="budget-divider" aria-hidden="true"></div>
-          <div class="budget-item">
-            <div class="budget-top">
-              <span class="budget-label">成本</span>
-              <span class="budget-value" id="budgetCostValue">—</span>
-            </div>
-            <div class="budget-bar budget-bar-cost"><span class="budget-fill" id="budgetCostBar"></span></div>
-          </div>
+        <button class="new-chat" id="newChatBtn" type="button">
+          <span class="new-chat-icon" aria-hidden="true">＋</span>
+          <span>新建开发对话</span>
+          <kbd>⌘ K</kbd>
+        </button>
+
+        <nav class="side-nav" aria-label="主要">
+          <button type="button" class="side-link is-active" id="navChat" data-nav="chat"><span class="side-icon" aria-hidden="true">◌</span>对话</button>
+          <button type="button" class="side-link" id="navProjects" data-nav="projects"><span class="side-icon" aria-hidden="true">▦</span>我的项目</button>
+          <button type="button" class="side-link" id="navRecent" data-nav="recent"><span class="side-icon" aria-hidden="true">↺</span>最近开发</button>
+        </nav>
+
+        <div class="side-section" id="projectSection">
+          <div class="side-head"><span>项目</span><button class="text-btn" id="refreshProjects" type="button" aria-label="刷新项目">刷新</button></div>
+          <div class="project-list" id="projectList" aria-live="polite"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
         </div>
 
-        <div class="topbar-status">
-          <span class="status-pill" id="auditPill" title="独立审计提供方">
-            <span class="status-dot" id="auditDot"></span>
-            <span class="status-label" id="auditLabel">独立审计</span>
-          </span>
-          <div class="agent-pills" id="agentPills"></div>
-          <span class="status-pill" id="isolationPill" title="执行隔离状态（Docker 容器 / 受限运行环境）">
-            <span class="status-dot" id="isolationDot"></span>
-            <span class="status-label" id="isolationLabel">隔离探测中</span>
-          </span>
-          <span class="status-pill" id="githubPill" title="GitHub 集成状态">
-            <span class="status-dot" id="githubDot"></span>
-            <span class="status-label" id="githubLabel">GitHub</span>
-          </span>
-          <span class="status-pill" id="ssePill" title="服务端实时事件流（EventSource）">
-            <span class="status-dot" id="sseDot"></span>
-            <span class="status-label" id="sseLabel">实时连接中</span>
-          </span>
-          <div class="topbar-actions">
-            <button type="button" class="approvals-btn" id="approvalsBtn" title="审批中心（批准不会自动合并或部署）" aria-label="打开审批中心">
-              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-                <path d="M10 2.4 17 5.9v5.3c0 3.5-2.7 5.8-7 7-4.3-1.2-7-3.5-7-7V5.9l7-3.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-                <path d="m7.1 9.7 2.1 2.1 3.7-4.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              <span class="approvals-label">审批</span>
-              <span class="approvals-count" id="approvalsCount" hidden>0</span>
-            </button>
-            <button type="button" class="icon-button" id="refreshBtn" title="立即刷新数据" aria-label="立即刷新数据">
-              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-                <path d="M16.2 9.1a6.3 6.3 0 1 1-1.9-4.4M16.4 3.6v4.2h-4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <button type="button" class="icon-button icon-button-help" id="helpBtn" title="使用指南" aria-label="打开使用指南">?</button>
-          </div>
+        <div class="side-section" id="recentSection">
+          <div class="side-head"><span>最近对话</span></div>
+          <div class="recent-list" id="recentList"><p class="muted small">还没有对话</p></div>
         </div>
-      </header>
 
-      <div class="layout">
-        <aside class="sidebar" id="sidebar" aria-label="项目导航">
-          <section class="panel sidebar-panel">
-            <div class="panel-head">
-              <div class="panel-heading">
-                <h2 class="panel-title">项目</h2>
-                <span class="panel-sub" id="projectCount">加载中…</span>
-              </div>
-              <button type="button" class="button button-primary button-sm" id="addProjectBtn">
-                <span class="btn-plus" aria-hidden="true">+</span>
-                添加
-              </button>
-            </div>
-            <div class="project-list" id="projectList">
-              <div class="skeleton skeleton-project"></div>
-              <div class="skeleton skeleton-project"></div>
-              <div class="skeleton skeleton-project"></div>
-            </div>
-            <p class="sidebar-hint" id="sidebarHint">添加项目后，即可输入目标并启动自动开发。</p>
-          </section>
-
-          <section class="panel insight-panel" id="insightPanel" aria-label="观察 AI 研发">
-            <div class="panel-head">
-              <div class="panel-heading">
-                <h2 class="panel-title">看见 AI</h2>
-                <span class="panel-sub">解释 · 实况 · 回放</span>
-              </div>
-            </div>
-            <div class="insight-nav" id="insightNav">
-              <button type="button" class="insight-nav-btn" id="insightGuideBtn" data-insight="guide">
-                <span class="insight-nav-index">01</span>
-                <span class="insight-nav-copy"><strong>工作台如何工作</strong><small>两分钟看懂自动开发流程</small></span>
-                <span class="insight-nav-arrow" aria-hidden="true">›</span>
-              </button>
-              <button type="button" class="insight-nav-btn" id="insightLiveBtn" data-insight="live">
-                <span class="insight-nav-index">02</span>
-                <span class="insight-nav-copy"><strong>研发实况</strong><small>现在谁在做什么</small></span>
-                <span class="insight-nav-arrow" aria-hidden="true">›</span>
-              </button>
-              <button type="button" class="insight-nav-btn" id="insightReplayBtn" data-insight="replay">
-                <span class="insight-nav-index">03</span>
-                <span class="insight-nav-copy"><strong>历史回放</strong><small>回看消费产品怎么被开发</small></span>
-                <span class="insight-nav-arrow" aria-hidden="true">›</span>
-              </button>
-            </div>
-          </section>
-
-          <section class="panel mini-panel" id="miniPanel">
-            <div class="mini-row"><span class="mini-label">活跃运行</span><span class="mini-value" id="miniActiveRuns">—</span></div>
-            <div class="mini-row"><span class="mini-label">Agent 槽位</span><span class="mini-value" id="miniAgentSlots">—</span></div>
-            <div class="mini-row"><span class="mini-label">任务通过</span><span class="mini-value" id="miniTaskPassed">—</span></div>
-            <div class="mini-rule"></div>
-            <p class="mini-note" id="miniPolicyNote">工作台只创建 PR 供人工验收，从不合并主分支。</p>
-          </section>
-        </aside>
-
-        <main class="main" id="main" tabindex="-1">
-          <section class="view insight-view" id="insightView" hidden>
-            <div id="insightContent"></div>
-          </section>
-
-          <section class="view welcome-view" id="welcomeView" hidden>
-            <div class="welcome-hero panel">
-              <div class="welcome-copy">
-                <span class="eyebrow"><span class="eyebrow-dot"></span>AI AUTONOMOUS DEV WORKBENCH</span>
-                <h1>把产品目标交给 AI，<br /><span class="grad-text">全程可审计地交付</span></h1>
-                <p class="welcome-lead">
-                  添加项目，写下目标与验收标准。工作台会自动拆解任务、调度 Coding Agent、运行测试、独立模型审计，并创建等待人工验收的 PR —— 全程不合并主分支。
-                </p>
-                <div class="welcome-actions">
-                  <button type="button" class="button button-primary" id="welcomeAddProjectBtn">添加第一个项目</button>
-                  <button type="button" class="button button-ghost" id="welcomeHelpBtn">查看使用指南</button>
-                </div>
-                <div class="welcome-stats">
-                  <div class="stat"><span class="stat-value" id="statProjects">—</span><span class="stat-label">项目</span></div>
-                  <div class="stat"><span class="stat-value" id="statRuns">—</span><span class="stat-label">运行</span></div>
-                  <div class="stat"><span class="stat-value" id="statActive">—</span><span class="stat-label">活跃</span></div>
-                  <div class="stat"><span class="stat-value" id="statAudit">—</span><span class="stat-label">独立审计</span></div>
-                </div>
-              </div>
-              <div class="welcome-orbit" aria-hidden="true">
-                <span class="orbit-ring orbit-ring-a"></span>
-                <span class="orbit-ring orbit-ring-b"></span>
-                <span class="orbit-core">
-                  <svg viewBox="0 0 36 36" focusable="false">
-                    <path d="M10.5 24.5V13.5l7.5 6.6 7.5-6.6v11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
-                    <circle cx="10.5" cy="13.5" r="2.1" fill="currentColor" />
-                  </svg>
-                </span>
-                <span class="orbit-chip orbit-chip-a">规划</span>
-                <span class="orbit-chip orbit-chip-b">编码</span>
-                <span class="orbit-chip orbit-chip-c">测试</span>
-                <span class="orbit-chip orbit-chip-d">审计</span>
-              </div>
-            </div>
-
-            <div class="steps-grid">
-              <div class="step-card panel">
-                <span class="step-index">01</span>
-                <h3>添加项目</h3>
-                <p>关联 GitHub 仓库、owner/repo 或本地路径，配置测试命令与受保护目录。</p>
-              </div>
-              <div class="step-card panel">
-                <span class="step-index">02</span>
-                <h3>写下目标与验收标准</h3>
-                <p>选择单任务或自动多任务规划。验收标准是独立审计逐条核对的依据。</p>
-              </div>
-              <div class="step-card panel">
-                <span class="step-index">03</span>
-                <h3>启动并人工验收</h3>
-                <p>实时查看任务进度、审计证据与产物；完成后由你验收，工作台不会自动合并。</p>
-              </div>
-            </div>
-
-            <div class="welcome-note panel">
-              <div class="welcome-note-icon" aria-hidden="true">✓</div>
-              <div>
-                <h3>确定性流水线，失败不伪造通过</h3>
-                <p>每个任务必须依次通过项目测试与独立模型审计；测试目录受保护，审计逐条核对验收标准并给出证据。预算耗尽或人工操作会自动暂停，可随时恢复或取消。</p>
-              </div>
-            </div>
-          </section>
-
-          <section class="view project-view" id="projectView" hidden>
-            <header class="panel project-header" id="projectHeader"></header>
-
-            <section class="panel goal-panel" id="goalPanel">
-              <div class="panel-head">
-                <div class="panel-heading">
-                  <h2 class="panel-title">发起新运行</h2>
-                  <p class="panel-sub" id="goalPanelSub">描述产品目标，并给出可独立验证的验收标准</p>
-                </div>
-                <button type="button" class="button button-ghost button-sm" id="goalToggleBtn" aria-expanded="true">收起</button>
-              </div>
-              <form class="goal-form" id="goalForm" autocomplete="off" novalidate>
-                <div class="goal-grid">
-                  <div class="field field-goal">
-                    <label for="goalInput">产品目标 <span class="label-req">*</span></label>
-                    <textarea id="goalInput" name="goal" rows="4" placeholder="例如：为项目实现任务存储模块，支持新增、完成、查询与统计，并补充 README 的 API 文档。"></textarea>
-                    <div class="field-foot">
-                      <span>描述用户价值与交付结果，Agent 会据此规划任务。</span>
-                      <span class="field-count" id="goalCharCount">0 字</span>
-                    </div>
-                  </div>
-                  <div class="field field-acceptance">
-                    <label for="acceptanceInput">验收标准 <span class="label-hint">每行一条</span></label>
-                    <textarea id="acceptanceInput" name="acceptance" rows="4" placeholder="例如：&#10;npm test 全部通过，且 tests/ 未被修改&#10;src/store.js 导出 TaskStore 类及四个方法&#10;README 新增 API 章节，说明参数与返回值"></textarea>
-                    <div class="field-foot">
-                      <span>审计模型会逐条给出 pass / fail / unproven 与证据。</span>
-                      <span class="field-count" id="acceptanceCount">0 条</span>
-                    </div>
-                  </div>
-                </div>
-
-                <fieldset class="mode-field">
-                  <legend>执行模式</legend>
-                  <label class="mode-card is-checked" data-mode-card="single">
-                    <input type="radio" name="runMode" value="single" checked />
-                    <span class="mode-body">
-                      <span class="mode-name">单任务执行</span>
-                      <span class="mode-desc">目标作为一个任务交给 Coding Agent，适合范围明确的小改动。</span>
-                    </span>
-                  </label>
-                  <label class="mode-card" data-mode-card="plan">
-                    <input type="radio" name="runMode" value="plan" />
-                    <span class="mode-body">
-                      <span class="mode-name">自动多任务规划</span>
-                      <span class="mode-desc">规划器把目标拆成 1–8 个有序任务，逐个实现与独立审计。</span>
-                    </span>
-                  </label>
-                </fieldset>
-
-                <div class="goal-actions">
-                  <p class="goal-note">启动后工作台会在隔离分支按任务流水线执行；测试与验收文件受保护，不会自动合并主分支。</p>
-                  <div class="goal-actions-right">
-                    <span class="field-error" id="goalError" role="alert" hidden></span>
-                    <button type="submit" class="button button-primary" id="startRunBtn">启动自动开发</button>
-                  </div>
-                </div>
-              </form>
-            </section>
-
-            <section class="panel runs-panel" id="runsPanel">
-              <div class="panel-head">
-                <div class="panel-heading">
-                  <h2 class="panel-title">最近运行</h2>
-                  <p class="panel-sub" id="runsSub">—</p>
-                </div>
-              </div>
-              <div class="run-list" id="runList"></div>
-            </section>
-
-            <section class="panel loops-panel" id="loopsPanel" aria-labelledby="loopsTitle">
-              <div class="panel-head">
-                <div class="panel-heading">
-                  <h2 class="panel-title" id="loopsTitle">研发循环</h2>
-                  <p class="panel-sub" id="loopsSub">加载中…</p>
-                </div>
-                <button
-                  type="button"
-                  class="button button-ghost button-sm loops-refresh"
-                  id="loopsRefreshBtn"
-                  title="重新拉取 /api/state 并更新研发循环面板"
-                >
-                  <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-                    <path d="M16.2 9.1a6.3 6.3 0 1 1-1.9-4.4M16.4 3.6v4.2h-4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  刷新
-                </button>
-              </div>
-              <div class="loop-list" id="loopList" aria-live="polite"></div>
-              <div class="empty-state" id="loopsEmpty" hidden>
-                <span class="empty-icon" aria-hidden="true">∞</span>
-                <p class="empty-title">暂无研发循环</p>
-                <p class="empty-text">持续研发循环启动后，这里会显示每个循环的状态、轮次进度、停止原因与最近历史。</p>
-              </div>
-              <p class="panel-foot-note">循环只创建隔离分支与待验收 PR；工作台不会自动合并主分支，也不会部署。</p>
-            </section>
-
-            <section class="run-detail" id="runDetailView" hidden>
-              <header class="panel run-header" id="runHeader"></header>
-              <section class="panel verify-panel" id="verifyPanel" hidden></section>
-              <section class="panel run-approvals-panel" id="runApprovalsPanel" hidden></section>
-              <section class="panel tasks-panel" id="tasksPanel">
-                <div class="panel-head">
-                  <div class="panel-heading">
-                    <h2 class="panel-title">任务流水线</h2>
-                    <p class="panel-sub" id="tasksSub">—</p>
-                  </div>
-                  <span class="policy-chip" title="任务必须通过测试与独立模型审计；工作台不会合并主分支">独立审计 · 不合并</span>
-                </div>
-                <div class="task-list" id="taskList"></div>
-                <p class="panel-foot-note">点击任务行展开验收证据、审计发现、尝试记录与产物文件。</p>
-              </section>
-            </section>
-          </section>
-        </main>
-
-        <aside class="events-rail" aria-label="实时事件与工作台状态">
-          <section class="panel events-panel">
-            <div class="panel-head events-head">
-              <div class="panel-heading">
-                <h2 class="panel-title">实时事件流</h2>
-                <p class="panel-sub" id="eventsScope">等待连接…</p>
-              </div>
-              <label class="switch" title="新事件到达时自动滚动到底部">
-                <input type="checkbox" id="autoScrollToggle" checked />
-                <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
-                <span class="switch-label">自动滚动</span>
-              </label>
-            </div>
-            <div class="event-log" id="eventLog" tabindex="0" aria-label="实时事件日志"></div>
-            <div class="event-footer">
-              <span id="eventCount">0 条 · 最多保留 300 条</span>
-              <span class="event-footer-right">
-                <span class="sse-mini" id="sseMini"><span class="status-dot" id="sseMiniDot"></span><span id="sseMiniLabel">连接中</span></span>
-                <button type="button" class="text-button" id="clearEventsBtn">清空</button>
-              </span>
-            </div>
-          </section>
-
-          <section class="panel status-panel" id="statusPanel"></section>
-        </aside>
-      </div>
-    </div>
-
-    <div class="toast-root" id="toastRoot" role="status" aria-live="polite" aria-atomic="false"></div>
-
-    <div class="overlay-layer" id="modalLayer" hidden>
-      <div class="overlay-backdrop" id="modalBackdrop"></div>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-        <header class="modal-head">
-          <h2 class="panel-title" id="modalTitle">对话框</h2>
-          <button type="button" class="icon-button" id="modalCloseBtn" aria-label="关闭对话框">×</button>
-        </header>
-        <div class="modal-body" id="modalBody"></div>
-        <footer class="modal-foot" id="modalFoot"></footer>
-      </div>
-    </div>
-
-    <div class="overlay-layer drawer-layer" id="drawerLayer" hidden>
-      <div class="overlay-backdrop" id="drawerBackdrop"></div>
-      <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
-        <header class="drawer-head">
-          <div class="drawer-heading">
-            <h2 class="panel-title" id="drawerTitle">产物预览</h2>
-            <p class="drawer-path mono" id="drawerPath"></p>
-          </div>
-          <div class="drawer-tools">
-            <button type="button" class="button button-ghost button-sm" id="drawerCopyBtn">复制内容</button>
-            <button type="button" class="icon-button" id="drawerCloseBtn" aria-label="关闭产物抽屉">×</button>
-          </div>
-        </header>
-        <div class="drawer-body">
-          <div class="drawer-state" id="drawerState">加载中…</div>
-          <pre class="artifact-content" id="drawerContent" hidden></pre>
+        <div class="side-footer">
+          <button type="button" class="side-link" id="settingsBtn"><span class="side-icon" aria-hidden="true">⚙</span>设置</button>
+          <button type="button" class="side-link" id="advancedBtn"><span class="side-icon" aria-hidden="true">⌘</span>开发详情</button>
+          <p class="side-note">本地优先 · 不自动合并或部署</p>
         </div>
       </aside>
+
+      <main class="main" id="chatMain">
+        <header class="topbar">
+          <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="打开侧栏" aria-expanded="false">☰</button>
+          <div class="crumb" id="crumb">新对话</div>
+          <div class="top-actions">
+            <span class="live-pill" id="livePill" title="与本地 Workbench 的连接状态"><span class="dot"></span><span id="liveText">连接中</span></span>
+            <button class="icon-btn" id="themeBtn" type="button" aria-label="切换深色/浅色外观">◐</button>
+            <button class="pill-btn" id="advancedTopBtn" type="button">开发详情</button>
+          </div>
+        </header>
+
+        <div class="offline-banner" id="offlineBanner" hidden role="status">连接暂时中断。你的对话已保存在本地 Workbench；恢复后会自动重试。</div>
+
+        <section class="welcome" id="welcome">
+          <div class="welcome-inner">
+            <div class="eyebrow"><span class="eyebrow-dot"></span>AI SOFTWARE STUDIO</div>
+            <h1>把想法，<br /><span class="grad">交给会做软件的人。</span></h1>
+            <p class="lead">用一句话描述你想开发的产品。Workbench 会整理需求和验收标准，确认后自动完成规划、编码、测试、独立审计与交付。</p>
+            <form class="composer composer-hero" id="welcomeComposer">
+              <label class="sr-only" for="welcomeInput">描述你想开发的产品</label>
+              <textarea id="welcomeInput" rows="3" placeholder="例如：帮我开发一个消费管理网站，可以管理收入、支出、分析消费决策。" maxlength="8000"></textarea>
+              <div class="composer-foot">
+                <span class="hint" id="welcomeHint">无需填写工程参数。只在必要信息缺失时询问。</span>
+                <button class="send" id="welcomeSend" type="submit" aria-label="发送并开始对话"><span aria-hidden="true">↑</span><span>开始</span></button>
+              </div>
+            </form>
+            <div class="suggestions" id="suggestions" aria-label="示例目标">
+              <button type="button" class="suggestion" data-prompt="帮我开发一个个人阅读管理工具，支持书籍、阅读计划和本地数据。">个人阅读管理工具</button>
+              <button type="button" class="suggestion" data-prompt="做一个帮助小团队跟踪项目进度的轻量看板，数据保存在本地。">团队项目看板</button>
+              <button type="button" class="suggestion" data-prompt="开发一个消费管理网站，可以管理收入、支出、分析消费决策。">消费管理网站</button>
+            </div>
+            <div class="trust-row"><span>本地优先</span><span>真实模型对话</span><span>独立审计</span><span>人工验收</span></div>
+          </div>
+        </section>
+
+        <section class="conversation" id="conversation" hidden>
+          <div class="messages" id="messages" aria-live="polite"></div>
+          <div class="run-panel" id="runPanel" hidden></div>
+          <div class="composer-wrap">
+            <form class="composer" id="chatComposer">
+              <label class="sr-only" for="chatInput">继续和 AI 讨论或下指令</label>
+              <textarea id="chatInput" rows="1" placeholder="继续讨论需求，或说“开始开发”…" maxlength="8000"></textarea>
+              <div class="composer-foot">
+                <span class="hint" id="chatHint">对话会保存。确认需求后点击“开始开发”。</span>
+                <button class="send" type="submit" aria-label="发送消息">↑</button>
+              </div>
+            </form>
+            <p class="composer-note">Workbench 只在你确认后开始开发；不会自动合并 main 或部署。</p>
+          </div>
+        </section>
+      </main>
     </div>
-
-    <noscript>
-      <div class="noscript-note">此界面需要启用 JavaScript 才能连接本地工作台服务。</div>
-    </noscript>
-
-    <script type="module" src="/app.js"></script>
+    <div class="toast" id="toast" role="alert" hidden></div>
+    <div class="modal" id="settingsModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="modal-head"><h2 id="settingsTitle">设置</h2><button class="icon-btn" id="settingsClose" type="button" aria-label="关闭设置">×</button></div>
+        <div class="setting-block"><span class="setting-label">外观</span><div class="segmented" id="themeSeg">
+          <button type="button" data-theme-choice="light">浅色</button><button type="button" data-theme-choice="dark">深色</button><button type="button" data-theme-choice="system">跟随系统</button>
+        </div></div>
+        <div class="setting-block"><span class="setting-label">预算</span><div id="budgetInfo" class="setting-value">加载中…</div></div>
+        <div class="setting-block"><span class="setting-label">高级工程控制台</span><p class="setting-value">原有项目、任务、审计、Fencing、日志与回放全部保留。</p><button type="button" class="pill-btn" id="settingsAdvanced">打开开发详情</button></div>
+        <p class="setting-foot">AI Workbench · 本地优先 · 不自动合并或部署</p>
+      </div>
+    </div>
+    <script type="module" src="/chat.js"></script>
   </body>
 </html>

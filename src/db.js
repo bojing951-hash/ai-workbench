@@ -198,7 +198,32 @@ CREATE TABLE IF NOT EXISTS approvals (
   decided_by TEXT DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  title TEXT DEFAULT '',
+  project_id TEXT DEFAULT '',
+  run_id TEXT DEFAULT '',
+  loop_id TEXT DEFAULT '',
+  goal TEXT DEFAULT '',
+  acceptance_json TEXT DEFAULT '[]',
+  brief_json TEXT DEFAULT '{}',
+  status TEXT DEFAULT 'draft',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  data_json TEXT DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id, seq);
+CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON conversation_messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id, attempt_no);
 CREATE INDEX IF NOT EXISTS idx_audits_task ON audits(task_id);
@@ -412,6 +437,40 @@ export class Store {
         id,
       );
     return this.getProject(id);
+  }
+
+  // ---------------- chat conversations ----------------
+  createConversation(c = {}) {
+    const now = nowIso();
+    const id = c.id || `conv_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+    this.db.prepare('INSERT INTO conversations (id,title,project_id,run_id,loop_id,goal,acceptance_json,brief_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, String(c.title || '新对话'), c.projectId || '', c.runId || '', c.loopId || '', c.goal || '', JSON.stringify(c.acceptance || []), JSON.stringify(c.brief || {}), c.status || 'draft', now, now);
+    return this.getConversation(id);
+  }
+  getConversation(id) {
+    return parseRow(this.db.prepare('SELECT * FROM conversations WHERE id=?').get(id), { acceptance_json: [], brief_json: {} });
+  }
+  listConversations(limit = 40) {
+    return this.db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?').all(limit)
+      .map((r) => parseRow(r, { acceptance_json: [], brief_json: {} }));
+  }
+  updateConversation(id, patch = {}) {
+    const cur = this.getConversation(id); if (!cur) return null;
+    const m = { ...cur, ...patch };
+    this.db.prepare('UPDATE conversations SET title=?,project_id=?,run_id=?,loop_id=?,goal=?,acceptance_json=?,brief_json=?,status=?,updated_at=? WHERE id=?')
+      .run(m.title || '', m.project_id || '', m.run_id || '', m.loop_id || '', m.goal || '', JSON.stringify(m.acceptance_json || []), JSON.stringify(m.brief_json || {}), m.status || 'draft', nowIso(), id);
+    return this.getConversation(id);
+  }
+  addConversationMessage(m = {}) {
+    const id = m.id || `msg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+    this.db.prepare('INSERT INTO conversation_messages (id,conversation_id,role,content,data_json,created_at) VALUES (?,?,?,?,?,?)')
+      .run(id, m.conversationId, m.role || 'user', String(m.content || ''), JSON.stringify(m.data || {}), nowIso());
+    this.db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(nowIso(), m.conversationId);
+    return this.listConversationMessages(m.conversationId).find((x) => x.id === id) || null;
+  }
+  listConversationMessages(conversationId) {
+    return this.db.prepare('SELECT * FROM conversation_messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC').all(conversationId)
+      .map((r) => { const m = parseRow(r, { data_json: {} }); m.data = m.data_json || {}; return m; });
   }
 
   // ---------------- plans ----------------
@@ -1166,6 +1225,15 @@ export class Store {
     if (!pending.requestKey) return { changed: false };
     const run = this.getRunByRequestKey(pending.requestKey);
     if (run) {
+      const taskCount = Number(this.db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE run_id=?').get(run.id)?.n || 0);
+      if (taskCount === 0) {
+        // 半创建 Run（crash 在 createRun 与 createPlan/createTasks 之间）：不能绑定并吞掉队列任务。
+        this.db.prepare("UPDATE runs SET status='failed', stop_reason=?, ended_at=?, updated_at=? WHERE id=?").run('恢复时发现半创建 Run（无 plan/tasks），任务放回队列', nowIso(), nowIso(), run.id);
+        const queue = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
+        if (pending.task && !queue.some((t) => t.title === pending.task.title)) queue.unshift(pending.task);
+        this.db.prepare('UPDATE loops SET queue_json=?, pending_task_json=?, updated_at=? WHERE id=?').run(JSON.stringify(queue), '{}', nowIso(), loopId);
+        return { changed: true, restored: true, orphanRunId: run.id };
+      }
       const claimed = this.claimLoopTask({ loopId, requestKey: pending.requestKey, runId: run.id });
       if (!claimed?.ok) return { changed: false, linked: false, runId: run.id, reason: claimed?.reason || 'claim-failed' };
       return { changed: true, linked: true, runId: run.id };

@@ -13,6 +13,7 @@ import { containerCapabilities } from './container.js';
 import { VERSION } from './orchestrator.js';
 import { buildLive, buildReplay, readProjectCommit } from './replay.js';
 import { latestMatrixFromHistory, qualityConfig } from './quality.js';
+import { chatTurn, startDevelopment } from './chat.js';
 import { assertSafeWriteRequest, isAllowedHost, redactForResponse, resolveWithin, WriteRateLimiter } from './security.js';
 
 const MAX_BODY = 2 * 1024 * 1024;
@@ -192,6 +193,83 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       const data = await orchestrator.state();
       data.loops = loops ? loops.list() : [];
       return sendJson(res, 200, { ok: true, data });
+    }
+
+    // ---------- v2.9 Chat-first ----------
+    if (pathname === '/api/conversations' && method === 'GET') {
+      return sendJson(res, 200, { ok: true, data: store.listConversations(60) });
+    }
+    if (pathname === '/api/conversations' && method === 'POST') {
+      const body = await readBody(req, maxBody);
+      const conv = store.createConversation({ title: String(body.title || '新对话').slice(0, 120), projectId: String(body.projectId || '') });
+      return sendJson(res, 201, { ok: true, data: { conversation: conv, messages: [] } });
+    }
+    const convMatch = pathname.match(/^\/api\/conversations\/([^/]+)(?:\/(messages|start))?$/);
+    if (convMatch) {
+      const [, convId, action] = convMatch;
+      const conv = store.getConversation(convId);
+      if (!conv) return sendError(res, 404, 'CONVERSATION_NOT_FOUND', '对话不存在');
+      if (!action && method === 'GET') {
+        const project = conv.project_id ? store.getProject(conv.project_id) : null;
+        const loop = conv.loop_id ? store.getLoop(conv.loop_id) : (project ? store.listLoops({ projectId: project.id })[0] : null);
+        const latestProjectRun = project && !loop?.current_run_id ? (store.listRuns(project.id, 1)[0] || null) : null;
+        const runContext = loop?.current_run_id ? 'conversation' : (latestProjectRun ? 'project_latest' : '');
+        const runId = loop?.current_run_id || conv.run_id || latestProjectRun?.id || '';
+        const run = runId ? store.getRun(runId) : null;
+        return sendJson(res, 200, { ok: true, data: { conversation: conv, messages: store.listConversationMessages(convId), project, loop, run, runContext } });
+      }
+      if (pathname === `/api/conversations/${convId}/start` && method === 'POST') {
+        const body = await readBody(req, maxBody).catch(() => ({}));
+        const brief = body.brief && typeof body.brief === 'object' ? body.brief : {};
+        const acceptance = Array.isArray(brief.acceptance) ? brief.acceptance.map(String) : (conv.brief_json?.acceptance || []);
+        const goal = String(brief.goal || conv.goal || '').trim();
+        const updatedConv = store.updateConversation(conv.id, {
+          title: String(brief.productName || conv.title || '新软件产品').slice(0, 120),
+          goal,
+          acceptance_json: acceptance,
+          brief_json: { ...(conv.brief_json || {}), ...brief, acceptance },
+          project_id: body.projectId || conv.project_id || '',
+        });
+        let started;
+        try {
+          started = await startDevelopment({ config, store, orchestrator, loops, conversation: updatedConv, projectId: body.projectId || '' });
+        } catch (err) {
+          // 不把对话卡在 starting；项目/loop 失败保留真实错误，允许用户重试且复用已建项目。
+          store.updateConversation(conv.id, { status: 'ready', brief_json: { ...(conv.brief_json || {}), lastError: String(err?.message || err) } });
+          throw err;
+        }
+        const message = store.addConversationMessage({ conversationId: conv.id, role: 'assistant', content: started.existing ? '这个目标已经在开发中，我带你回到当前进度。' : '已开始开发。我会自动完成规划、编码、测试与独立审计；遇到问题时先尝试自动修复，需要你授权时再告诉你。', data: { kind: 'started', projectId: started.project?.id, loopId: started.loop?.id } });
+        store.updateConversation(conv.id, { status: 'running', run_id: started.loop?.current_run_id || '', loop_id: started.loop?.id || conv.loop_id });
+        return sendJson(res, 200, { ok: true, data: { conversation: store.getConversation(conv.id), messages: store.listConversationMessages(conv.id), project: started.project, loop: started.loop, message } });
+      }
+      if (pathname === `/api/conversations/${convId}/messages` && method === 'POST') {
+        const body = await readBody(req, maxBody);
+        const content = String(body.content || '').trim();
+        if (!content) throw new PolicyError('CHAT_MESSAGE_EMPTY', '消息不能为空');
+        if (content.length > 8000) throw new PolicyError('CHAT_MESSAGE_TOO_LONG', '消息过长');
+        let conversation = conv;
+        if (body.projectId && !conversation.project_id) conversation = store.updateConversation(conv.id, { project_id: String(body.projectId) });
+        const project = conversation.project_id ? store.getProject(conversation.project_id) : null;
+        store.addConversationMessage({ conversationId: conversation.id, role: 'user', content });
+        let turn;
+        try {
+          turn = await chatTurn({ config, store, conversation, userMessage: content, project });
+        } catch (err) {
+          const message = redactForResponse(String(err?.message || err), config);
+          store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: `暂时无法调用对话模型：${message}`, data: { kind: 'error', error: message } });
+          return sendError(res, 503, err?.code || 'CHAT_MODEL_ERROR', message, {}, config);
+        }
+        const acceptance = turn.acceptance.length ? turn.acceptance : (conversation.brief_json?.acceptance || []);
+        const updated = store.updateConversation(conversation.id, {
+          title: conversation.status === 'draft' && turn.productName ? turn.productName.slice(0, 120) : conversation.title,
+          goal: turn.goal || conversation.goal,
+          acceptance_json: acceptance,
+          brief_json: { ...(conversation.brief_json || {}), productName: turn.productName, goal: turn.goal, acceptance, ready: turn.ready, missing: turn.missing, provider: turn.provider, model: turn.model, costCny: turn.costCny },
+          status: turn.ready ? 'ready' : 'draft',
+        });
+        const assistant = store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: turn.reply, data: { kind: 'brief', ...turn } });
+        return sendJson(res, 200, { ok: true, data: { conversation: updated, messages: store.listConversationMessages(conversation.id), assistant } });
+      }
     }
 
     // v2.6 只读观察层：研发实况 / 历史回放 / Git diff（不写入任何研发状态）
@@ -546,7 +624,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
   }
 
   function serveStatic(pathname, res) {
-    let rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+    let rel = pathname === '/' ? 'index.html' : pathname === '/advanced' ? 'advanced.html' : pathname.replace(/^\/+/, '');
     let abs;
     try {
       abs = resolveWithin(webDir, rel);
@@ -577,7 +655,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       'Referrer-Policy': 'no-referrer',
       'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'",
     };
-    if (path.basename(abs) === 'index.html' || pathname === '/') {
+    if (ext === '.html') {
       headers['Set-Cookie'] = `wb_token=${apiToken}; HttpOnly; SameSite=Strict; Path=/`;
     }
     res.writeHead(200, headers);

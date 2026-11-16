@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
+import { EventBus } from '../src/bus.js';
+import { LoopManager } from '../src/loop.js';
 
 function mk() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-loop-recover-'));
@@ -38,6 +40,7 @@ test('v2.8 P0-2：startRun 后崩溃，恢复按 requestKey 绑定同一 Run，�
     store.createLoop({ id: 'loop2', projectId: 'p', goal: 'g', mode: 'queue', maxRounds: 3, queue: [task] });
     store.setLoopPending('loop2', { task, queueIndex: 0, requestKey: 'claim-crash-after-run' });
     store.createRun({ id: 'run-existing', projectId: 'p', planId: 'plan1', goal: 'g', mode: 'single', status: 'queued', requestKey: 'claim-crash-after-run' });
+    store.createTasks([{ id: 'task-existing', projectId: 'p', planId: 'plan1', runId: 'run-existing', seq: 1, title: '已创建任务', acceptance: ['a'], testCommand: 'true', status: 'queued' }]);
     const rec = store.recoverLoopPending('loop2');
     assert.equal(rec.linked, true);
     assert.equal(rec.runId, 'run-existing');
@@ -59,5 +62,36 @@ test('v2.8 P0-2：陈旧 requestKey 不能误认领新 pending，队列任务不
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'stale-pending-key');
     assert.equal(store.getLoop('loop3').queue_json.length, 1);
+  } finally { store.close(); }
+});
+
+test('v2.9 可靠性：半创建 Run（无 tasks）不能吞掉 pending 任务，恢复时清 Run 并回队列', () => {
+  const { store } = mk();
+  try {
+    const task = { title: '半创建恢复任务', qualityIssueId: 'Q3' };
+    store.createLoop({ id: 'loop4', projectId: 'p', goal: 'g', queue: [task] });
+    store.setLoopPending('loop4', { task, queueIndex: 0, requestKey: 'half-created-key' });
+    store.createRun({ id: 'run-half', projectId: 'p', planId: 'plan-half', goal: 'g', mode: 'single', status: 'queued', requestKey: 'half-created-key' });
+    const rec = store.recoverLoopPending('loop4');
+    assert.equal(rec.restored, true);
+    assert.equal(rec.orphanRunId, 'run-half');
+    assert.equal(store.getRun('run-half').status, 'failed');
+    assert.equal(store.getLoop('loop4').queue_json.length, 1);
+    assert.equal(store.getLoop('loop4').queue_json[0].title, '半创建恢复任务');
+  } finally { store.close(); }
+});
+
+test('v2.9：plan 模式恢复/队列中的任务会被实际消费，而不是永远遗留', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-plan-recover-'));
+  const config = getConfig({ root, paths: { root, dataDir: path.join(root, 'data'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(root, 'worktrees'), artifactsDir: path.join(root, 'artifacts'), logsDir: path.join(root, 'logs'), agentsDir: path.join(root, 'agents'), dbPath: path.join(root, 'data', 'test.db'), dshHome: path.join(root, 'agents', 'dsh-home'), claudeHome: path.join(root, 'agents', 'claude-home') }, llm: { openai: { apiKey: '' }, glm: { apiKey: '' }, deepseek: { apiKey: '' } }, github: { token: '' } });
+  const store = openStore(config.paths.dbPath);
+  try {
+    store.createProject({ id: 'p', name: 'p', localPath: '/tmp/none', testCommand: 'true' });
+    store.createLoop({ id: 'plan-recover', projectId: 'p', goal: 'g', mode: 'plan', maxRounds: 3, queue: [{ title: '恢复的规划任务' }] });
+    let startedTask = '';
+    const manager = new LoopManager({ config, store, bus: new EventBus(), orchestrator: { emit: () => {}, startRun: async (input) => { startedTask = input.tasks?.[0]?.title || ''; return { runId: 'run-plan-recover' }; } } });
+    await manager.tick('plan-recover');
+    assert.equal(startedTask, '恢复的规划任务');
+    assert.equal(store.getLoop('plan-recover').queue_json.length, 0);
   } finally { store.close(); }
 });

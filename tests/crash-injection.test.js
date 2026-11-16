@@ -26,7 +26,7 @@ async function childCrash({ db, afterRun }) {
     const s = openStore(process.env.DB_PATH);
     const requestKey = 'crash-key-${afterRun ? 'after' : 'before'}';
     s.setLoopPending('loop', { task: { title: '关键任务', qualityIssueId: 'Q1' }, queueIndex: 0, requestKey });
-    ${afterRun ? "s.createRun({ id: 'run-created-before-crash', projectId: 'p', planId: 'plan1', goal: 'g', mode: 'single', status: 'queued', requestKey });" : ''}
+    ${afterRun ? "s.createRun({ id: 'run-created-before-crash', projectId: 'p', planId: 'plan1', goal: 'g', mode: 'single', status: 'queued', requestKey }); s.createTasks([{ id: 'task-created-before-crash', projectId: 'p', planId: 'plan1', runId: 'run-created-before-crash', seq: 1, title: '关键任务', acceptance: ['a'], testCommand: 'true', status: 'queued' }]);" : ''}
     process.stdout.write('ready\\n');
     setInterval(() => {}, 1000);
   `;
