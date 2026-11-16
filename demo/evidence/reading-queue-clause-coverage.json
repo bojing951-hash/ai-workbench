@@ -1,0 +1,96 @@
+{
+  "project": "Reading Queue Planner",
+  "sourceContract": "projects/v2.7/reading-queue/CONTRACT.md",
+  "note": "需求级质量矩阵之外的子条款追踪；每一条只引用实际可见测试、隐藏质量检查或 CLI 运行证据。历史矩阵不重写，本文件作为补充证据。",
+  "clauses": [
+    {
+      "id": "R1.1",
+      "requirementId": "R1",
+      "clause": "addBook/listBooks/searchBooks 行为符合契约",
+      "status": "PASS",
+      "evidence": "tests/library.test.js 2 项通过；隐藏质量检查 R1 通过（添加/重复拒绝）",
+      "artifacts": [
+        "projects/v2.7/reading-queue/tests/library.test.js",
+        "reading-queue-quality-final.json"
+      ]
+    },
+    {
+      "id": "R1.2",
+      "requirementId": "R1",
+      "clause": "重复与非法输入拒绝",
+      "status": "PASS",
+      "evidence": "隐藏质量检查 R1：重复 title/author 被拒绝；visible invalid input test 通过",
+      "artifacts": [
+        "projects/v2.7/reading-queue/tests/library.test.js",
+        "reading-queue-quality-final.json"
+      ]
+    },
+    {
+      "id": "R2.1",
+      "requirementId": "R2",
+      "clause": "按优先级/页数/每天分钟生成计划",
+      "status": "PASS",
+      "evidence": "tests/planner.test.js 通过；隐藏质量检查 R2 通过",
+      "artifacts": [
+        "projects/v2.7/reading-queue/tests/planner.test.js",
+        "reading-queue-quality-final.json"
+      ]
+    },
+    {
+      "id": "R2.2",
+      "requirementId": "R2",
+      "clause": "不重复、不含完成/不可用，未安排项有原因",
+      "status": "PASS",
+      "evidence": "隐藏质量检查 R2 通过；DSH 复审 PASS 97",
+      "artifacts": [
+        "projects/v2.7/reading-queue/tests/planner.test.js",
+        "reading-queue-quality-final.json"
+      ]
+    },
+    {
+      "id": "R3.1",
+      "requirementId": "R3",
+      "clause": "JSON 往返保持",
+      "status": "PASS",
+      "evidence": "tests/store-cli.test.js 通过；隐藏质量检查 R3 通过",
+      "artifacts": [
+        "projects/v2.7/reading-queue/tests/store-cli.test.js",
+        "reading-queue-quality-final.json"
+      ]
+    },
+    {
+      "id": "R3.2",
+      "requirementId": "R3",
+      "clause": "损坏文件抛出明确错误",
+      "status": "PASS",
+      "evidence": "隐藏质量检查 R3 损坏 JSON 分支通过",
+      "artifacts": [
+        "projects/v2.7/reading-queue/tests/store-cli.test.js",
+        "reading-queue-quality-final.json"
+      ]
+    },
+    {
+      "id": "R4.1",
+      "requirementId": "R4",
+      "clause": "CLI plan 输出 {plan,unplanned,totalMinutes} JSON",
+      "status": "PASS",
+      "evidence": "tests/cli.test.js 通过；reading-queue-cli.txt 实际 plan 输出",
+      "artifacts": [
+        "projects/v2.7/reading-queue/tests/cli.test.js",
+        "reading-queue-cli.txt"
+      ]
+    },
+    {
+      "id": "R4.2",
+      "requirementId": "R4",
+      "clause": "错误参数 exit=1 且错误可读",
+      "status": "PASS",
+      "evidence": "tests/cli.test.js 非法 minutes 断言 exit=1 通过",
+      "artifacts": [
+        "projects/v2.7/reading-queue/tests/cli.test.js"
+      ]
+    }
+  ],
+  "uncovered": [],
+  "generatedAt": "2026-11-16T14:52:00+08:00"
+}

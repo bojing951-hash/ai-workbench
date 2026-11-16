@@ -1,0 +1,47 @@
+{
+  "version": "3.2.0",
+  "baseline": "v3.1.0 / PR #13",
+  "branch": "v3.2.0",
+  "tests": {
+    "total": 299,
+    "pass": 295,
+    "skipped": 4,
+    "fail": 0,
+    "log": "demo/evidence/v3.2/tests.log"
+  },
+  "playwright": {
+    "ok": true,
+    "checks": 15,
+    "errors": []
+  },
+  "p0_1": {
+    "twoLevelAcceptance": true,
+    "tests": [
+      "tests/v32-product-gate.test.js"
+    ],
+    "offlineModelSimulation": true
+  },
+  "p0_2": {
+    "releasedRetryChecked": true,
+    "unknownNotFree": true,
+    "dshIsolation": true,
+    "tests": [
+      "tests/v3-budget-reservation.test.js"
+    ],
+    "multiProcess": true
+  },
+  "realE2E": "BLOCKED",
+  "24h": "NOT_VERIFIED",
+  "commit": "591452b",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/14",
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43910287035"
+  },
+  "budget": {
+    "remainingTokens": 8654.2,
+    "remainingCostCny": 23.6596,
+    "reservedTokens": 0,
+    "noReset": true
+  }
+}

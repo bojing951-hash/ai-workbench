@@ -1,0 +1,99 @@
+{
+  "version": "3.0.0",
+  "baseline": "v2.9.0 / PR #11",
+  "branch": "v3.0.0",
+  "tests": {
+    "total": 280,
+    "pass": 278,
+    "skipped": 2,
+    "fail": 0,
+    "log": "demo/evidence/v3.0/tests.log",
+    "note": "2 skipped are platform symlink capability checks"
+  },
+  "p0_1": {
+    "status": "PASS",
+    "httpTests": "tests/chat-http.test.js",
+    "browser": {
+      "ok": true,
+      "checks": 15,
+      "upstreamCalls": 2,
+      "pageErrors": []
+    }
+  },
+  "p0_2": {
+    "status": "PASS_WITH_RESIDUAL",
+    "trustedRunner": true,
+    "spoofProbesBlocked": true,
+    "testsFrozen": true,
+    "runnerConfigsFrozen": true,
+    "residual": "arbitrary behavioral truth final layer is independent audit; real E2E blocked"
+  },
+  "p0_3": {
+    "status": "PASS_INTEGRITY",
+    "contractBaseline": true,
+    "hiddenContractTestExecuted": true,
+    "acceptanceItemsBound": true,
+    "residual": "hidden test verifies contract binding, not arbitrary product behavior"
+  },
+  "p0_4": {
+    "status": "PASS_OFFLINE",
+    "chatPreflight": true,
+    "ledger": "llm_usage",
+    "legacyBackfill": true,
+    "glmActualIdentityOnly": true,
+    "budgetSnapshot": "demo/evidence/v3.0/budget-snapshot.json",
+    "residual": "failed/aborted paid calls can only be recorded unknown or undercounted; real usage unavailable"
+  },
+  "p1_controls": {
+    "status": "PASS_OFFLINE",
+    "actions": [
+      "start",
+      "status",
+      "current_task",
+      "failure",
+      "pause",
+      "resume",
+      "cost",
+      "tests",
+      "audit",
+      "delivery"
+    ],
+    "whitelist": true,
+    "persistedActions": true,
+    "crossProjectRejected": true
+  },
+  "p1_reliability": {
+    "fencingChecks": true,
+    "autoRepairBaselineIdempotent": true,
+    "qualityGateDuplicateFix": true,
+    "halfCreatedRunRecovery": true,
+    "testsFrozen": true
+  },
+  "realE2E": {
+    "status": "BLOCKED",
+    "reason": "remaining ~8654 tokens < 10000 preflight; no new-project DSH authorization",
+    "priorAttemptRunId": "run_mwj87v1a35b91f38",
+    "noBudgetRaised": true,
+    "noBudgetBorrowed": true,
+    "noFakePass": true
+  },
+  "24h": "NOT_VERIFIED",
+  "merged": false,
+  "deployed": false,
+  "businessProductsModified": false,
+  "commit": "ef0b685",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/12",
+  "screenshots": {
+    "production": "docs/v3.0/screenshots/",
+    "browser": "demo/evidence/v3.0/ui/"
+  },
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43881403178"
+  },
+  "production": {
+    "version": "3.0.0",
+    "health": "ok",
+    "budgetUnchanged": true
+  }
+}

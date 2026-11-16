@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f6f6f8" />
+    <meta name="description" content="用一句话告诉 AI 你想开发什么，Workbench 负责规划、编码、测试、独立审计与交付。" />
+    <title>AI Workbench · 把想法变成软件</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/chat.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#chatMain">跳到对话主内容</a>
+    <div class="app" id="app">
+      <div class="scrim" id="scrim" hidden></div>
+      <aside class="sidebar" id="sidebar" aria-label="工作台导航">
+        <div class="brand-row">
+          <button class="brand" id="brandBtn" type="button" aria-label="回到首页">
+            <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" width="32" height="32"><rect x="1" y="1" width="30" height="30" rx="9" fill="url(#bg)"/><path d="M9 22V11l7 6 7-6v11" fill="none" stroke="#0b0d12" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b9c4ff"/><stop offset="1" stop-color="#9ee7d8"/></linearGradient></defs></svg></span>
+            <span class="brand-copy"><strong>Workbench</strong><small>AI 软件开发</small></span>
+          </button>
+          <button class="icon-btn sidebar-close" id="sidebarClose" type="button" aria-label="收起侧栏">×</button>
+        </div>
+
+        <button class="new-chat" id="newChatBtn" type="button">
+          <span class="new-chat-icon" aria-hidden="true">＋</span>
+          <span>新建开发对话</span>
+          <kbd>⌘ K</kbd>
+        </button>
+
+        <nav class="side-nav" aria-label="主要">
+          <button type="button" class="side-link is-active" id="navChat" data-nav="chat"><span class="side-icon" aria-hidden="true">◌</span>对话</button>
+          <button type="button" class="side-link" id="navProjects" data-nav="projects"><span class="side-icon" aria-hidden="true">▦</span>我的项目</button>
+          <button type="button" class="side-link" id="navRecent" data-nav="recent"><span class="side-icon" aria-hidden="true">↺</span>最近开发</button>
+        </nav>
+
+        <div class="side-section" id="projectSection">
+          <div class="side-head"><span>项目</span><button class="text-btn" id="refreshProjects" type="button" aria-label="刷新项目">刷新</button></div>
+          <div class="project-list" id="projectList" aria-live="polite"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
+        </div>
+
+        <div class="side-section" id="recentSection">
+          <div class="side-head"><span>最近对话</span></div>
+          <div class="recent-list" id="recentList"><p class="muted small">还没有对话</p></div>
+        </div>
+
+        <div class="side-footer">
+          <button type="button" class="side-link" id="settingsBtn"><span class="side-icon" aria-hidden="true">⚙</span>设置</button>
+          <button type="button" class="side-link" id="advancedBtn"><span class="side-icon" aria-hidden="true">⌘</span>开发详情</button>
+          <p class="side-note">本地优先 · 不自动合并或部署</p>
+        </div>
+      </aside>
+
+      <main class="main" id="chatMain">
+        <header class="topbar">
+          <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="打开侧栏" aria-expanded="false">☰</button>
+          <div class="crumb" id="crumb">新对话</div>
+          <div class="top-actions">
+            <span class="live-pill" id="livePill" title="与本地 Workbench 的连接状态"><span class="dot"></span><span id="liveText">连接中</span></span>
+            <button class="icon-btn" id="themeBtn" type="button" aria-label="切换深色/浅色外观">◐</button>
+            <button class="pill-btn" id="advancedTopBtn" type="button">开发详情</button>
+          </div>
+        </header>
+
+        <div class="offline-banner" id="offlineBanner" hidden role="status">连接暂时中断。你的对话已保存在本地 Workbench；恢复后会自动重试。</div>
+
+        <section class="welcome" id="welcome">
+          <div class="welcome-inner">
+            <div class="eyebrow"><span class="eyebrow-dot"></span>AI SOFTWARE STUDIO</div>
+            <h1>把想法，<br /><span class="grad">交给会做软件的人。</span></h1>
+            <p class="lead">用一句话描述你想开发的产品。Workbench 会整理需求和验收标准，确认后自动完成规划、编码、测试、独立审计与交付。</p>
+            <form class="composer composer-hero" id="welcomeComposer">
+              <label class="sr-only" for="welcomeInput">描述你想开发的产品</label>
+              <textarea id="welcomeInput" rows="3" placeholder="例如：帮我开发一个消费管理网站，可以管理收入、支出、分析消费决策。" maxlength="8000"></textarea>
+              <div class="composer-foot">
+                <span class="hint" id="welcomeHint">无需填写工程参数。只在必要信息缺失时询问。</span>
+                <button class="send" id="welcomeSend" type="submit" aria-label="发送并开始对话"><span aria-hidden="true">↑</span><span>开始</span></button>
+              </div>
+            </form>
+            <div class="suggestions" id="suggestions" aria-label="示例目标">
+              <button type="button" class="suggestion" data-prompt="帮我开发一个个人阅读管理工具，支持书籍、阅读计划和本地数据。">个人阅读管理工具</button>
+              <button type="button" class="suggestion" data-prompt="做一个帮助小团队跟踪项目进度的轻量看板，数据保存在本地。">团队项目看板</button>
+              <button type="button" class="suggestion" data-prompt="开发一个消费管理网站，可以管理收入、支出、分析消费决策。">消费管理网站</button>
+            </div>
+            <div class="trust-row"><span>本地优先</span><span>真实模型对话</span><span>独立审计</span><span>人工验收</span></div>
+          </div>
+        </section>
+
+        <section class="conversation" id="conversation" hidden>
+          <div class="messages" id="messages" aria-live="polite"></div>
+          <div class="quick-controls" id="quickControls" hidden aria-label="开发控制"></div>
+          <div class="run-panel" id="runPanel" hidden></div>
+          <div class="composer-wrap">
+            <form class="composer" id="chatComposer">
+              <label class="sr-only" for="chatInput">继续和 AI 讨论或下指令</label>
+              <textarea id="chatInput" rows="1" placeholder="继续讨论需求，或说“开始开发”…" maxlength="8000"></textarea>
+              <div class="composer-foot">
+                <span class="hint" id="chatHint">对话会保存。确认需求后点击“开始开发”。</span>
+                <button class="send" type="submit" aria-label="发送消息">↑</button>
+              </div>
+            </form>
+            <p class="composer-note">Workbench 只在你确认后开始开发；不会自动合并 main 或部署。</p>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="alert" hidden></div>
+    <div class="modal" id="settingsModal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="modal-head"><h2 id="settingsTitle">设置</h2><button class="icon-btn" id="settingsClose" type="button" aria-label="关闭设置">×</button></div>
+        <div class="setting-block"><span class="setting-label">外观</span><div class="segmented" id="themeSeg">
+          <button type="button" data-theme-choice="light">浅色</button><button type="button" data-theme-choice="dark">深色</button><button type="button" data-theme-choice="system">跟随系统</button>
+        </div></div>
+        <div class="setting-block"><span class="setting-label">预算</span><div id="budgetInfo" class="setting-value">加载中…</div></div>
+        <div class="setting-block"><span class="setting-label">高级工程控制台</span><p class="setting-value">原有项目、任务、审计、Fencing、日志与回放全部保留。</p><button type="button" class="pill-btn" id="settingsAdvanced">打开开发详情</button></div>
+        <p class="setting-foot">AI Workbench · 本地优先 · 不自动合并或部署</p>
+      </div>
+    </div>
+    <script type="module" src="/chat.js"></script>
+  </body>
+</html>
