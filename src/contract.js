@@ -210,3 +210,13 @@ export function validateTestEvidence({ project, worktree, command, result }) {
   if (effectiveCount < minTests) return { ok: false, code: 'TEST_COUNT_TOO_LOW', reason: `实际有效测试数 ${effectiveCount} < 最小要求 ${minTests}`, testCount: effectiveCount, ...inspected };
   return { ok: true, testCount: effectiveCount, productTestFiles: inspected.product.map((f) => f.file), trustedTestFiles: inspected.files.filter((f) => f.includes('workbench-contract.test')), ...inspected };
 }
+
+/** 校验已冻结测试/运行器文件；新增文件不在此列，允许通过独立测试后进入下一版基线。 */
+export function verifyTestBaseline(worktree, hashes = {}) {
+  const violations = [];
+  for (const [rel, expected] of Object.entries(hashes || {})) {
+    const actual = sha256File(path.join(worktree, rel));
+    if (!actual || actual !== expected) violations.push(rel);
+  }
+  return violations;
+}

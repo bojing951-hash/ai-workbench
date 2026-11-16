@@ -73,7 +73,7 @@ test('无进展看门狗：工作树无变化则 abort Agent 并标记 stalled',
     chooseAgent: async () => 'dsh', runAudit: async () => ({}), checkAgents: async () => [{ id: 'dsh', ok: true }, { id: 'claude', ok: true }],
     runAgent: async (agentId, ctx) => new Promise((resolve) => {
       ctx.signal.addEventListener('abort', () => { aborted = true; resolve({ ok: false, aborted: true, error: 'stalled abort', usage: {}, durationMs: 1000 }); });
-      setTimeout(() => resolve({ ok: true, usage: {}, durationMs: 10000 }), 10000);
+      setTimeout(() => resolve({ ok: true, usage: {}, durationMs: 30000 }), 30_000);
     }),
   };
   try {

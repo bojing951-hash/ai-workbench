@@ -35,6 +35,38 @@ function classifyLoopFailure(evidence = []) {
   return 'unknown';
 }
 
+
+function contractAcceptanceIncomplete(loop, project, store) {
+  let expected = safeJsonArray(project?.config_json?.test_plan?.acceptance || project?.config_json?.test_plan?.acceptance_json || []);
+  if (!expected.length && project?.local_path) {
+    try { const f = path.join(project.local_path, 'TEST_PLAN.json'); if (fs.existsSync(f)) expected = safeJsonArray(JSON.parse(fs.readFileSync(f, 'utf8')).acceptance); } catch { /* ignore */ }
+  }
+  if (!expected.length) return null;
+  const runId = loop?.current_run_id || [...(loop?.history_json || [])].reverse().find((h) => h?.runId)?.runId;
+  const run = runId ? store.getRun(runId) : null;
+  const tasks = run ? store.listTasks({ runId: run.id }) : [];
+  const norm = (x) => String(x || '').toLowerCase().replace(/[\s，。；：、,.!?！？:;（）()\-—]/g, '');
+  const evidence = [];
+  for (const task of tasks) {
+    if (task.status !== 'passed') continue;
+    for (const audit of store.listAudits(task.id)) {
+      if (String(audit.verification_status || audit.verdict || '').toUpperCase() !== 'PASS') continue;
+      for (const c of safeJsonArray(audit.criteria_json)) {
+        if (String(c.status || '').toLowerCase() !== 'pass') continue;
+        if (String(c.evidence || '').trim().length < 12) continue;
+        evidence.push({ criterion: String(c.criterion || ''), evidence: String(c.evidence || '') });
+      }
+    }
+  }
+  const missing = expected.filter((clause) => {
+    const n = norm(clause);
+    return !evidence.some((e) => { const c = norm(e.criterion); return c && (c.includes(n) || n.includes(c)); });
+  });
+  return missing.length ? { missing, expected } : null;
+}
+
+function loopStillRunning(store, id) { return store.getLoop(id)?.status === 'running'; }
+
 function qualityGateIncomplete(loop, project) {
   const q = qualityConfig(project);
   if (!q) return null;
@@ -107,9 +139,21 @@ export class LoopManager {
     const loop = this.store.getLoop(id);
     if (!loop) throw new PolicyError('LOOP_NOT_FOUND', `循环不存在：${id}`);
     if (loop.status !== 'running') return this.get(id);
-    this.store.updateLoop(id, { status: 'paused', stop_reason: reason });
-    this.emit(loop, 'loop_paused', `研发循环已暂停：${reason}`, 'warn');
-    return this.get(id);
+    let ctrl = false;
+    if (this.orchestrator?.ensureControlLease) { this.orchestrator.ensureControlLease(loop.project_id); ctrl = true; }
+    try {
+      const current = loop.current_run_id ? this.store.getRun(loop.current_run_id) : null;
+      if (current && ['running', 'queued'].includes(current.status)) {
+        if (!this.orchestrator?.pauseRun) throw new PolicyError('ORCHESTRATOR_UNAVAILABLE', '无法安全暂停：编排器不可用');
+        const paused = await this.orchestrator.pauseRun(current.id, reason, 'manual');
+        if (!paused || !['paused', 'interrupted', 'failed', 'cancelled', 'awaiting_acceptance'].includes(paused.status)) {
+          throw new PolicyError('PAUSE_NOT_CONFIRMED', `运行 ${current.id} 未确认停止，不能显示已暂停`);
+        }
+      }
+      this.store.updateLoop(id, { status: 'paused', stop_reason: reason });
+      this.emit(loop, 'loop_paused', `研发循环已暂停（Agent/运行已停止确认）：${reason}`, 'warn');
+      return this.get(id);
+    } finally { if (ctrl) this.orchestrator.releaseProjectLease(loop.project_id); }
   }
 
   async cancel(id, reason = '人工取消') {
@@ -120,22 +164,27 @@ export class LoopManager {
     return this.get(id);
   }
 
-  async resume(id, { retryCurrent = false } = {}) {
+  async resume(id, { retryCurrent = false, authorizeBudget = false } = {}) {
     const loop = this.store.getLoop(id);
     if (!loop) throw new PolicyError('LOOP_NOT_FOUND', `循环不存在：${id}`);
     if (['completed', 'cancelled'].includes(loop.status)) throw new PolicyError('LOOP_CLOSED', `循环已结束：${loop.status}`);
+    let ctrl = false;
+    if (this.orchestrator?.ensureControlLease) { this.orchestrator.ensureControlLease(loop.project_id); ctrl = true; }
+    try {
     const current = loop.current_run_id ? this.store.getRun(loop.current_run_id) : null;
     if (current && ['interrupted', 'paused'].includes(current.status)) {
-      if (retryCurrent) await this.orchestrator.resumeRun(current.id, { retryFailed: true }).catch(() => {});
-      else {
-        this.store.updateLoop(id, { status: 'paused', stop_reason: `当前运行 ${current.id} 状态 ${current.status}，恢复循环需重试或取消该运行` });
-        return this.get(id);
+      if (!this.orchestrator?.resumeRun) throw new PolicyError('ORCHESTRATOR_UNAVAILABLE', '无法恢复：编排器不可用');
+      // 预算/超时暂停必须明确授权；不根据“继续开发”自动解除。
+      const resumed = await this.orchestrator.resumeRun(current.id, { retryFailed: retryCurrent === true, authorizeBudget });
+      if (!resumed || !['running', 'queued', 'awaiting_acceptance'].includes(resumed.status)) {
+        throw new PolicyError('RESUME_NOT_CONFIRMED', `运行 ${current.id} 未确认恢复（当前 ${resumed?.status || 'missing'}）`);
       }
     }
     this.store.updateLoop(id, { status: 'running', stop_reason: '' });
-    this.emit(loop, 'loop_resumed', '研发循环已恢复');
+    this.emit(loop, 'loop_resumed', `研发循环已恢复（运行 ${current?.id || '无'} 状态已确认）`);
     this.schedule(id, 800);
     return this.get(id);
+    } finally { if (ctrl) this.orchestrator.releaseProjectLease(loop.project_id); }
   }
 
   /** 启动时把未完成的循环标记为 interrupted，等待人工/API 恢复。 */
@@ -269,6 +318,13 @@ export class LoopManager {
 
       // 2) 轮次上限：有质量门时，质量未 PASS/修复队列未清空绝不标记 completed。
       if (loop.round >= loop.max_rounds) {
+        const contractIncomplete = contractAcceptanceIncomplete(loop, project, this.store);
+        if (contractIncomplete) {
+          const reason = `达到最大轮次，但冻结验收条款缺少 PASS 证据：${contractIncomplete.missing.join('；').slice(0, 600)}；不能完成`;
+          this.store.updateLoop(id, { status: 'blocked', stop_reason: reason });
+          this.emit(loop, 'loop_blocked', reason, 'warn', { acceptanceMissing: contractIncomplete.missing });
+          return;
+        }
         const qIncomplete = qualityGateIncomplete(loop, project);
         if (qIncomplete) {
           const reason = `达到最大轮次 ${loop.max_rounds}，但不能完成：${qIncomplete.reason}；保留检查点等待继续/人工授权`;
@@ -292,6 +348,13 @@ export class LoopManager {
       // plan 模式恢复出的 pending 任务也必须被消费；普通队列任务仍按显式任务处理。
       if (loop.mode === 'queue' || hasQualityRepair || queued.length > 0) {
         if (!queued.length) {
+          const contractIncomplete = contractAcceptanceIncomplete(loop, project, this.store);
+          if (contractIncomplete) {
+            const reason = `队列已空，但冻结验收条款缺少 PASS 证据：${contractIncomplete.missing.join('；').slice(0, 600)}；不能完成`;
+            this.store.updateLoop(id, { status: 'blocked', stop_reason: reason });
+            this.emit(loop, 'loop_blocked', reason, 'warn', { acceptanceMissing: contractIncomplete.missing });
+            return;
+          }
           const qIncomplete = qualityGateIncomplete(loop, project);
           if (qIncomplete) {
             const reason = `队列已空但质量门未完成：${qIncomplete.reason}；不宣布完成`;
@@ -313,14 +376,19 @@ export class LoopManager {
         this.emit(loop, 'loop_task_pending', `任务已持久化待认领：${task.title}（requestKey=${pending.requestKey}）`, 'info', { task: task.title, requestKey: pending.requestKey });
         rationale = next.qualityIssueId ? `来自质量闭环修复任务（${next.qualityIssueId}）` : '来自显式任务队列';
       } else {
+        let plannerReservation = null;
         try {
-          assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner' });
+          plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner', reserve: true });
           const planned = await planNextTask({
             config: this.config, project, goal: loop.goal,
             history: loop.history_json || [],
             contractFiles: loop.contract_files_json || [],
             previousTasks: this.store.listTasks({ projectId: project.id }).slice(-20),
           });
+          if (plannerReservation?.reservation?.id) {
+            this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: Number(planned.usage?.input || 0) + Number(planned.usage?.output || 0) + Number(planned.usage?.cacheRead || 0) + Number(planned.usage?.cacheWrite || 0), actualCostCny: planned.costCny || 0, usageKnown: true });
+            plannerReservation = null;
+          }
           if (planned.usage) {
             this.store.createAttempt({
               id: newId('att'), runId: '', taskId: '', attemptNo: 0, stage: 'loop-planning',
@@ -332,6 +400,16 @@ export class LoopManager {
             });
           }
           if (planned.action === 'no_task') {
+            let expected = safeJsonArray(project?.config_json?.test_plan?.acceptance || project?.config_json?.test_plan?.acceptance_json || []);
+            if (!expected.length && project?.local_path) {
+              try { const f = path.join(project.local_path, 'TEST_PLAN.json'); if (fs.existsSync(f)) expected = safeJsonArray(JSON.parse(fs.readFileSync(f, 'utf8')).acceptance); } catch { /* ignore */ }
+            }
+            if (expected.length) {
+              const reason = `Planner 未发现真实任务，但冻结验收契约仍有 ${expected.length} 条条款需要证据；不能把 no_task 当作产品完成`;
+              this.store.updateLoop(id, { status: 'blocked', stop_reason: reason });
+              this.emit(loop, 'loop_blocked', reason, 'warn', { acceptance: expected });
+              return;
+            }
             this.store.updateLoop(id, { status: 'completed', stop_reason: `Planner 未发现真实任务：${planned.rationale || '无'}` });
             this.emit(loop, 'loop_completed', `研发循环完成：没有新的真实任务（${planned.rationale || ''}）`);
             return;
@@ -345,6 +423,7 @@ export class LoopManager {
           task = { ...planned.task, seq: 1 };
           rationale = planned.rationale || '';
         } catch (err) {
+          if (plannerReservation?.reservation?.id) this.store.releaseModelReservation(plannerReservation.reservation.id);
           this.store.updateLoop(id, { status: 'paused', stop_reason: `规划失败（UNKNOWN）：${err?.message || err}` });
           this.emit(loop, 'loop_paused', `规划失败（UNKNOWN）：${err?.message || err}`, 'warn');
           return;
@@ -363,7 +442,8 @@ export class LoopManager {
         this.emit(loop, 'loop_task_pending', `规划任务已持久化待认领：${task.title}（requestKey=${pending.requestKey}）`, 'info', { task: task.title, requestKey: pending.requestKey });
       }
 
-      // 4) 启动本轮 run（单任务）
+      // 4) 启动本轮 run（单任务）；暂停/取消请求可能在规划/选任务期间到达。
+      if (this.store.getLoop(id)?.status !== 'running') { this.emit(loop, 'loop_start_cancelled', '循环已暂停/取消，放弃本轮 Run 启动', 'warn'); return; }
       let started;
       try {
         started = await this.orchestrator.startRun({
@@ -457,6 +537,8 @@ export class LoopManager {
       return false;
     }
     const base = await this.orchestrator.prepareAutoRepair({ project, task, label: `loop-${loop.id}-run-${run.id}` });
+    // pause/cancel 可能在异步 Git 基线保存期间到达：不得把 Loop 重新写回 running/queue。
+    if (!loopStillRunning(this.store, loop.id)) { this.emit(loop, 'loop_control_race', '自动修复期间 Loop 已暂停/取消，放弃写回队列', 'warn'); return false; }
     if (!base?.ok) {
       this.emit(loop, 'auto_repair_blocked', `无法保存失败任务基线，不能生成修复任务：${base?.reason || 'unknown'}`, 'warn', { runId: run.id, taskId: task.id });
       return false;
@@ -496,6 +578,7 @@ export class LoopManager {
   }
 
   async completeRound(loop, project, run) {
+    if (!loopStillRunning(this.store, loop.id)) return;
     const tasks = this.store.listTasks({ runId: run.id });
     const task = tasks[0] || {};
     const history = Array.isArray(loop.history_json) ? [...loop.history_json] : [];
@@ -595,6 +678,7 @@ export class LoopManager {
         quality = buildCoverageMatrix({ project, qualityRun, audits });
         history[history.length - 1].quality = quality;
         this.emit(loop, 'quality_evaluated', `质量评估：需求覆盖 ${quality.coverage.pass}/${quality.coverage.total} PASS，${quality.p0p1.length} 个有证据 P0/P1 问题`, quality.allPass ? 'info' : 'warn', { quality });
+        if (!loopStillRunning(this.store, loop.id)) return;
         if (!quality.allPass) {
           const cycles = history.filter((h) => h.quality && !h.quality.allPass).length;
           const repairTasks = repairTasksFromQuality(quality, { maxIssues: qcfg.maxIssuesPerCycle });
@@ -643,11 +727,13 @@ export class LoopManager {
         return;
       }
     }
+    if (!loopStillRunning(this.store, loop.id)) return;
     const nextRound = loop.round + 1;
     let nextStatus = 'running';
     let stopReason = '';
     if (nextRound >= loop.max_rounds) {
-      const qIncomplete = qualityGateIncomplete({ ...loop, round: nextRound, history_json: history }, project);
+      const contractIncomplete = contractAcceptanceIncomplete({ ...loop, round: nextRound, history_json: history, current_run_id: run.id }, project, this.store);
+      const qIncomplete = contractIncomplete ? { reason: `冻结验收条款缺少证据：${contractIncomplete.missing.join('；')}` } : qualityGateIncomplete({ ...loop, round: nextRound, history_json: history }, project);
       if (qIncomplete) {
         nextStatus = 'blocked';
         stopReason = `达到最大轮次 ${loop.max_rounds} 但质量门未完成：${qIncomplete.reason}；保留检查点等待继续/人工授权`;

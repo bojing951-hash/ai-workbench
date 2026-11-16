@@ -282,7 +282,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
           if (!CONTROL_ACTIONS.includes(action)) throw new PolicyError('CONTROL_NOT_ALLOWED', '控制动作不在白名单');
           const requestKey = String(body.requestKey || `control:${conv.id}:${action}:${crypto.randomUUID()}`).slice(0, 160);
           const current = store.getConversation(conv.id);
-          const control = await executeConversationControl({ config, store, orchestrator, loops, conversation: current, intent: action, requestKey, budgetProvider: () => budgetSnapshot(store, config) });
+          const control = await executeConversationControl({ config, store, orchestrator, loops, conversation: current, intent: action, requestKey, authorizeBudget: body.authorizeBudget === true, budgetProvider: () => budgetSnapshot(store, config) });
           return sendJson(res, 200, { ok: true, data: { control, conversation: store.getConversation(conv.id), messages: store.listConversationMessages(conv.id) } });
         });
       }
@@ -342,7 +342,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         }
         let turn;
         try {
-          turn = await chatTurn({ config, store, conversation, userMessage: content, project });
+          turn = await chatTurn({ config, store, conversation, userMessage: content, project, budgetRequestKey: `chat:${conversation.id}:${userMessage.id}` });
         } catch (err) {
           const message = redactForResponse(String(err?.message || err), config);
           // 已发生但未拿到最终 usage 的调用必须标记 unknown，不能静默漏账；预算预检失败则没有发生调用。
@@ -358,10 +358,11 @@ export function createApp({ config, store, orchestrator, loops = null }) {
           recordModelUsage({
             store, config, source: 'chat', sourceId: `chat:${conversation.id}:${userMessage.id}`,
             provider: turn.provider, model: turn.model, usage: turn.usage, costCny: turn.costCny,
-            projectId: conversation.project_id || '', conversationId: conversation.id,
+            projectId: conversation.project_id || '', conversationId: conversation.id, reservationId: turn.budgetReservation?.id || '',
           });
         } catch (err) {
-          // 用量入账失败不能悄悄吞掉；但仍返回已经产生的真实回复。
+          // 用量入账失败不能悄悄吞掉；结算失败预留，仍返回已经产生的真实回复。
+          try { if (turn?.budgetReservation?.id) store.settleModelReservation(turn.budgetReservation.id, { actualTokens: 0, actualCostCny: 0, usageKnown: false }); } catch { /* ignore */ }
           store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: '回复已生成，但用量账本写入失败，请在开发详情中核对。', replyTo: userMessage.id, data: { kind: 'error', error: String(err?.message || err), retryable: false } });
         }
         const acceptance = turn.acceptance.length ? turn.acceptance : (conversation.brief_json?.acceptance || []);
@@ -509,11 +510,11 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       const [, runId, action] = runActionMatch;
       if (action === 'pause') {
         const body = await readBody(req, maxBody).catch(() => ({}));
-        return sendJson(res, 200, { ok: true, data: orchestrator.pauseRun(runId, body.reason || '人工暂停', 'manual') });
+        return sendJson(res, 200, { ok: true, data: await orchestrator.pauseRun(runId, body.reason || '人工暂停', 'manual') });
       }
       if (action === 'resume') {
         const body = await readBody(req, maxBody).catch(() => ({}));
-        return sendJson(res, 200, { ok: true, data: await orchestrator.resumeRun(runId, { retryFailed: !!body.retryFailed }) });
+        return sendJson(res, 200, { ok: true, data: await orchestrator.resumeRun(runId, { retryFailed: !!body.retryFailed, authorizeBudget: body.authorizeBudget === true }) });
       }
       if (action === 'cancel') {
         return sendJson(res, 200, { ok: true, data: orchestrator.cancelRun(runId) });
@@ -605,7 +606,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       if (action && method === 'POST') {
         const body = await readBody(req, maxBody).catch(() => ({}));
         if (action === 'pause') return sendJson(res, 200, { ok: true, data: await loops.pause(loopId, body.reason || '人工暂停') });
-        if (action === 'resume') return sendJson(res, 200, { ok: true, data: await loops.resume(loopId, { retryCurrent: !!body.retryCurrent }) });
+        if (action === 'resume') return sendJson(res, 200, { ok: true, data: await loops.resume(loopId, { retryCurrent: !!body.retryCurrent, authorizeBudget: body.authorizeBudget === true }) });
         if (action === 'cancel') return sendJson(res, 200, { ok: true, data: await loops.cancel(loopId, body.reason || '人工取消') });
       }
     }

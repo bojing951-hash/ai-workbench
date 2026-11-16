@@ -248,7 +248,24 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS model_reservations (
+  id TEXT PRIMARY KEY,
+  request_key TEXT DEFAULT '',
+  provider TEXT DEFAULT 'unknown',
+  model TEXT DEFAULT '',
+  estimated_tokens INTEGER DEFAULT 0,
+  estimated_cost_cny REAL DEFAULT 0,
+  actual_tokens INTEGER DEFAULT 0,
+  actual_cost_cny REAL DEFAULT 0,
+  status TEXT DEFAULT 'reserved',
+  usage_known INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  settled_at TEXT DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_model_reservations_request ON model_reservations(request_key) WHERE request_key<>'';
 CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON conversation_messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -282,9 +299,10 @@ export class Store {
     ensureDir(path.dirname(dbPath));
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
+    // 先设置 busy timeout，避免多个独立进程同时打开 WAL 数据库时在 journal_mode 切换处直接 locked。
+    this.db.exec('PRAGMA busy_timeout = 5000;');
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec('PRAGMA synchronous = NORMAL;');
-    this.db.exec('PRAGMA busy_timeout = 5000;');
     this.db.exec(SCHEMA);
     this.migrate();
   }
@@ -303,6 +321,7 @@ export class Store {
         ['lease_fence', 'INTEGER DEFAULT 0'],
       ],
       runs: [
+        ['pause_kind', "TEXT DEFAULT ''"],
         ['verification_status', "TEXT DEFAULT 'LOCAL_VERIFIED'"],
         ['verified_sha', "TEXT DEFAULT ''"],
         ['ci_status', "TEXT DEFAULT ''"],
@@ -631,8 +650,8 @@ export class Store {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO runs (id,project_id,plan_id,goal,mode,status,current_task_id,budget_json,spent_json,stop_reason,result_json,verification_status,verified_sha,ci_status,ci_url,ci_checked_at,wall_deadline,parent_run_id,request_key,started_at,ended_at,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO runs (id,project_id,plan_id,goal,mode,status,current_task_id,budget_json,spent_json,stop_reason,result_json,verification_status,verified_sha,ci_status,ci_url,ci_checked_at,wall_deadline,parent_run_id,request_key,pause_kind,started_at,ended_at,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         r.id,
@@ -654,6 +673,7 @@ export class Store {
         r.wallDeadline || '',
         r.parentRunId || '',
         r.requestKey || '',
+        r.pauseKind || '',
         '',
         '',
         now,
@@ -701,7 +721,7 @@ export class Store {
     }
     this.db
       .prepare(
-        `UPDATE runs SET plan_id=?, status=?, current_task_id=?, budget_json=?, spent_json=?, stop_reason=?, result_json=?, verification_status=?, verified_sha=?, ci_status=?, ci_url=?, ci_checked_at=?, wall_deadline=?, parent_run_id=?, started_at=?, ended_at=?, updated_at=? WHERE id=?`,
+        `UPDATE runs SET plan_id=?, status=?, current_task_id=?, budget_json=?, spent_json=?, stop_reason=?, result_json=?, verification_status=?, verified_sha=?, ci_status=?, ci_url=?, ci_checked_at=?, wall_deadline=?, parent_run_id=?, pause_kind=?, started_at=?, ended_at=?, updated_at=? WHERE id=?`,
       )
       .run(
         merged.plan_id || '',
@@ -718,6 +738,7 @@ export class Store {
         merged.ci_checked_at || '',
         merged.wall_deadline || '',
         merged.parent_run_id || '',
+        merged.pause_kind || '',
         merged.started_at || '',
         merged.ended_at || '',
         nowIso(),
@@ -1117,6 +1138,71 @@ export class Store {
       .prepare('SELECT * FROM actions WHERE run_id = ? ORDER BY created_at ASC')
       .all(runId)
       .map((r) => parseRow(r, { payload_json: {}, result_json: {} }));
+  }
+
+  // ---------------- atomic model budget reservations ----------------
+  reserveModelBudget({ id, requestKey = '', provider = 'unknown', model = '', estimatedTokens = 0, estimatedCostCny = 0, maxTokens = 0, maxCostCny = 0, minReserveTokens = 0, cacheTokenWeight = 0.1, exemptProviders = ['glm'], ttlMs = 10 * 60 * 1000 } = {}) {
+    const now = nowIso();
+    const expires = new Date(Date.now() + ttlMs).toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare("UPDATE model_reservations SET status='expired' WHERE status='reserved' AND expires_at<=?").run(now);
+      if (requestKey) {
+        const existing = this.db.prepare('SELECT * FROM model_reservations WHERE request_key=?').get(requestKey);
+        if (existing) {
+          if (existing.status === 'reserved' || existing.status === 'settled') { this.db.exec('COMMIT'); return { ok: true, existing: true, reservation: existing }; }
+          // 失败/超时释放过的同 key（客户端安全重试）允许重新预留，不产生重复调用占额。
+          this.db.prepare("UPDATE model_reservations SET status='reserved', estimated_tokens=?, estimated_cost_cny=?, provider=?, model=?, created_at=?, expires_at=?, settled_at='' WHERE id=?")
+            .run(Number(estimatedTokens || 0), Number(estimatedCostCny || 0), provider, model, now, expires, existing.id);
+          this.db.exec('COMMIT');
+          return { ok: true, existing: true, reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(existing.id) };
+        }
+      }
+      const exempt = new Set((exemptProviders || []).map((x) => String(x).toLowerCase()));
+      const rows = this.db.prepare("SELECT provider, provider_known, SUM(tokens_in) tin, SUM(tokens_out) tout, SUM(tokens_cache) tc, SUM(cost_cny) cost FROM llm_usage WHERE budget_scope<>'project_audit' GROUP BY provider").all();
+      let usedTokens = 0; let usedCost = 0;
+      for (const r of rows) {
+        const name = String(r.provider || 'unknown').toLowerCase();
+        if (exempt.has(name) && Number(r.provider_known) === 1) continue;
+        usedTokens += Number(r.tin || 0) + Number(r.tout || 0) + Number(r.tc || 0) * Number(cacheTokenWeight || 0);
+        usedCost += Number(r.cost || 0);
+      }
+      const reserved = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status='reserved' AND expires_at>?").get(now);
+      const totalTokens = usedTokens + Number(reserved.t || 0) + Number(estimatedTokens || 0);
+      const totalCost = usedCost + Number(reserved.c || 0) + Number(estimatedCostCny || 0);
+      const remainingTokens = Number(maxTokens) - usedTokens - Number(reserved.t || 0);
+      const okTokens = maxTokens <= 0 || (remainingTokens >= Number(estimatedTokens || 0) && remainingTokens > Number(minReserveTokens || 0));
+      const okCost = maxCostCny <= 0 || totalCost <= Number(maxCostCny);
+      if (!okTokens || !okCost) {
+        this.db.exec('ROLLBACK');
+        return { ok: false, reason: 'budget-exceeded', usedTokens, usedCost, reservedTokens: Number(reserved.t || 0), reservedCostCny: Number(reserved.c || 0), estimatedTokens, estimatedCostCny };
+      }
+      this.db.prepare('INSERT INTO model_reservations (id,request_key,provider,model,estimated_tokens,estimated_cost_cny,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(id, requestKey, provider, model, Number(estimatedTokens || 0), Number(estimatedCostCny || 0), 'reserved', now, expires);
+      this.db.exec('COMMIT');
+      return { ok: true, reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) };
+    } catch (err) { try { this.db.exec('ROLLBACK'); } catch {} throw err; }
+  }
+
+  settleModelReservation(id, { actualTokens = 0, actualCostCny = 0, usageKnown = true } = {}) {
+    const now = nowIso();
+    this.db.prepare("UPDATE model_reservations SET status='settled', actual_tokens=?, actual_cost_cny=?, usage_known=?, settled_at=? WHERE id=? AND status IN ('reserved','settled')")
+      .run(Number(actualTokens || 0), Number(actualCostCny || 0), usageKnown ? 1 : 0, now, id);
+    return this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) || null;
+  }
+
+  releaseModelReservation(id, { reason = 'released', usageKnown = false } = {}) {
+    this.db.prepare("UPDATE model_reservations SET status='released', usage_known=?, settled_at=? WHERE id=? AND status='reserved'").run(usageKnown ? 1 : 0, nowIso(), id);
+    return this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) || null;
+  }
+
+  reservedBudgetTotals() {
+    const row = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status='reserved' AND expires_at>?").get(nowIso());
+    return { tokens: Number(row.t || 0), costCny: Number(row.c || 0) };
+  }
+
+  listModelReservations(limit = 100) {
+    return this.db.prepare('SELECT * FROM model_reservations ORDER BY created_at DESC LIMIT ?').all(limit);
   }
 
   // ---------------- unified LLM usage ledger ----------------

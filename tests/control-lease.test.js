@@ -22,7 +22,7 @@ test('v2.7 P1-D：非 owner 控制 API 不能 pause/cancel/resume 他人租约�
     const run = store.createRun({ id: 'run1', projectId: 'p', planId: 'plan1', goal: 'g', mode: 'single', status: 'running' });
     const o = new Orchestrator({ config, store, bus: new EventBus(), deps: { runAgent: async () => ({}), chooseAgent: async () => 'claude', runAudit: async () => ({}), checkAgents: async () => [] } });
     assert.throws(() => o.cancelRun(run.id), /PROJECT_LEASE_HELD|写租约/);
-    assert.throws(() => o.pauseRun(run.id, 'x'), /PROJECT_LEASE_HELD|写租约/);
+    await assert.rejects(() => o.pauseRun(run.id, 'x'), /PROJECT_LEASE_HELD|写租约/);
     await assert.rejects(o.resumeRun(run.id), /PROJECT_LEASE_HELD|写租约/);
     assert.equal(store.getRun(run.id).status, 'running', '非 owner 控制不得改变 run 状态');
   } finally { store.close(); }

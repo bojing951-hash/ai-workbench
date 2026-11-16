@@ -58,5 +58,8 @@ test('v3.0 P1：查询真实状态、暂停/继续都持久化且幂等，且拒
     h.store.createLoop({ id: 'l2', projectId: 'p2', goal: 'x', mode: 'plan' });
     const bad = h.store.updateConversation(h.conv.id, { loop_id: 'l2' });
     await assert.rejects(executeConversationControl({ config: h.config, store: h.store, orchestrator: {}, loops: h.loops, conversation: bad, intent: 'pause', requestKey: 'action:bad' }), /不属于/);
+    // 跨对话重放同一 requestKey 必须拒绝
+    const conv2 = h.store.createConversation({ title: '另一个对话', projectId: 'p' });
+    await assert.rejects(executeConversationControl({ config: h.config, store: h.store, orchestrator: {}, loops: h.loops, conversation: conv2, intent: 'status', requestKey: 'action:status:1' }), /请求键|其他对话|重放/);
   } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
 });

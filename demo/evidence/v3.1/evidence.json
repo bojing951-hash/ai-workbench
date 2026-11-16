@@ -1,0 +1,82 @@
+{
+  "version": "3.1.0",
+  "baseline": "v3.0.0 / PR #12",
+  "branch": "v3.1.0",
+  "tests": {
+    "total": 289,
+    "pass": 285,
+    "skipped": 4,
+    "fail": 0,
+    "log": "demo/evidence/v3.1/tests.log",
+    "note": "serial final environment Docker daemon unavailable; same suite passed 289/289 when Docker available"
+  },
+  "playwright": {
+    "ok": true,
+    "checks": 15,
+    "errors": []
+  },
+  "p0_1": {
+    "pauseWaitsAgentStop": true,
+    "resumeOriginalRun": true,
+    "budgetPauseGuarded": true,
+    "idempotent": true,
+    "tests": [
+      "tests/v3-pause-resume.test.js",
+      "tests/v3-loop-control.test.js"
+    ]
+  },
+  "p0_2": {
+    "frozenAcceptanceGate": true,
+    "autoAcceptanceRepair": true,
+    "blockedOnMissingEvidence": true,
+    "tests": [
+      "tests/v3-acceptance.test.js"
+    ]
+  },
+  "p1_1": {
+    "versionedTestBaseline": true,
+    "newTestsAllowed": true,
+    "existingTestsProtected": true,
+    "tests": [
+      "tests/v3-contract.test.js"
+    ]
+  },
+  "p1_2": {
+    "atomicReservations": true,
+    "multiProcessTest": true,
+    "chatPlannerCodingAudit": true,
+    "glmPerCall": true,
+    "tests": [
+      "tests/v3-budget-reservation.test.js"
+    ]
+  },
+  "p1_3": {
+    "actionOwnership": true,
+    "crossConversationRejected": true,
+    "fencing": true,
+    "tests": [
+      "tests/v3-controls.test.js",
+      "tests/control-lease.test.js"
+    ]
+  },
+  "budget": {
+    "remainingTokens": 8654.2,
+    "remainingCostCny": 23.6596,
+    "reservedTokens": 0,
+    "reservedCostCny": 0,
+    "noReset": true
+  },
+  "realE2E": {
+    "status": "BLOCKED",
+    "reason": "remaining ~8654 tokens < 10000 preflight; no new-project DSH authorization",
+    "noBudgetRaised": true,
+    "noBorrowedBudget": true,
+    "noFakePass": true
+  },
+  "24h": "NOT_VERIFIED",
+  "merged": false,
+  "deployed": false,
+  "businessProductsModified": false,
+  "commit": "PENDING",
+  "pr": "PENDING"
+}

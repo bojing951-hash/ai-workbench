@@ -10,7 +10,7 @@ import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
 import { EventBus } from '../src/bus.js';
 import { Orchestrator } from '../src/orchestrator.js';
-import { writeProjectContract, contractBaseline, verifyContractBaseline, validateTestEvidence, inspectTestFiles, CONTRACT_PROTECTED_PATHS } from '../src/contract.js';
+import { writeProjectContract, contractBaseline, verifyContractBaseline, verifyTestBaseline, validateTestEvidence, inspectTestFiles, CONTRACT_PROTECTED_PATHS } from '../src/contract.js';
 
 const NODE = process.execPath;
 function git(cwd, args) { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr || r.stdout); return r.stdout.trim(); }
@@ -104,9 +104,38 @@ test('v3.0 P0-2：新项目禁止 testCommand=true；Orchestrator 只在真实�
     const updated = store.getProject(project.id);
     assert.equal(updated.test_command, 'npm test'); // 按真实 package.json 技术栈检测
     assert.ok(updated.config_json.tests_frozen_at, '首轮通过后必须冻结测试文件');
-    assert.ok(updated.protected_paths.includes('tests/**'), '冻结后测试目录必须受保护');
+    assert.ok(updated.protected_paths.includes('tests/product.test.js'), '冻结后已有测试文件必须受保护');
     assert.ok(updated.protected_paths.includes('package.json'), '冻结后测试脚本/运行器配置必须受保护');
     assert.ok(updated.config_json.trusted_test_hashes['package.json'], '冻结哈希必须包含 package.json 测试脚本');
     assert.equal(agentCalls, 1);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.1 P1-1：新测试可加入、已有测试修改被冻结；测试基线版本化', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v31-baseline-'));
+  const dataDir = path.join(root, 'data');
+  const config = getConfig({ root, paths: { root, dataDir, dbPath: path.join(dataDir, 'test.db'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(dataDir, 'worktrees'), artifactsDir: path.join(dataDir, 'artifacts'), logsDir: path.join(dataDir, 'logs'), agentsDir: path.join(dataDir, 'agents'), dshHome: path.join(dataDir, 'agents/dsh'), claudeHome: path.join(dataDir, 'agents/claude') }, secrets: [], llm: { openai: { apiKey: '' }, glm: { apiKey: '' }, deepseek: { apiKey: '' } }, github: { token: '' } });
+  const store = openStore(config.paths.dbPath);
+  const worktree = path.join(root, 'wt');
+  fs.mkdirSync(path.join(worktree, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(worktree, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }));
+  fs.writeFileSync(path.join(worktree, 'tests', 'one.test.js'), "import {test} from 'node:test'; import assert from 'node:assert/strict'; import {x} from '../src/x.js'; test('one',()=>assert.equal(x(),1));\n");
+  fs.mkdirSync(path.join(worktree, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(worktree, 'src', 'x.js'), 'export const x=()=>1;\n');
+  try {
+    const project = store.createProject({ id: 'p-baseline', name: 'baseline', localPath: worktree, testCommand: 'node --test', config: { require_real_tests: true, test_plan: { minTests: 1, acceptance: ['A'] } } });
+    const orch = new Orchestrator({ config, store, bus: new EventBus(), deps: { runAgent: async () => { throw new Error('no'); }, runAudit: async () => { throw new Error('no'); }, chooseAgent: async () => 'dsh', checkAgents: async () => [] } });
+    let p = store.getProject(project.id);
+    await orch.freezeTestBaseline(p, worktree, { source: 'task1' });
+    assert.equal(store.getProject(project.id).config_json.test_baseline_version, 1);
+    // 新增测试文件应被允许，且不破坏原基线
+    fs.writeFileSync(path.join(worktree, 'tests', 'two.test.js'), "import {test} from 'node:test'; import assert from 'node:assert/strict'; import {x} from '../src/x.js'; test('two',()=>assert.equal(x(),1));\n");
+    p = store.getProject(project.id);
+    assert.deepEqual(verifyTestBaseline(worktree, p.config_json.trusted_test_hashes), [], '新增测试不应被当作篡改');
+    await orch.freezeTestBaseline(p, worktree, { source: 'task2' });
+    assert.equal(store.getProject(project.id).config_json.test_baseline_version, 2);
+    // 已有测试修改必须被检测
+    fs.appendFileSync(path.join(worktree, 'tests', 'one.test.js'), '\n// modified\n');
+    assert.ok(verifyTestBaseline(worktree, store.getProject(project.id).config_json.trusted_test_hashes).includes('tests/one.test.js'));
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

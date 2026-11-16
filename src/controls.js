@@ -78,18 +78,27 @@ function controlSnapshot({ store, conversation, intent, budget = null }) {
   return base;
 }
 
-export async function executeConversationControl({ config, store, orchestrator, loops, conversation, intent, requestKey, budgetProvider = null }) {
+export async function executeConversationControl({ config, store, orchestrator, loops, conversation, intent, requestKey, authorizeBudget = false, budgetProvider = null }) {
   if (!CONTROL_ACTIONS.includes(intent)) throw new PolicyError('CONTROL_NOT_ALLOWED', `控制动作不在白名单：${intent}`);
   const key = String(requestKey || '');
   if (key) {
     const existing = store.getActionByRequestKey(key);
-    if (existing?.status === 'done') return { ...existing.result_json, idempotent: true };
+    if (existing) {
+      // 请求键属于全局 actions 表，必须重新验证归属，禁止跨对话重放。
+      if (existing.conversation_id !== conversation.id) throw new PolicyError('CONTROL_REQUEST_KEY_REUSED', '请求键已被其他对话使用；拒绝跨对话重放');
+      if (existing.type !== `chat.${intent}`) throw new PolicyError('CONTROL_REQUEST_KEY_MISMATCH', '同一请求键不能用于不同控制动作');
+      const pj = existing.payload_json || {};
+      if (pj.projectId && conversation.project_id && pj.projectId !== conversation.project_id) throw new PolicyError('CONTROL_PROJECT_MISMATCH', '幂等结果所属项目与当前对话不一致');
+      if (pj.loopId && conversation.loop_id && pj.loopId !== conversation.loop_id) throw new PolicyError('CONTROL_LOOP_MISMATCH', '幂等结果所属 Loop 与当前对话不一致');
+      if (pj.runId && conversation.run_id && pj.runId !== conversation.run_id) throw new PolicyError('CONTROL_RUN_MISMATCH', '幂等结果所属 Run 与当前对话不一致');
+      if (existing.status === 'done') return { ...existing.result_json, idempotent: true };
+    }
   }
   const project = projectForConversation(store, conversation);
   const loop = loopForConversation(store, conversation);
   if (MUTATING_ACTIONS.has(intent) && !conversation.project_id && intent !== 'start') throw new PolicyError('CONVERSATION_PROJECT_REQUIRED', '对话尚未关联项目，不能执行控制动作');
   if (loop && project && loop.project_id !== project.id) throw new PolicyError('CONTROL_PROJECT_MISMATCH', '对话关联的 Loop 不属于该对话项目，拒绝控制');
-  const action = key ? (store.getActionByRequestKey(key) || store.createAction({ id: `act_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, conversationId: conversation.id, requestKey: key, type: `chat.${intent}`, status: 'running', payload: { intent } })) : null;
+  const action = key ? (store.getActionByRequestKey(key) || store.createAction({ id: `act_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, conversationId: conversation.id, requestKey: key, type: `chat.${intent}`, status: 'running', payload: { intent, projectId: conversation.project_id || '', loopId: conversation.loop_id || '', runId: conversation.run_id || loop?.current_run_id || '' } })) : null;
   try {
     let result;
     if (intent === 'start') {
@@ -108,7 +117,7 @@ export async function executeConversationControl({ config, store, orchestrator, 
       result = { ...controlSnapshot({ store, conversation: store.getConversation(conversation.id), intent: 'status', budget: budgetProvider ? budgetProvider() : null }), title: '已暂停', text: '研发已暂停，检查点已保存；说“继续开发”可恢复。' };
     } else if (intent === 'resume') {
       if (!loop) throw new PolicyError('LOOP_NOT_FOUND', '对话尚未关联研发循环');
-      await loops.resume(loop.id, { retryCurrent: false });
+      await loops.resume(loop.id, { retryCurrent: false, authorizeBudget });
       result = { ...controlSnapshot({ store, conversation: store.getConversation(conversation.id), intent: 'status', budget: budgetProvider ? budgetProvider() : null }), title: '已继续', text: '研发已从检查点继续。' };
     } else {
       result = controlSnapshot({ store, conversation, intent, budget: budgetProvider ? budgetProvider() : null });

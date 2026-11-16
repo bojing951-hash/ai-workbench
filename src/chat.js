@@ -33,10 +33,10 @@ function providerFor(config) {
   return providers.find((p) => p.name === 'deepseek') || providers.find((p) => p.name === 'glm') || providers[0] || null;
 }
 
-export async function chatTurn({ config, store, conversation, userMessage, project = null }) {
+export async function chatTurn({ config, store, conversation, userMessage, project = null, budgetRequestKey = '', budgetReservationId = '' }) {
   const provider = providerFor(config);
   if (!provider) throw new PolicyError('CHAT_MODEL_UNAVAILABLE', '对话模型不可用：请在 .env 配置 DeepSeek/GLM/OpenAI API Key；未使用预设回复冒充 AI');
-  const budget = assertModelBudget({ config, store, provider: provider.name, model: provider.model, ...chatBudgetEstimate(provider.name, provider.model), label: '对话模型' });
+  const budget = assertModelBudget({ config, store, provider: provider.name, model: provider.model, ...chatBudgetEstimate(provider.name, provider.model), label: '对话模型', reserve: true, requestKey: budgetRequestKey, reservationId: budgetReservationId });
   const history = store.listConversationMessages(conversation.id).slice(-12).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 4000) }));
   // 最新用户消息已由 server 保存；从历史尾部去掉，避免模型收到重复内容。
   if (history.length && history[history.length - 1].role === 'user' && history[history.length - 1].content === userMessage) history.pop();
@@ -47,14 +47,23 @@ export async function chatTurn({ config, store, conversation, userMessage, proje
     '对话历史（最后一条是用户最新输入）：',
     ...history.map((m) => `${m.role === 'user' ? '用户' : 'AI'}：${m.content}`),
   ].filter(Boolean).join('\n\n');
-  const result = await completeJson({
-    config, provider: provider.name, model: provider.model,
-    system: SYSTEM,
-    messages: [{ role: 'user', content: `${context}\n\n用户最新输入：${userMessage}` }],
-    maxTokens: 1200, temperature: 0.2, timeoutMs: 90_000,
-  });
+  let result;
+  try {
+    result = await completeJson({
+      config, provider: provider.name, model: provider.model,
+      system: SYSTEM,
+      messages: [{ role: 'user', content: `${context}\n\n用户最新输入：${userMessage}` }],
+      maxTokens: 1200, temperature: 0.2, timeoutMs: 90_000,
+    });
+  } catch (err) {
+    if (budget.reservation?.id) store.releaseModelReservation(budget.reservation.id);
+    throw err;
+  }
   const j = result.json || {};
-  if (!j.reply) throw new PolicyError('CHAT_MODEL_BAD_OUTPUT', '对话模型未返回可用回复；不伪造预设回复');
+  if (!j.reply) {
+    if (budget.reservation?.id) store.releaseModelReservation(budget.reservation.id);
+    throw new PolicyError('CHAT_MODEL_BAD_OUTPUT', '对话模型未返回可用回复；不伪造预设回复');
+  }
   const goal = String(j.goal || conversation.goal || '').trim();
   const acceptance = Array.isArray(j.acceptance) ? j.acceptance.map((x) => String(x).trim()).filter(Boolean).slice(0, 8) : [];
   return {
@@ -66,7 +75,7 @@ export async function chatTurn({ config, store, conversation, userMessage, proje
     goal,
     acceptance,
     provider: result.provider, model: result.model, usage: result.usage || {}, costCny: result.costCny || 0,
-    providerKnown: budget.identity.known, providerSource: budget.identity.source, budgetExempt: budget.exempt,
+    providerKnown: budget.identity.known, providerSource: budget.identity.source, budgetExempt: budget.exempt, budgetReservation: budget.reservation || null,
     intent: ['start','status','current_task','failure','pause','resume','cost','tests','audit','delivery'].includes(String(j.intent || '')) ? String(j.intent) : 'none',
   };
 }
@@ -95,7 +104,7 @@ export async function startDevelopment({ config, store, orchestrator, loops, con
     // 可信契约测试也在冻结基线内，Agent 修改即失败。
     const baseline = { ...contractBaseline(localPath), ...componentHashes, [TRUSTED_CONTRACT_TEST]: sha256File(path.join(localPath, TRUSTED_CONTRACT_TEST)) };
     const trustedTestHashes = { [TRUSTED_CONTRACT_TEST]: baseline[TRUSTED_CONTRACT_TEST] };
-    const testPlan = { minTests: Math.max(2, (conversation.brief_json?.acceptance || []).length), requireActualTests: true, forbidTrivialCommand: true, trustedContractTest: TRUSTED_CONTRACT_TEST };
+    const testPlan = { minTests: Math.max(2, (conversation.brief_json?.acceptance || []).length), requireActualTests: true, forbidTrivialCommand: true, trustedContractTest: TRUSTED_CONTRACT_TEST, acceptance: [...(conversation.brief_json?.acceptance || [])] };
     project = await orchestrator.createProject({
       name: conversation.title || conversation.goal.slice(0, 40),
       repo: localPath,

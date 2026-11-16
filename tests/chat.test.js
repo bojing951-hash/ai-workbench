@@ -70,6 +70,7 @@ test('v2.9：新项目使用嵌套独立 Git；Loop 创建失败时保留 projec
     assert.ok(fs.existsSync(path.join(project.local_path, '.git')), '新项目必须是独立嵌套 Git 仓库，不能落到 Workbench 父仓库');
     assert.equal(captured.testCommand, '', '新项目不得预置 true 测试命令');
     assert.equal(captured.requireRealTests, true);
+    assert.deepEqual(captured.testPlan.acceptance, ['验收 A']);
     assert.ok(fs.existsSync(path.join(project.local_path, 'TEST_PLAN.json')));
     assert.ok(fs.existsSync(path.join(project.local_path, 'tests/acceptance/workbench-contract.test.mjs')));
     assert.ok(captured.contractBaseline['CONTRACT.md']);

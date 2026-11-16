@@ -30,7 +30,7 @@ import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { deriveClausePlan } from './quality.js';
 import { assertModelBudget } from './budget.js';
-import { verifyContractBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount } from './contract.js';
+import { verifyContractBaseline, verifyTestBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount } from './contract.js';
 import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
 import { AsyncSemaphore } from './semaphore.js';
@@ -40,7 +40,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '3.0.0';
+const VERSION = '3.1.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
@@ -213,6 +213,7 @@ export class Orchestrator {
   budget() {
     const used = this.usage();
     const cfg = this.config.budget;
+    const reserved = this.store.reservedBudgetTotals ? this.store.reservedBudgetTotals() : { tokens: 0, costCny: 0 };
     const effectiveUsed = Number(used.budgetTokens || 0);
     return {
       maxTokens: cfg.maxTotalTokens,
@@ -228,8 +229,10 @@ export class Orchestrator {
       maxCostCny: cfg.maxCostCny,
       usedCostCny: Number((used.costCny + Number(used.projectAudit?.costCny || 0)).toFixed(4)),
       usedBudgetCostCny: Number(used.budgetCostCny.toFixed(4)),
-      remainingTokens: used.glmUnlimited ? Math.max(0, cfg.maxTotalTokens - effectiveUsed) : Math.max(0, cfg.maxTotalTokens - effectiveUsed),
-      remainingCostCny: Math.max(0, cfg.maxCostCny - used.budgetCostCny),
+      reservedTokens: Number(reserved.tokens || 0),
+      reservedCostCny: Number(reserved.costCny || 0),
+      remainingTokens: Math.max(0, cfg.maxTotalTokens - effectiveUsed - Number(reserved.tokens || 0)),
+      remainingCostCny: Math.max(0, cfg.maxCostCny - used.budgetCostCny - Number(reserved.costCny || 0)),
       tokensPercent: Math.min(100, Math.round((effectiveUsed / cfg.maxTotalTokens) * 1000) / 10),
       costPercent: Math.min(100, Math.round((used.budgetCostCny / cfg.maxCostCny) * 1000) / 10),
       breakdown: used,
@@ -274,6 +277,7 @@ export class Orchestrator {
         this.store.updateRun(run.id, {
           status: RunStatus.INTERRUPTED,
           stop_reason: '工作台进程重启导致运行中断，可在界面点击"恢复运行"从断点继续',
+          pause_kind: 'crash',
         });
         this.emit({
           runId: run.id,
@@ -510,7 +514,8 @@ export class Orchestrator {
     const goal = String(input.goal || '').trim();
     if (!goal) throw new PolicyError('GOAL_REQUIRED', '请填写开发目标');
     const mode = input.mode === 'plan' ? 'plan' : 'single';
-    const acceptance = parseList(input.acceptance);
+    const frozenAcceptance = parseList(project.config_json?.test_plan?.acceptance || project.config_json?.test_plan?.acceptance_json || []);
+    const acceptance = parseList(input.acceptance).length ? parseList(input.acceptance) : frozenAcceptance;
     const requestKey = String(input.requestKey || '').trim();
 
     // P0-2：同一请求键的 Run 只能创建一次；崩溃恢复/重复调用返回已有 Run。
@@ -558,7 +563,10 @@ export class Orchestrator {
 
     // 先做规划（LLM 调用），失败不创建半成品运行；持有项目 fence 期间失败必须释放。
     let planResult;
+    let plannerReservation = null;
     try {
+      // 原子预算预留：并发进程不能同时读到同一余额后越权调用。
+      plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 6000, label: 'Planner', reserve: true });
       planResult = await planTasks({
         config: this.config,
         project,
@@ -568,8 +576,12 @@ export class Orchestrator {
         tasks: input.tasks,
       });
     } catch (err) {
+      if (plannerReservation?.reservation?.id) this.store.releaseModelReservation(plannerReservation.reservation.id);
       this.releaseProjectLease(project.id);
       throw err;
+    }
+    if (plannerReservation?.reservation?.id) {
+      this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: summarizeUsage(planResult.usage || {}).total, actualCostCny: planResult.costCny || 0, usageKnown: true });
     }
 
     try {
@@ -663,6 +675,7 @@ export class Orchestrator {
       status: RunStatus.RUNNING,
       started_at: run.started_at || nowIso(),
       stop_reason: '',
+      pause_kind: '',
     });
     this.emit({ runId, projectId: run.project_id, type: 'run_started', message: '编排器开始执行' });
     setImmediate(() => {
@@ -750,12 +763,13 @@ export class Orchestrator {
             });
           } catch (err) {
             const kind = /WALL_CLOCK/.test(err?.code || '') ? 'wall_clock' : 'budget';
-            this.pauseRun(runId, err.message, kind);
+            void this.pauseRun(runId, err.message, kind).catch((e) => this.emit({ runId, projectId: run.project_id, type: 'run_pause_error', level: 'error', message: `暂停失败：${e.message}` }));
             break;
           }
         }
         if (!task) {
-          await this.finalizeRun(run);
+          const finalized = await this.finalizeRun(run);
+          if (finalized?.continue) continue;
           break;
         }
         this.store.updateRun(runId, { current_task_id: task.id });
@@ -764,7 +778,7 @@ export class Orchestrator {
           const latest = this.store.getRun(runId);
           if (!latest || latest.status !== RunStatus.RUNNING) break;
           if (controller.signal.aborted) break;
-          this.pauseRun(runId, result.reason || '任务失败，等待人工处理', 'task_failed');
+          void this.pauseRun(runId, result.reason || '任务失败，等待人工处理', 'task_failed').catch((e) => this.emit({ runId, projectId: run.project_id, type: 'run_pause_error', level: 'error', message: `暂停失败：${e.message}` }));
           break;
         }
       }
@@ -969,6 +983,7 @@ export class Orchestrator {
         cwd: worktree,
         timeoutMs,
         logPath: pathName,
+        signal,
         env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandbox, 'test-home') }),
       });
     };
@@ -1059,6 +1074,7 @@ export class Orchestrator {
     let lastAudit = null;
     let lastAgent = null;
     let changedFiles = [];
+    let auditResourceInfo = null;
 
     const logDir = this.logsDir(run.id, task.id);
     ensureDir(logDir);
@@ -1079,6 +1095,7 @@ export class Orchestrator {
         const primaryIdentity = resolveAgentIdentity({ config: this.config, agentId: primaryAgent || 'dsh', project });
         const coderFamily = primaryIdentity.known ? modelFamily(primaryIdentity.provider, primaryIdentity.model || '') : '';
         const auditResource = this.auditResourcePreflight(project, coderFamily);
+        auditResourceInfo = auditResource;
         this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'pipeline_resource_checked', message: `流水线资源预检通过：编码=${primaryIdentity.provider || 'unknown'}，审计=${auditResource.provider}${auditResource.exempt ? '（豁免）' : ''}`, data: { coding: primaryIdentity, audit: auditResource } });
       } catch (err) {
         if (err?.code === 'PREFLIGHT_SKIPPED_FOR_INJECTED_AUDIT') {
@@ -1157,7 +1174,11 @@ export class Orchestrator {
         }
         const release = await this.agentSemaphore.acquire();
         let agentResult;
+        let agentReservation = null;
         try {
+          if (!agentIdentity.exempt) {
+            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: 12_000, label: 'Coding Agent', reserve: true });
+          }
           const remaining = this.budget().remainingTokens;
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
           const perTaskCap = projectTaskCap > 0 ? projectTaskCap : this.config.budget.maxTokensPerTask;
@@ -1194,7 +1215,14 @@ export class Orchestrator {
           agentResult = { ...watchdog.result, stalled: !!watchdog.stalled };
         } finally {
           release();
+          if (agentReservation?.reservation?.id && !agentResult) this.store.releaseModelReservation(agentReservation.reservation.id);
         }
+        if (agentReservation?.reservation?.id) {
+          const au = summarizeUsage(agentResult?.usage || {});
+          this.store.settleModelReservation(agentReservation.reservation.id, { actualTokens: au.total, actualCostCny: agentResult?.costCny || 0, usageKnown: !!(agentResult?.usage && au.total > 0) });
+        }
+        // 人工/系统暂停已请求：不把中断归类为 Agent 产品失败，保留任务检查点等待恢复。
+        if (signal.aborted) return { ok: false, reason: '运行被暂停/取消，任务检查点已保留' };
         this.assertProjectLease(project.id);
         lastAgent = agentResult;
         const usage = summarizeUsage(agentResult.usage || {});
@@ -1290,7 +1318,13 @@ export class Orchestrator {
           await enforceProtectedPaths(worktree, contractViolations);
           return this.failTask(run, task, `冻结验收契约被修改且已还原：${contractViolations.join(', ')}；修改契约必须由用户显式授权`, 'blocked', { contractViolations });
         }
+        const testBaselineViolations = verifyTestBaseline(worktree, project.config_json?.trusted_test_hashes || {});
+        if (testBaselineViolations.length) {
+          await enforceProtectedPaths(worktree, testBaselineViolations);
+          return this.failTask(run, task, `已冻结测试/运行器被修改：${testBaselineViolations.join(', ')}；新增测试可提交，修改已有测试必须显式授权`, 'blocked', { testBaselineViolations });
+        }
 
+        if (signal.aborted) return { ok: false, reason: '运行被暂停/取消，任务检查点已保留' };
         // ---- 指纹：确保审计/测试/提交是同一版本 ----
         this.assertProjectLease(project.id);
         await gitops.stageAll(worktree);
@@ -1311,7 +1345,9 @@ export class Orchestrator {
           command: safeCommand,
           timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
           logPath: path.join(logDir, `attempt-${attemptNo}-test.log`),
+          signal,
         });
+        if (signal.aborted) return { ok: false, reason: '运行被暂停/取消，测试检查点已保留' };
         lastTest = {
           command: safeCommand, code: testRes.code, timedOut: testRes.timedOut,
           durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr,
@@ -1351,9 +1387,13 @@ export class Orchestrator {
         });
         if (!this.isDshAuditProject(project)) this.assertBudget(6_000);
         let audit;
+        let auditReservation = null;
         let auditCommit = '';
         let provisionalCommit = null;
         try {
+          if (this.deps.runAudit === runAudit && auditResourceInfo && !auditResourceInfo.exempt && !this.isDshAuditProject(project)) {
+            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditResourceInfo.provider, model: auditResourceInfo.model || '', estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true });
+          }
           const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
           const diffStat = await gitops.diffStat(worktree, baseCommit);
           if (this.isDshAuditProject(project)) {
@@ -1374,11 +1414,18 @@ export class Orchestrator {
             signal,
           });
         } catch (err) {
+          if (auditReservation?.reservation?.id) this.store.releaseModelReservation(auditReservation.reservation.id);
+          if (signal.aborted) return { ok: false, reason: '运行被暂停/取消，审计检查点已保留' };
           const message = redact(`独立审计无法完成：${err?.message || err}`, this.config);
           this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'audit-error', filename: `attempt-${attemptNo}-audit-error.txt`, content: message });
           this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'audit_error', level: 'error', message });
           return this.failTask(run, task, `${message}（不伪造审计结论）`, 'blocked');
         }
+        if (auditReservation?.reservation?.id) {
+          const au = summarizeUsage(audit.usage || {});
+          this.store.settleModelReservation(auditReservation.reservation.id, { actualTokens: au.total, actualCostCny: audit.costCny || 0, usageKnown: !!(audit.usage && au.total > 0) });
+        }
+        if (signal.aborted) return { ok: false, reason: '运行被暂停/取消，审计检查点已保留' };
         const auditStatus = audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL');
         const auditIdentity = resolveLlmIdentity({ config: this.config, provider: audit.provider });
         const actualAuditProvider = auditIdentity.known ? auditIdentity.provider : 'unknown';
@@ -1440,8 +1487,8 @@ export class Orchestrator {
             }
             await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
           }
-          this.freezeTestBaseline(project, worktree);
           const headCommit = await gitops.currentHead(worktree);
+          this.freezeTestBaseline(project, worktree, { runId: run.id, taskId: task.id, source: 'task_passed', commit: headCommit });
           const verification = {
             baseCommit, testedHash, commit: headCommit, planBranch,
             testCommand: safeCommand, auditId: auditRow.id, auditStatus,
@@ -1507,9 +1554,11 @@ export class Orchestrator {
     }
   }
 
-  freezeTestBaseline(project, worktree) {
+  freezeTestBaseline(project, worktree, meta = {}) {
     const cfg = project.config_json || {};
-    if (cfg.require_real_tests !== true || cfg.tests_frozen_at) return cfg.trusted_test_hashes || {};
+    if (cfg.require_real_tests !== true) return cfg.trusted_test_hashes || {};
+    // P1-1：永久冻结已有测试；允许新增测试文件。新增文件只有在真实测试/审计通过后
+    // 由本函数合并进下一版测试基线，不在第一轮就把整个 tests/** 永久锁死。
     const files = findTestFiles(worktree);
     const hashes = {};
     for (const rel of files) {
@@ -1517,20 +1566,22 @@ export class Orchestrator {
       if (h) hashes[rel] = h;
     }
     if (!Object.keys(hashes).length) throw new PolicyError('TEST_FREEZE_EMPTY', '没有可冻结的真实测试文件，不能标记任务通过');
-    // 冻结测试运行器配置：只冻结测试文件不足以防止 Agent 改 package.json 的 test script。
     const runnerConfigs = ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'pyproject.toml', 'pytest.ini', 'go.mod', 'Cargo.toml', 'vitest.config.js', 'vitest.config.mjs', 'jest.config.js', 'jest.config.mjs', 'playwright.config.js', 'playwright.config.mjs', 'playwright.config.ts'];
     for (const rel of runnerConfigs) {
       const h = sha256File(path.join(worktree, rel));
       if (h) hashes[rel] = h;
     }
-    const protectedPaths = [...new Set([...(project.protected_paths || []), 'tests/**', 'test/**', '**/*.test.js', '**/*.test.mjs', '**/*.spec.js', '**/*.spec.mjs', ...runnerConfigs])];
+    const history = Array.isArray(cfg.test_baseline_history) ? [...cfg.test_baseline_history] : [];
+    history.push({ at: new Date().toISOString(), ...meta, files: Object.keys(hashes), hashes });
+    const broadTestGlobs = new Set(['tests/**', 'test/**', '**/*.test.js', '**/*.test.mjs', '**/*.spec.js', '**/*.spec.mjs']);
+    const protectedPaths = [...new Set([...(project.protected_paths || []).filter((p) => !broadTestGlobs.has(String(p))), ...Object.keys(hashes), ...runnerConfigs, 'tests/acceptance/**', '.workbench/**'])];
     const updated = this.updateProject(project.id, {
       protectedPaths,
-      config: { ...cfg, trusted_test_hashes: hashes, tests_frozen_at: new Date().toISOString() },
+      config: { ...cfg, trusted_test_hashes: hashes, tests_frozen_at: new Date().toISOString(), test_baseline_history: history.slice(-50), test_baseline_version: history.length },
     });
     project.protected_paths = updated.protected_paths;
     project.config_json = updated.config_json;
-    this.emit({ projectId: project.id, type: 'tests_frozen', message: `已冻结 ${Object.keys(hashes).length} 个真实测试文件；后续修改测试需显式授权`, data: { files: Object.keys(hashes) } });
+    this.emit({ projectId: project.id, type: 'tests_frozen', message: `测试基线已版本化：${Object.keys(hashes).length} 个文件；已有测试只可新增，不可修改`, data: { files: Object.keys(hashes), version: history.length, runId: meta.runId || '', taskId: meta.taskId || '' } });
     return hashes;
   }
 
@@ -1659,6 +1710,43 @@ export class Orchestrator {
     try { this.store.clearRunLease(run.id); this.store.releaseProjectLease(run.project_id, this.instanceId); } catch { /* ignore */ }
   }
 
+  contractAcceptanceStatus(project, tasks) {
+    const cfg = project?.config_json || {};
+    let expected = parseList(cfg.test_plan?.acceptance || cfg.test_plan?.acceptance_json || []);
+    // 兼容 v3.0 已创建的项目：acceptance 可能只存在于冻结的 TEST_PLAN.json（config 未回填）。
+    if (!expected.length && project?.local_path) {
+      try {
+        const planFile = path.join(project.local_path, 'TEST_PLAN.json');
+        if (fs.existsSync(planFile)) expected = parseList(JSON.parse(fs.readFileSync(planFile, 'utf8')).acceptance);
+      } catch { /* ignore */ }
+    }
+    if (!expected.length) return { required: false, ok: true, missing: [] };
+    const norm = (text) => String(text || '').toLowerCase().replace(/[\s，。；：、,.!?！？:;（）()\-—]/g, '');
+    const evidence = [];
+    for (const task of tasks) {
+      if (task.status !== TaskStatus.PASSED) continue;
+      const audits = this.store.listAudits(task.id).filter((a) => String(a.verification_status || a.verdict || '').toUpperCase() === 'PASS');
+      for (const audit of audits) {
+        for (const c of audit.criteria_json || []) {
+          if (String(c.status || '').toLowerCase() !== 'pass') continue;
+          const text = String(c.evidence || '').trim();
+          if (text.length < 12 || /^(无|none|n\/a|unknown|未提供|未验证|-+)$/i.test(text)) continue;
+          evidence.push({ criterion: String(c.criterion || ''), evidence: text, taskId: task.id, auditId: audit.id, commit: task.head_commit || '', evidenceHash: audit.evidence_hash || '' });
+        }
+      }
+    }
+    const missing = [];
+    for (const clause of expected) {
+      const n = norm(clause);
+      const hit = evidence.find((e) => {
+        const c = norm(e.criterion);
+        return c && (c.includes(n) || n.includes(c) || (n.length > 8 && c.slice(0, Math.min(c.length, 24)) === n.slice(0, Math.min(n.length, 24))));
+      });
+      if (!hit) missing.push(clause);
+    }
+    return { required: true, ok: missing.length === 0, expected, evidence, missing };
+  }
+
   async finalizeRun(run) {
     const project = this.store.getProject(run.project_id);
     const tasks = this.store.listTasks({ planId: run.plan_id });
@@ -1671,6 +1759,33 @@ export class Orchestrator {
         : '任务未全部完成';
       this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
       this.emit({ runId: run.id, projectId: run.project_id, type: 'run_paused', level: 'warn', message: reason });
+      return;
+    }
+
+    // P0-2：冻结验收契约是最终完成判定，不能因为“任务全部 passed”就交付。
+    const acceptance = this.contractAcceptanceStatus(project, tasks);
+    if (acceptance.required && !acceptance.ok) {
+      const resultJson = run.result_json || {};
+      const repairs = Number(resultJson.acceptanceRepairCount || 0);
+      const maxRepairs = Math.max(1, Math.min(3, Number(project.config_json?.test_plan?.maxAcceptanceRepairs ?? 2)));
+      if (repairs < maxRepairs) {
+        const missingText = acceptance.missing.join('；');
+        const nextSeq = tasks.reduce((m, t) => Math.max(m, Number(t.seq || 0)), 0) + 1;
+        this.store.createTasks([{
+          id: newId('task'), projectId: project.id, planId: run.plan_id, runId: run.id, seq: nextSeq,
+          title: `完成冻结验收条款：${missingText.slice(0, 100)}`,
+          description: `自动验收门发现以下必需验收条款缺少 PASS 审计证据：\n${acceptance.missing.map((x, i) => `${i + 1}. ${x}`).join('\n')}\n请修复产品并补充真实测试；不得修改冻结契约/已有测试。`,
+          acceptance: acceptance.missing,
+          agentKind: 'auto', testCommand: project.test_command || '', status: TaskStatus.QUEUED,
+          maxAttempts: Number(project.config_json?.max_attempts || this.config.budget.maxAttempts || 2),
+        }]);
+        this.store.updateRun(run.id, { status: RunStatus.RUNNING, stop_reason: '', pause_kind: '', current_task_id: '', result_json: { ...resultJson, acceptanceRepairCount: repairs + 1, acceptanceMissing: acceptance.missing } });
+        this.emit({ runId: run.id, projectId: project.id, type: 'acceptance_repair_queued', message: `冻结验收条款缺少证据，已自动生成修复任务（${repairs + 1}/${maxRepairs}）：${missingText.slice(0, 500)}`, data: { missing: acceptance.missing } });
+        return { continue: true };
+      }
+      const reason = `冻结验收条款未完成（${acceptance.missing.length} 项缺少真实测试/独立审计 PASS 证据）：${acceptance.missing.join('；').slice(0, 1000)}`;
+      this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason, pause_kind: 'acceptance_incomplete', result_json: { ...resultJson, acceptanceMissing: acceptance.missing } });
+      this.emit({ runId: run.id, projectId: project.id, type: 'acceptance_blocked', level: 'warn', message: reason, data: { missing: acceptance.missing } });
       return;
     }
 
@@ -1994,35 +2109,67 @@ export class Orchestrator {
     return lease;
   }
 
-  pauseRun(runId, reason, kind = 'manual') {
+  async waitForRunStop(runId, timeoutMs = 60_000) {
+    const started = Date.now();
+    while (this.running.has(runId)) {
+      if (Date.now() - started > timeoutMs) return false;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return true;
+  }
+
+  async pauseRun(runId, reason, kind = 'manual') {
     const run = this.store.getRun(runId);
     if (!run) return null;
+    // 幂等：已暂停/中断不重复写、不重复 aborted
+    if ([RunStatus.PAUSED, RunStatus.INTERRUPTED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.AWAITING_ACCEPTANCE, RunStatus.ACCEPTED].includes(run.status)) {
+      return run;
+    }
     this.ensureControlLease(run.project_id);
     const controller = this.controllers.get(runId);
+    const active = !!controller || this.running.has(runId);
     if (controller) controller.abort();
+    if (active) {
+      const stopped = await this.waitForRunStop(runId, Number(this.config.policy?.pauseTimeoutMs || 60_000));
+      if (!stopped) {
+        throw new PolicyError('PAUSE_TIMEOUT', `运行 ${runId} 在超时内未真正停止 Agent/任务；保持 running，不显示已暂停`);
+      }
+    }
+    const latest = this.store.getRun(runId);
+    if (!latest) return null;
+    if ([RunStatus.PAUSED, RunStatus.INTERRUPTED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.AWAITING_ACCEPTANCE].includes(latest.status)) {
+      return latest;
+    }
+    const reasonText = redact(reason || '已暂停', this.config);
     const stopped = this.store.updateRun(runId, {
       status: RunStatus.PAUSED,
-      stop_reason: redact(reason || '已暂停', this.config),
+      stop_reason: reasonText,
+      pause_kind: kind,
     });
     this.emit({
       runId,
       projectId: run.project_id,
       type: 'run_paused',
       level: kind === 'manual' ? 'info' : 'warn',
-      message: `运行已暂停：${redact(reason || '人工暂停', this.config)}`,
-      data: { kind },
+      message: `运行已暂停：${reasonText}`,
+      data: { kind, agentStopped: active },
     });
-    if (!controller) this.releaseProjectLease(run.project_id);
+    if (!active) this.releaseProjectLease(run.project_id);
     return stopped;
   }
 
-  async resumeRun(runId, { retryFailed = false } = {}) {
+  async resumeRun(runId, { retryFailed = false, authorizeBudget = false } = {}) {
     const run = this.store.getRun(runId);
     if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
     if ([RunStatus.ACCEPTED, RunStatus.CANCELLED].includes(run.status)) {
       throw new PolicyError('RUN_CLOSED', `运行已结束（${run.status}），不能恢复`);
     }
+    if (['budget', 'wall_clock'].includes(String(run.pause_kind || '')) && !authorizeBudget) {
+      throw new PolicyError('RUN_PAUSED_BY_BUDGET', `运行因 ${run.pause_kind === 'wall_clock' ? 'wall clock 超时' : '预算不足'} 暂停，不能自动解除；需要用户明确授权预算/超时后手动恢复`);
+    }
+    // 幂等也要先验证当前执行者拥有写租约，跨进程不能借幂等读取绕过 Fencing。
     this.ensureControlLease(run.project_id);
+    if ([RunStatus.RUNNING, RunStatus.QUEUED, RunStatus.AWAITING_ACCEPTANCE].includes(run.status)) return run;
     try {
     this.assertBudget(5_000);
     const resumeProject = this.store.getProject(run.project_id);
@@ -2071,7 +2218,7 @@ export class Orchestrator {
       maxWallClockMs: Number(projectBudget.max_wall_clock_ms || this.config.budget.runWallClockMs),
     };
     const newDeadline = new Date(Date.now() + refreshedBudget.maxWallClockMs).toISOString();
-    this.store.updateRun(runId, { budget_json: refreshedBudget, wall_deadline: newDeadline, verification_status: 'LOCAL_VERIFIED', ci_status: '', ci_url: '', ci_checked_at: '' });
+    this.store.updateRun(runId, { budget_json: refreshedBudget, wall_deadline: newDeadline, verification_status: 'LOCAL_VERIFIED', ci_status: '', ci_url: '', ci_checked_at: '', pause_kind: '' });
     this.emit({
       runId,
       projectId: run.project_id,
@@ -2104,6 +2251,11 @@ export class Orchestrator {
       throw new PolicyError('RUN_NOT_READY', `运行尚未完成，当前状态：${run.status}`);
     }
     const project = this.store.getProject(run.project_id);
+    const tasks = this.store.listTasks({ runId: run.id });
+    const acceptance = this.contractAcceptanceStatus(project, tasks);
+    if (acceptance.required && !acceptance.ok) {
+      throw new PolicyError('RUN_ACCEPTANCE_INCOMPLETE', `冻结验收条款缺少 PASS 证据：${acceptance.missing.join('；')}`);
+    }
     const verification = run.verification_status || '';
     const verifiedSha = run.verified_sha || '';
     if (verification !== 'CI_PASSED') {
@@ -2235,6 +2387,10 @@ export class Orchestrator {
       throw new PolicyError('PROJECT_LEASE_HELD', `验证重试无法获得项目写租约：${retryLease.reason || '其他执行者持有'}`);
     }
     this.projectLeases.set(project.id, { owner: this.instanceId, fence: retryLease.fence });
+    const retryController = new AbortController();
+    const retrySignal = retryController.signal;
+    this.running.add(run.id);
+    this.controllers.set(run.id, retryController);
     this.store.updateRun(run.id, { status: RunStatus.RUNNING, stop_reason: '', current_task_id: task.id });
     this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'verification_retry_started', message: '复用现有工作副本，仅重试测试与独立审计' });
     try {
@@ -2251,7 +2407,9 @@ export class Orchestrator {
         command: safeCommand,
         timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
         logPath: path.join(logDir, `verify-${Date.now()}-test.log`),
+        signal: retrySignal,
       });
+      if (retrySignal.aborted) return { ok: false, reason: '运行被暂停/取消，验证检查点已保留' };
       const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null, setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed };
       this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
       await gitops.stageAll(worktree);
@@ -2275,20 +2433,39 @@ export class Orchestrator {
       }
       const contractViolations = verifyContractBaseline(worktree, project.config_json?.contract_baseline || {});
       if (contractViolations.length) throw new PolicyError('CONTRACT_MUTATED', `冻结验收契约被修改：${contractViolations.join(', ')}`);
+      const testBaselineViolations = verifyTestBaseline(worktree, project.config_json?.trusted_test_hashes || {});
+      if (testBaselineViolations.length) throw new PolicyError('TEST_BASELINE_MUTATED', `已冻结测试/运行器被修改：${testBaselineViolations.join(', ')}`);
       const diff = await gitops.stagedDiff(worktree, baseCommit, { maxChars: 1_000_000 });
       const diffStat = await gitops.diffStat(worktree, baseCommit);
       const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
       const lastAttempt = this.store.listAttempts(task.id).filter((a) => a.stage === 'coding').slice(-1)[0];
       const coderFamily = coderFamilyFor(lastAttempt?.agent_kind || task.agent_kind || 'dsh', this.config);
+      let auditResourceInfo = null;
+      try { auditResourceInfo = this.auditResourcePreflight(project, coderFamily); } catch { auditResourceInfo = null; }
       this.store.updateTask(task.id, { status: TaskStatus.AUDITING });
       this.assertBudget(8_000);
       const contextFiles = await this.collectAuditContext(worktree);
       this.assertProjectLease(project.id);
-      const audit = await this.deps.runAudit({
-        config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },
-        diff, diffStat, testResult, repoFiles, coderFamily, contextFiles,
-        versionInfo: { baseCommit, worktreeHash: testedHash, testedHash }, worktree, commit: '',
-      });
+      let auditReservation = null;
+      let audit;
+      try {
+        if (this.deps.runAudit === runAudit && auditResourceInfo && !auditResourceInfo.exempt && !this.isDshAuditProject(project)) {
+          auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditResourceInfo.provider, model: auditResourceInfo.model || '', estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true });
+        }
+        audit = await this.deps.runAudit({
+          config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },
+          diff, diffStat, testResult, repoFiles, coderFamily, contextFiles,
+          versionInfo: { baseCommit, worktreeHash: testedHash, testedHash }, worktree, commit: '', signal: retrySignal,
+        });
+      } catch (err) {
+        if (auditReservation?.reservation?.id) this.store.releaseModelReservation(auditReservation.reservation.id);
+        throw err;
+      }
+      if (auditReservation?.reservation?.id) {
+        const au = summarizeUsage(audit.usage || {});
+        this.store.settleModelReservation(auditReservation.reservation.id, { actualTokens: au.total, actualCostCny: audit.costCny || 0, usageKnown: !!(audit.usage && au.total > 0) });
+      }
+      if (retrySignal.aborted) return { ok: false, reason: '运行被暂停/取消，验证检查点已保留' };
       const auditStatus = audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL');
       this.assertProjectLease(project.id);
       const auditIdentity = resolveLlmIdentity({ config: this.config, provider: audit.provider });
@@ -2344,8 +2521,8 @@ export class Orchestrator {
         const sameCheckedOutBranch = currentBranch && currentBranch === planBranch && (await gitops.currentHead(worktree)) === commit.commit;
         if (!sameCheckedOutBranch) await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
       }
-      this.freezeTestBaseline(project, worktree);
       const headCommit = await gitops.currentHead(worktree);
+      this.freezeTestBaseline(project, worktree, { runId: run.id, taskId: task.id, source: 'verification_retry', commit: headCommit });
       const verification = {
         baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
         auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
@@ -2359,6 +2536,7 @@ export class Orchestrator {
       this.kick(run.id);
       return { ok: true, commit: headCommit };
     } catch (err) {
+      if (retrySignal.aborted) return { ok: false, reason: '运行被暂停/取消，验证检查点已保留' };
       const reason = redact(`验证重试失败：${err?.message || err}`, this.config);
       this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason });
       this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
@@ -2366,6 +2544,8 @@ export class Orchestrator {
       return { ok: false, reason };
     } finally {
       this._verificationLocks.delete(task.id);
+      this.running.delete(run.id);
+      if (this.controllers.get(run.id) === retryController) this.controllers.delete(run.id);
       this.releaseProjectLease(project.id);
     }
   }
