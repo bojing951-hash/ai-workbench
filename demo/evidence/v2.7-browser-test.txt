@@ -1,26 +1,5 @@
-VERSION v2.7.0
-REPLAY project proj_mwi251atbd752de4 selector options 17
-stage text sample 第一幕：我提出了什么需求？ |  | 以下是冻结记录中的原始目标、研发循环目标与契约原文。原始聊天消息没有写入数据库，因此不做“凭记忆补录”。 |  | 消费决策实验室：React+TS 产品；Claude Code
-NEW project title 回放项目：Reading Queue Planner（v2.7 独立验收） · 时间统一为北京时间（Asia/Shanghai） · 数据生成于 2026/11/16 11:52:04
-Reading Queue Planner（v2.7 独立验收）
-Consumption Decision Lab
-W 24h 无人监督验收（v2.4，冻结）
-W Supervisor 崩溃恢复验收（v2.4）
-W 无人监督验收 v2.3 run4（冻结）
-W 无人监督验收 v2.3 run3（冻结）
-W 无人监督验收 v2.3 run2（冻结）
-W 无人监督验收 v2.3（冻结验收）
-v2.2 阻塞测试（临时）
-AI Workbench v2.2 Loop（W·隔离克隆）
-v2.2 容器隔离 E2E（临时）
-AI Workbench Loop（W·隔离克隆）
-AI Workbench（W）
-Notes API 并行（阶段三）
-Log Audit（阶段三）
-Notes API（阶段二）
-TaskVault（阶段一）
-简单讲解
-技术详情
-gallery images 0 empty note false
-audits 4
-errors none
+version v2.7.0 selector 17
+new project replay 回放项目：Reading Queue Planner（v2.7 独立验收） · 时间统一为北京时间（Asia/Shanghai） · 数据生成于 2026/11/16 12:06:44
+audits 0
+summary generic? true no cdl hardcode? true no 4/4? true
+page errors none
