@@ -5887,7 +5887,7 @@ function buildActDelivery(data) {
   children.push(gallery);
   children.push(el('div', { className: 'replay-costgrid' }, [
     el('div', { className: 'live-metric' }, [el('span', { text: '最终代码 commit' }), el('strong', { text: finalCommit?.short || shortHash(final.commit || '') || '未记录' }), el('small', { text: final.commit || finalCommit?.sha || '未记录' })]),
-    el('div', { className: 'live-metric' }, [el('span', { text: '产品源码位置' }), el('strong', { style: { fontSize: '11px' }, text: data.project.local_path || '未记录' }), el('small', { text: '独立 Git 仓库；无远端推送授权' })]),
+    el('div', { className: 'live-metric' }, [el('span', { text: '产品源码位置' }), el('strong', { style: { fontSize: '11px' }, text: data.project.local_path || '未记录' }), el('small', { text: '来自项目本地路径；推送/合并状态见运行记录' })]),
     el('div', { className: 'live-metric' }, [el('span', { text: '测试结果' }), el('strong', { text: final.testPassedAt ? '测试通过事件已记录' : '未记录' }), el('small', { text: final.testEvidence ? `审计证据摘要：${final.testEvidence.slice(0, 100)}` : '无测试证据记录' })]),
     el('div', { className: 'live-metric' }, [el('span', { text: '审计结果' }), el('strong', { text: final.auditStatus ? `${final.auditStatus}${final.auditScore != null ? ` · ${final.auditScore}` : ''}` : '未记录' }), el('small', { text: final.auditCriteriaTotal ? `${final.auditCriteriaPassed}/${final.auditCriteriaTotal} 条验收标准通过（最终审计）` : '无审计证据记录' })]),
     el('div', { className: 'live-metric' }, [el('span', { text: '实际模型成本' }), el('strong', { text: fmtCny(stats.modelCost?.totalCny) }), el('small', { text: `编码 ${fmtCny(stats.modelCost?.codingCny)} + 审计 ${fmtCny(stats.modelCost?.auditCny)}` })]),
@@ -5941,10 +5941,10 @@ function buildSummary(data) {
   const stats = data.stats || {};
   const fixes = stats.requiredFixes || [];
   const categories = [
-    ['AI 自主完成', `${stats.passedTasks || 0} 条任务记录通过；编码 attempts 记录为 Claude Code/GLM，但源码作者归属：${stats.provenanceStatus || 'UNKNOWN'}`, 'green'],
+    ['AI 自主完成', `${stats.passedTasks || 0} 条任务记录通过；${stats.attemptCalls || 0} 次编码 attempts 有记录；源码作者归属：${stats.provenanceStatus || 'UNKNOWN'}`, 'green'],
     ['Workbench 自动恢复后完成', `${stats.agentFailedEvents || 0} 次 Agent 失败事件；${stats.stalledAttempts || 0} 次 stalled/timeout/aborted 被看门狗处理；后续任务最终通过`, 'cyan'],
-    ['外部人工介入完成', `已知操作记录：测试环境修正（Playwright 完整 Chromium，非产品源码）；产品代码人工修改：${stats.humanProductCodeEdits === 'UNKNOWN' ? 'UNKNOWN（无逐行审计记录）' : stats.humanProductCodeEdits}`, 'amber'],
-    ['尚未完成 / 未解决', `${(stats.unresolved || []).length ? stats.unresolved.join('；') : '产品验收标准已通过'}；Workbench 的 Fencing Token、24h 连续验收仍是既有未完成项`, 'gray'],
+    ['外部人工介入完成', `外部操作记录：${stats.externalTestHarnessIntervention === 'UNKNOWN' ? 'UNKNOWN（无逐项目操作日志，不推断）' : stats.externalTestHarnessIntervention}；产品代码人工修改：${stats.humanProductCodeEdits === 'UNKNOWN' ? 'UNKNOWN（无逐行审计记录）' : stats.humanProductCodeEdits}`, 'amber'],
+    ['尚未完成 / 未解决', `${(stats.unresolved || []).length ? stats.unresolved.join('；') : '没有从审计记录中提取到未解决项；不代表产品绝对无缺陷'}`, 'gray'],
     ['数据不足无法确认', '原始聊天消息未入库；部分尝试没有 diff/commit；UNKNOWN 审计的 provenance 结论没有被后续证明', 'gray'],
   ];
   const summary = el('div', { className: 'replay-summary' }, [
@@ -5952,18 +5952,18 @@ function buildSummary(data) {
     el('p', { text: '任务、尝试、审计、失败、耗时与费用来自 SQLite / 事件 / 审计 / Git 记录；“源码作者归属”没有逐行审计证据，按 UNKNOWN 显示，不把记录推断当确定事实。' }),
     el('div', { className: 'replay-stats' }, [
       ['任务记录', `${stats.projectTaskRecords || 0} 条`, `通过 ${stats.passedTasks ?? 0} / 失败 ${stats.failedTasks ?? 0} / 阻塞 ${stats.blockedTasks ?? 0}`],
-      ['Claude Code 调用', `${stats.attemptCalls || 0} 次`, `包含失败/超时/取消的真实尝试`],
+      ['编码 Agent 调用', `${stats.attemptCalls || 0} 次`, `包含失败/超时/取消的真实尝试`],
       ['DSH 审计', `${stats.auditCalls || 0} 次`, `PASS ${stats.auditPassed || 0}；UNKNOWN/FAIL ${stats.auditUnknown || 0}`],
       ['发现的问题', `${stats.issuesFound || 0} 项`, '审计 findings / 必须修复项；最终 UNKNOWN 仍在下方保留'],
-      ['自动修复确认', 'UNKNOWN', '没有对每条审计建议做二次确认；最终审计 4/4 PASS 不等于每条建议都已修复'],
+      ['自动修复确认', 'UNKNOWN', '没有对每条审计建议做二次确认；最终审计 PASS 不等于每条建议都已修复'],
       ['卡死/重试', `${stats.agentFailedEvents || 0} 次`, 'agent_failed 事件；失败分类见下'],
-      ['外部人工介入', '已知 1 次（测试环境）', '产品代码人工修改：UNKNOWN（无逐行审计记录），不能证明为零'],
+      ['外部人工介入', stats.externalTestHarnessIntervention === 'UNKNOWN' ? 'UNKNOWN' : String(stats.externalTestHarnessIntervention), '没有逐项目人工操作日志；产品代码人工修改也为 UNKNOWN（无逐行审计记录）'],
       ['模型成本', fmtCny(stats.modelCost?.totalCny), `编码 ${fmtCny(stats.modelCost?.codingCny)} + 审计 ${fmtCny(stats.modelCost?.auditCny)}`],
       ['从开始到结束', fmtDurationCn(stats.durationMs), `${fmtBeijingFull(stats.start)} → ${fmtBeijingFull(stats.end)}`],
     ].map(([label, value, sub]) => el('div', { className: 'replay-stat' }, [el('span', { text: label }), el('strong', { text: value }), el('small', { className: 'insight-note', text: sub })]))),
     el('div', { style: { marginTop: '12px' } }, categories.map(([label, text, tone]) => el('div', { className: 'replay-source', style: { marginTop: '6px', borderLeft: `2px solid var(--${tone})` } }, [el('strong', { text: label }), el('span', { text: `：${text}` })]))),
     el('p', { className: 'replay-disclaimer', text: `失败分类（来自 attempts.failure_class）：${Object.entries(stats.failureClasses || {}).map(([k, v]) => `${k} ${v} 次`).join('；') || '未记录'}。` }),
-    el('p', { className: 'replay-disclaimer', text: `未解决/无法确认：${fixes.filter((f) => /provenance|来源|生成者/.test(f)).length ? '源码作者归属这一条无法由 DSH 内部证明，已记录为 UNKNOWN；' : ''}原始聊天消息、部分修复细节未入库；测试通过不等于产品绝对无缺陷。` }),
+    el('p', { className: 'replay-disclaimer', text: `未解决/无法确认：${fixes.some((f) => /provenance|来源|生成者/.test(f)) ? '源码作者归属这一条无法由 DSH 内部证明，已记录为 UNKNOWN；' : ''}原始聊天消息、部分修复细节未入库；测试通过不等于产品绝对无缺陷。` }),
   ]);
   return summary;
 }

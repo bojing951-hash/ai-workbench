@@ -1152,7 +1152,7 @@ export class Store {
         this.db.exec('ROLLBACK');
         return { ok: false, reason: held ? 'run-lease-held' : 'stale-fence', fence: Number(row.lease_fence || 0) };
       }
-      result = this.db.prepare('UPDATE runs SET lease_owner=?, lease_expires_at=?, lease_fence=? WHERE id=? AND (lease_owner=? OR lease_owner=? OR lease_expires_at=?)').run(owner, expires, Number(fence), runId, '', owner, now);
+      result = this.db.prepare('UPDATE runs SET lease_owner=?, lease_expires_at=?, lease_fence=? WHERE id=? AND (lease_owner=? OR lease_owner=? OR lease_expires_at<?)').run(owner, expires, Number(fence), runId, '', owner, now);
       this.db.exec('COMMIT');
       return { ok: result.changes > 0, fence: Number(fence) };
     } catch (err) {

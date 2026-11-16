@@ -77,7 +77,7 @@ export function runQualityCommand({ config, project }) {
   const parsed = parseJsonOutput(stdout);
   if (!parsed) {
     const reason = res.error?.message || (res.timedOut ? '质量命令超时' : `质量命令未返回 JSON（exit=${res.status}）`);
-    return { ok: false, reason, requirements: [], issues: [{ id: 'quality-command-error', title: reason, priority: 'P1', evidence: redact((stderr || stdout || reason).slice(-4000), config), requirementId: '', hypothesis: false, source: 'quality-command' }], stdout, stderr, exitCode: res.status };
+    return { ok: false, commandFailed: true, reason, requirements: [], issues: [{ id: 'quality-command-error', title: reason, priority: 'P1', evidence: redact((stderr || stdout || reason).slice(-4000), config), requirementId: '', hypothesis: true, source: 'quality-command' }], stdout, stderr, exitCode: res.status };
   }
   return { ok: true, parsed, requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [], issues: Array.isArray(parsed.issues) ? parsed.issues : [], stdout, stderr, exitCode: res.status, reason: '' };
 }
@@ -86,6 +86,13 @@ function evidenceText(value) {
   if (value == null) return '';
   if (typeof value === 'string') return value.trim();
   try { return JSON.stringify(value).slice(0, 4000); } catch { return ''; }
+}
+
+function evidenceIsConcrete(value) {
+  const text = evidenceText(value);
+  if (!text || text.length < 8) return false;
+  if (/^(n\/?a|none|null|unknown|unproven|tbd|todo|na|x+|-+|无|没有|待补|待定|不适用)$/i.test(text)) return false;
+  return true;
 }
 
 function normalizeIssue(issue, req, source) {
@@ -114,6 +121,13 @@ export function buildCoverageMatrix({ project, qualityRun, audits = [] }) {
   const byId = new Map((qualityRun.requirements || []).map((r) => [String(r.id || r.requirement_id || ''), r]));
   const matrix = [];
   const issues = [];
+  if (qualityRun.commandFailed) {
+    for (const req of requirements) {
+      matrix.push({ id: req.id, title: req.title, description: req.description, priority: req.priority, required: req.required, acceptance: req.acceptance, codeRefs: req.codeRefs, testRefs: req.testRefs, auditRefs: req.auditRefs, status: 'UNKNOWN', evidence: '', auditEvidence: [], issues: [] });
+      issues.push({ id: `quality-command-error-${req.id}`, title: `质量命令失败，未评估需求「${req.title}」`, priority: 'P0', evidence: qualityRun.reason || '', requirementId: req.id, hypothesis: true, source: 'quality-command' });
+    }
+    return { requirements: matrix, issues, allPass: false, coverage: { total: matrix.length, pass: 0, fail: 0, unknown: matrix.length, blocked: 0 }, p0p1: [], generatedAt: nowIso(), qualityCommandRan: false, qualityCommandError: qualityRun.reason || '质量命令失败' };
+  }
   const auditText = (audits || []).map((a) => ({
     id: a.id || '', status: a.verification_status || a.status || '', score: a.score,
     criteria: Array.isArray(a.criteria) ? a.criteria : [],
@@ -130,13 +144,13 @@ export function buildCoverageMatrix({ project, qualityRun, audits = [] }) {
     let status = rawStatus;
     let evidence = rawEvidence;
     // 质量命令明确 PASS 且带证据才 PASS；仅任务通过不算。
-    if (status === 'PASS' && !evidence && !auditEvidence.length) status = 'UNKNOWN';
-    if (status === 'PASS' && auditEvidence.length && !evidence) evidence = `独立审计：${auditEvidence.map((a) => a.id).join(', ')}`;
+    if (status === 'PASS' && !evidenceIsConcrete(evidence) && !auditEvidence.length) status = 'UNKNOWN';
+    if (status === 'PASS' && auditEvidence.length && !evidenceIsConcrete(evidence)) evidence = `独立审计：${auditEvidence.map((a) => a.id).join(', ')}`;
     const reqIssues = [];
     for (const i of (raw?.issues || [])) { const n = normalizeIssue(i, req, 'quality-command'); if (n) reqIssues.push(n); }
     for (const n of reqIssues) issues.push(n);
     if (!raw) {
-      const unknown = { id: `requirement-not-evaluated-${req.id}`, title: `质量命令没有评估需求「${req.title}」`, priority: req.priority, evidence: qualityRun.reason || '质量命令未返回该需求结果', requirementId: req.id, hypothesis: !qualityRun.reason, source: 'coverage' };
+      const unknown = { id: `requirement-not-evaluated-${req.id}`, title: `质量命令没有评估需求「${req.title}」`, priority: req.priority, evidence: qualityRun.reason || '质量命令未返回该需求结果', requirementId: req.id, hypothesis: true, source: 'coverage' };
       issues.push(unknown);
     }
     if (status !== 'PASS' && status !== 'BLOCKED' && !reqIssues.some((i) => i.priority === 'P0' || i.priority === 'P1')) {

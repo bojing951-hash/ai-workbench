@@ -220,7 +220,7 @@ GitHub 真实结果（API 复核）：
 
 # v2.7.0 质量闭环/Fencing/通用回放追加（2026-11-16）
 
-- `npm test`：**221/221**（原 212 全保留；新增 quality 4、quality-loop 1、fencing 2、fencing-workbench 1、replay 分页 1）。
+- `npm test`：**222/222**（原 212 全保留；新增 quality 4、quality-loop 1、fencing 2、fencing-workbench 1、replay 分页 1）。
 - Fencing：真实两个独立 Node 进程竞争 SQLite 项目；两个 Orchestrator 实例并发 startRun 仅一个成功；旧 token/旧 Run 租约不能覆盖。
 - Quality Loop：真实临时 Git 仓库 + 外部质量命令，FAIL → 自动修复任务 → 第二轮 PASS → 循环完成；无证据问题只记 hypothesis。
 - 独立验收项目 Reading Queue Planner：审计预算预检 BLOCKED（编码前），未写产品代码；缺陷发现率/自动修复率 UNKNOWN。

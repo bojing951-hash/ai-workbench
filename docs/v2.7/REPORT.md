@@ -3,7 +3,7 @@
 - 版本：**v2.7.0**（基于 v2.6.0）
 - 范围：只开发 AI Workbench；**未修改 Consumption Decision Lab**；**未访问/修改/暂停/同步/接管 A/B**；未合并 main、未部署。
 - 严格区分状态：IMPLEMENTED / TESTED / E2E_VERIFIED / AUTONOMOUSLY_VERIFIED / 24H_VERIFIED / BLOCKED / UNKNOWN / FAILED。
-- 总测试：**221/221**（v2.6 原 212 全保留 + v2.7 新增 9）。
+- 总测试：**222/222**（v2.6 原 212 全保留 + v2.7 新增 9）。
 - Draft PR：**#9**（v2.7.0，未合并/未部署）。
 
 ## 1. 结论速览
@@ -89,9 +89,15 @@
 - 无新增模型调用成本用于新项目（编码前阻塞）。
 - DeepSeek/OpenAI 原有授权未变；GLM 编码按既有授权。
 
-## 8. 交付
+## 8. 独立审查与已知剩余问题
+
+- 独立只读审查（非 DSH）：首轮无 P0、6 个 P1；本轮已修复心跳/过期/run 租约接管/非 owner 写入、质量命令故障误修复、占位证据 PASS、cycles、回放 UI 硬编码、质量 API 最新矩阵等；剩余问题见 `demo/evidence/v2.7-independent-audit.md`。
+- 未把修复后的独立复审标 PASS；没有 DSH 新审计预算。
+- 两个完整 Workbench HTTP 服务进程竞争、质量发现/修复真实 E2E、24h 均未验证。
+
+## 9. 交付
 
 - 代码：分支 `v2.7.0`，Draft PR #9（未合并/未部署）。
-- 测试：221/221；新增长期/质量/分页测试。
+- 测试：222/222；新增长期/质量/分页测试。
 - 证据：`demo/evidence/v2.7-*.json/txt/png`。
 - 下一轮恢复：Resume `loop_mwiq4y5x6bb41dfb` 需要先获得独立审计资源；质量闭环代码已就绪。

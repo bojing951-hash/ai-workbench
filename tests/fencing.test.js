@@ -45,6 +45,10 @@ test('v2.7 fencing：单调 token、过期接管、旧执行者不能续租/写/
     assert.equal(runThird.ok, true);
     const stale = store.setRunLeaseFenced('run1', 'wb:A', first.fence, 60_000);
     assert.equal(stale.ok, false, '旧 fence 不得覆盖 Run 租约');
+    // 过期 run 租约必须能被新 fence 接管，否则恢复会永久卡住。
+    store.db.prepare("UPDATE runs SET lease_expires_at='2000-01-01T00:00:00.000Z' WHERE id='run1'").run();
+    const runTakeover = store.setRunLeaseFenced('run1', 'wb:C', takeover.fence + 1, 60_000);
+    assert.equal(runTakeover.ok, true, '过期 run 租约应可被更高 fence 接管');
     assert.equal(store.releaseProjectLeaseFenced('p1', 'wb:B', takeover.fence), true);
   } finally { store.close(); }
 });

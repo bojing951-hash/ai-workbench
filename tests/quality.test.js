@@ -75,3 +75,14 @@ test('v2.7 质量配置：未配置 quality_command/需求时关闭质量闭环�
   assert.equal(m.requirements.length, 0);
   assert.equal(m.allPass, false);
 });
+
+test('v2.7 质量矩阵：占位证据不得 PASS；质量命令失败不是产品缺陷', () => {
+  const placeholder = buildCoverageMatrix({ project: project(), qualityRun: { requirements: [{ id: 'R1', status: 'pass', evidence: 'N/A' }, { id: 'R2', status: 'pass', evidence: 'x' }], issues: [] }, audits: [] });
+  assert.equal(placeholder.requirements.find((r) => r.id === 'R1').status, 'UNKNOWN');
+  assert.equal(placeholder.allPass, false);
+  const commandFail = buildCoverageMatrix({ project: project(), qualityRun: { ok: false, commandFailed: true, reason: 'quality command exit=7 timeout', requirements: [], issues: [{ id: 'cmd', title: 'quality command failed', priority: 'P1', evidence: 'exit=7', hypothesis: true }] }, audits: [] });
+  assert.equal(commandFail.allPass, false);
+  assert.equal(commandFail.p0p1.length, 0);
+  assert.equal(repairTasksFromQuality(commandFail).length, 0, '基础设施失败不得生成产品修复任务');
+  assert.match(commandFail.qualityCommandError, /exit=7/);
+});

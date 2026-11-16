@@ -1,17 +1,31 @@
 {
   "type": "v2.7-quality-fencing-longrun",
   "version": "2.7.0",
-  "tests": { "total": 221, "pass": 221, "log": "demo/evidence/v2.7-tests.txt" },
+  "tests": {
+    "total": 222,
+    "pass": 222,
+    "log": "demo/evidence/v2.7-tests.txt"
+  },
   "qualityLoop": {
     "status": "IMPLEMENTED+TESTED",
-    "files": ["src/quality.js", "src/loop.js"],
-    "unitTests": ["tests/quality.test.js"],
-    "integration": ["tests/quality-loop.test.js"],
+    "files": [
+      "src/quality.js",
+      "src/loop.js"
+    ],
+    "unitTests": [
+      "tests/quality.test.js"
+    ],
+    "integration": [
+      "tests/quality-loop.test.js"
+    ],
     "realE2E": "BLOCKED"
   },
   "fencing": {
     "status": "IMPLEMENTED+TESTED",
-    "tests": ["tests/fencing.test.js", "tests/fencing-workbench.test.js"],
+    "tests": [
+      "tests/fencing.test.js",
+      "tests/fencing-workbench.test.js"
+    ],
     "realProcessCompetition": "TESTED: two independent Node processes, only one fence",
     "fullWorkbenchHttpProcesses": "UNKNOWN"
   },
@@ -36,7 +50,11 @@
     "cdlBorrowed": false,
     "newAuthorization": false
   },
-  "longRun": { "status": "24H_NOT_VERIFIED / BLOCKED", "wallClockSeconds": 0, "supervisorManaged": true },
+  "longRun": {
+    "status": "24H_NOT_VERIFIED / BLOCKED",
+    "wallClockSeconds": 0,
+    "supervisorManaged": true
+  },
   "replay": {
     "status": "IMPLEMENTED+TESTED",
     "hardcodedProductRemoved": true,
@@ -44,5 +62,19 @@
     "pagination": true,
     "projects": true
   },
-  "constraints": { "cdlModified": false, "abTouched": false, "budgetChanged": false, "merged": false, "deployed": false, "externalProductCode": false }
+  "constraints": {
+    "cdlModified": false,
+    "abTouched": false,
+    "budgetChanged": false,
+    "merged": false,
+    "deployed": false,
+    "externalProductCode": false
+  },
+  "independentReview": {
+    "reviewer": "v27-auditor read-only agent",
+    "status": "FINDINGS_ACKNOWLEDGED_AND_PARTIALLY_REMEDIATED",
+    "initial": "no P0; 6 P1",
+    "path": "demo/evidence/v2.7-independent-audit.md",
+    "dshAudit": "BLOCKED/no new budget"
+  }
 }

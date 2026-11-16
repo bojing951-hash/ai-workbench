@@ -319,7 +319,7 @@ export class LoopManager {
         history[history.length - 1].quality = quality;
         this.emit(loop, 'quality_evaluated', `质量评估：需求覆盖 ${quality.coverage.pass}/${quality.coverage.total} PASS，${quality.p0p1.length} 个有证据 P0/P1 问题`, quality.allPass ? 'info' : 'warn', { quality });
         if (!quality.allPass) {
-          const cycles = history.filter((h) => h.quality).length;
+          const cycles = history.filter((h) => h.quality && !h.quality.allPass).length;
           const repairTasks = repairTasksFromQuality(quality, { maxIssues: qcfg.maxIssuesPerCycle });
           if (quality.p0p1.length && !repairTasks.length) {
             const reason = `质量闭环存在 P0/P1 问题但没有可复现证据（只能记为假设）：${quality.p0p1.map((i) => i.title).join('；')}`;
@@ -327,8 +327,20 @@ export class LoopManager {
             this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
             return;
           }
+          if (quality.qualityCommandError) {
+            const reason = `质量命令执行失败（基础设施/证据 UNKNOWN），不生成产品修复任务、不自动改代码：${quality.qualityCommandError}`;
+            this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
+            this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
+            return;
+          }
           if (!quality.p0p1.length) {
             const reason = `质量闭环未通过（无 P0/P1 可修复项，存在 UNKNOWN/FAIL/BLOCKED）：${quality.requirements.filter((r) => r.status !== 'PASS').map((r) => `${r.id}:${r.status}`).join('；') || '质量证据不足'}`;
+            this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
+            this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
+            return;
+          }
+          if (cycles <= qcfg.maxCycles && loop.mode !== 'queue') {
+            const reason = '质量闭环发现可修复 P0/P1，但当前循环为 plan 模式，自动修复任务只支持 queue 模式；已保留矩阵和检查点，不伪造修复';
             this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
             this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
             return;

@@ -284,7 +284,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       let matrix = null;
       for (const loop of loops) {
         const found = latestMatrixFromHistory(loop);
-        if (found) matrix = found;
+        if (found) { matrix = found; break; }
       }
       return sendJson(res, 200, { ok: true, data: { configured: !!qualityConfig(project), matrix } });
     }

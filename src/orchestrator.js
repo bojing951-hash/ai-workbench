@@ -75,9 +75,10 @@ export class Orchestrator {
     const lease = this.projectLeases.get(projectId);
     if (!lease) throw new PolicyError('LEASE_LOST', '当前执行者没有项目写租约，拒绝继续写入');
     const row = this.store.getProjectLease(projectId);
-    if (!row || row.write_owner !== lease.owner || Number(row.lease_fence) !== Number(lease.fence)) {
+    const expired = !row?.lease_expires_at || row.lease_expires_at <= new Date().toISOString();
+    if (!row || row.write_owner !== lease.owner || Number(row.lease_fence) !== Number(lease.fence) || expired) {
       this.projectLeases.delete(projectId);
-      throw new PolicyError('LEASE_LOST', `项目写租约已被其他执行者接管（期望 fence ${lease.fence}，实际 ${row?.lease_fence ?? 'none'}），拒绝旧执行者继续写入`);
+      throw new PolicyError('LEASE_LOST', `项目写租约已失效/被接管（期望 fence ${lease.fence}，实际 ${row?.lease_fence ?? 'none'}，过期=${expired}），拒绝旧执行者继续写入`);
     }
     return lease;
   }
@@ -394,6 +395,7 @@ export class Orchestrator {
         supervisor_managed: input.supervisorManaged === true || input.supervisor_managed === true,
         audit_budget: input.auditBudget || input.audit_budget || {},
         quality: input.quality || input.qualityConfig || input.quality_config || undefined,
+        replay_assets: input.replayAssets || input.replay_assets || undefined,
         agent_fallback: parseList(input.agentFallback || input.agent_fallback),
         agent_stall_timeout_ms: Number(input.agentStallTimeoutMs || input.agent_stall_timeout_ms || 0) || undefined,
       },
@@ -444,6 +446,7 @@ export class Orchestrator {
     if (patch.agentAllowedTools !== undefined || patch.agent_allowed_tools !== undefined) configPatch.agent_allowed_tools = String(patch.agentAllowedTools ?? patch.agent_allowed_tools);
     if (patch.agentDisallowedTools !== undefined || patch.agent_disallowed_tools !== undefined) configPatch.agent_disallowed_tools = String(patch.agentDisallowedTools ?? patch.agent_disallowed_tools);
     if (patch.quality !== undefined) configPatch.quality = patch.quality;
+    if (patch.replayAssets !== undefined || patch.replay_assets !== undefined) configPatch.replay_assets = patch.replayAssets ?? patch.replay_assets;
     if (patch.publish !== undefined) configPatch.publish = !!patch.publish;
     if (Object.keys(configPatch).length) mapped.config_json = { ...(project.config_json || {}), ...configPatch };
     return this.store.updateProject(projectId, mapped);
@@ -466,7 +469,7 @@ export class Orchestrator {
     if (busy) {
       throw new PolicyError('PROJECT_BUSY', `项目已有未完成的运行（${busy.id}，状态 ${busy.status}），同一项目同一时间只允许一个写入运行；请先恢复或取消它`);
     }
-    const acquired = this.store.acquireProjectLeaseFenced(project.id, this.instanceId, 10 * 60 * 1000);
+    const acquired = this.store.acquireProjectLeaseFenced(project.id, this.instanceId, 30 * 60 * 1000);
     if (!acquired.ok) {
       throw new PolicyError('PROJECT_LEASE_HELD', `无法获得项目写租约：${acquired.reason || '其他执行者持有'}（当前 fence=${acquired.fence || 0}）`);
     }
@@ -512,19 +515,20 @@ export class Orchestrator {
       throw err;
     }
 
-    this.store.createRun({
-      id: runId,
-      projectId: project.id,
-      planId,
-      goal,
-      mode,
-      status: RunStatus.QUEUED,
-      budget,
-      spent: { tokens: 0, costCny: 0 },
-      wallDeadline,
-      verificationStatus: 'LOCAL_VERIFIED',
-      parentRunId: input.parentRunId || '',
-    });
+    try {
+      this.store.createRun({
+        id: runId,
+        projectId: project.id,
+        planId,
+        goal,
+        mode,
+        status: RunStatus.QUEUED,
+        budget,
+        spent: { tokens: 0, costCny: 0 },
+        wallDeadline,
+        verificationStatus: 'LOCAL_VERIFIED',
+        parentRunId: input.parentRunId || '',
+      });
     this.store.createPlan({
       id: planId,
       projectId: project.id,
@@ -564,17 +568,21 @@ export class Orchestrator {
         costCny: planResult.costCny || 0,
       });
     }
+    } catch (err) {
+      this.releaseProjectLease(project.id);
+      throw err;
+    }
 
     this.emit({
       runId,
       projectId: project.id,
       type: 'run_created',
-      message: `已创建运行：${mode === 'plan' ? `自动规划 ${taskRows.length} 个任务` : '单任务执行'}`,
-      data: { planId, mode, taskCount: taskRows.length, planner: planResult.plannerMeta },
+      message: `已创建运行：${mode === 'plan' ? `自动规划 ${planResult.tasks.length} 个任务` : '单任务执行'}`,
+      data: { planId, mode, taskCount: planResult.tasks.length, planner: planResult.plannerMeta },
     });
 
     this.kick(runId);
-    return { runId, planId, tasks: taskRows.length, projectId: project.id };
+    return { runId, planId, tasks: planResult.tasks.length, projectId: project.id };
   }
 
   kick(runId) {
@@ -608,10 +616,9 @@ export class Orchestrator {
     if (!runForLease) return;
     let lease = this.projectLeases.get(runForLease.project_id);
     if (!lease) {
-      const acquired = this.store.acquireProjectLeaseFenced(runForLease.project_id, this.instanceId, 10 * 60 * 1000);
+      const acquired = this.store.acquireProjectLeaseFenced(runForLease.project_id, this.instanceId, 30 * 60 * 1000);
       if (!acquired.ok) {
-        this.store.updateRun(runId, { status: RunStatus.PAUSED, stop_reason: `无法取得项目写租约：${acquired.reason || '其他执行者持有'}` });
-        this.emit({ runId, projectId: runForLease.project_id, type: 'run_paused', level: 'warn', message: `无法取得项目写租约：${acquired.reason || '其他执行者持有'}` });
+        // 非 owner：不写 run 状态/事件，留给真正的 owner 或恢复流程处理，避免旧执行者覆盖活 run。
         return;
       }
       lease = { owner: this.instanceId, fence: acquired.fence };
@@ -619,12 +626,22 @@ export class Orchestrator {
     }
     const runLease = this.store.setRunLeaseFenced(runId, lease.owner, lease.fence, 10 * 60 * 1000);
     if (!runLease.ok) {
-      this.store.updateRun(runId, { status: RunStatus.PAUSED, stop_reason: `Run 租约无法取得：${runLease.reason || '被其他执行者持有'}` });
+      // 非 owner：不写 run 状态。
       return;
     }
     this.running.add(runId);
     const controller = new AbortController();
     this.controllers.set(runId, controller);
+    const leaseHeartbeat = setInterval(() => {
+      const current = this.projectLeases.get(runForLease.project_id);
+      if (!current) return;
+      const ok = this.store.renewProjectLeaseFenced(runForLease.project_id, current.owner, current.fence, 30 * 60 * 1000);
+      if (!ok) {
+        this.projectLeases.delete(runForLease.project_id);
+        try { controller.abort(); } catch { /* ignore */ }
+      }
+    }, 60_000);
+    leaseHeartbeat.unref?.();
     try {
       let run = this.store.getRun(runId);
       if (!run) return;
@@ -685,6 +702,7 @@ export class Orchestrator {
       this.store.updateRun(runId, { status: RunStatus.INTERRUPTED, stop_reason: message });
       this.emit({ runId, type: 'run_error', level: 'error', message });
     } finally {
+      clearInterval(leaseHeartbeat);
       this.running.delete(runId);
       this.controllers.delete(runId);
       // 终态安全释放：只用本执行者 fence 释放，已被接管时不会误删新租约。
@@ -1956,6 +1974,12 @@ export class Orchestrator {
     ensureDir(logDir);
     const sandboxHome = tmpHomeFor(this.config, run.id, task.id);
     const protectedPaths = protectPathsForProject(project, this.config);
+    const retryLease = this.store.acquireProjectLeaseFenced(project.id, this.instanceId, 30 * 60 * 1000);
+    if (!retryLease.ok) {
+      this._verificationLocks.delete(task.id);
+      throw new PolicyError('PROJECT_LEASE_HELD', `验证重试无法获得项目写租约：${retryLease.reason || '其他执行者持有'}`);
+    }
+    this.projectLeases.set(project.id, { owner: this.instanceId, fence: retryLease.fence });
     this.store.updateRun(run.id, { status: RunStatus.RUNNING, stop_reason: '', current_task_id: task.id });
     this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'verification_retry_started', message: '复用现有工作副本，仅重试测试与独立审计' });
     try {
@@ -2038,7 +2062,10 @@ export class Orchestrator {
         `测试：${safeCommand} 通过（指纹 ${testedHash.slice(0, 12)}）`,
         '生成：AI 开发工作台 v2.0',
       ].join('\n');
+      const planBranch = task.verification_json?.planBranch || task.branch || run.result_json?.planBranch || `wb/plan-${run.id.slice(-6)}`;
+      this.assertProjectLease(project.id);
       let commit;
+      const provisionalCommit = null;
       if (provisionalCommit) {
         commit = provisionalCommit;
       } else {
@@ -2067,6 +2094,7 @@ export class Orchestrator {
       return { ok: false, reason };
     } finally {
       this._verificationLocks.delete(task.id);
+      this.releaseProjectLease(project.id);
     }
   }
 
