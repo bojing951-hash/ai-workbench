@@ -36,8 +36,8 @@
     "dshAudits": 0
   },
   "tests": {
-    "total": 266,
-    "pass": 266,
+    "total": 268,
+    "pass": 268,
     "log": "demo/evidence/v2.9/tests.log"
   },
   "reliability": {
@@ -66,5 +66,11 @@
   "24h": "NOT_VERIFIED",
   "merged": false,
   "deployed": false,
-  "otherProductsModified": false
+  "otherProductsModified": false,
+  "finalCommit": "2a0b0ba",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/11",
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43868275993"
+  }
 }
