@@ -1,0 +1,531 @@
+From 7a40071fd2d6550fbb75c6b258bbf7ccbb1b9edf Mon Sep 17 00:00:00 2001
+From: AI Workbench <workbench@localhost>
+Date: Sun, 15 Nov 2026 21:03:54 +0800
+Subject: [PATCH] =?UTF-8?q?feat(task-1):=20=E4=B8=BA=20Global=20Opportunit?=
+ =?UTF-8?q?y=20Engine=20=E6=9C=80=E6=96=B0=20committed=20=E5=9F=BA?=
+ =?UTF-8?q?=E7=BA=BF=E8=A1=A5=E9=BD=90=20P1-SCAN-2=20=E5=AF=B9=E6=8A=97?=
+ =?UTF-8?q?=E6=80=A7=E6=89=AB=E6=8F=8F=E8=AF=81=E6=8D=AE=E6=B5=8B=E8=AF=95?=
+ =?UTF-8?q?=EF=BC=88Claude=20=E5=8F=97=E9=99=90=E4=BC=9A=E8=AF=9D=E6=97=A0?=
+ =?UTF-8?q?=E8=BF=9B=E5=B1=95=E5=90=8E=E6=94=B9=E7=94=A8=20DSH=20=E6=89=A7?=
+ =?UTF-8?q?=E8=A1=8C=E5=90=8C=E4=B8=80=E4=BB=BB=E5=8A=A1=EF=BC=89=E3=80=82?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 验收：新增或扩展扫描证据测试，至少覆盖 6 类对抗输入：空证据、伪造/错误哈希、内容被篡改、错误 as_of、过期 scan、部分 ingest/缺失报告；必须调用 goe 真实的 scan evidence 校验函数并断言拒绝及可读错误信息。
+- 验收：不修改产品代码、既有测试、PROJECT_SPEC.md、AGENTS.md、DECISIONS.md、docs/VALIDATION.md。
+- 验收：全量离线测试命令（pytest -m "not network"）通过，包含新增测试。
+- 验收：测试使用临时目录/合成数据，不联网、不写权威数据树。
+
+审计：glm/glm-5.3 PASS（得分 91）
+测试：/Users/cast/Downloads/金融系统/global-opportunity-engine/.venv/bin/python -m pytest -q -m "not network" 通过（指纹 52e2c1d3cac7）
+生成：AI 开发工作台 v2.0
+---
+ tests/test_scan_evidence_adversarial.py | 495 ++++++++++++++++++++++++
+ 1 file changed, 495 insertions(+)
+ create mode 100644 tests/test_scan_evidence_adversarial.py
+
+diff --git a/tests/test_scan_evidence_adversarial.py b/tests/test_scan_evidence_adversarial.py
+new file mode 100644
+index 0000000..09f2570
+--- /dev/null
++++ b/tests/test_scan_evidence_adversarial.py
+@@ -0,0 +1,495 @@
++"""Adversarial P1-SCAN-2 tests for the release scan-evidence gate.
++
++Every test builds an isolated synthetic SQLite store and artifact tree under
++``tmp_path`` (never ``data/goe.db``, ``reports/`` or ``exports/``), then mutates
++exactly one piece of evidence and asks the *real*
++:func:`goe.scan_evidence.verify_scan_evidence` to accept it.  The validator must
++reject each mutation with a stable, human-readable message; the control test
++proves that the unmutated evidence is still accepted.
++
++Coverage map (the six required adversarial classes are all present):
++
++* empty evidence ............... ``test_empty_scan_evidence_is_rejected``
++* forged / wrong hashes ........ ``test_forged_or_wrong_hashes_are_rejected``
++* tampered DB content .......... ``test_tampered_db_content_is_rejected``
++* tampered artifact content .... ``test_tampered_artifact_content_is_rejected``
++* wrong as_of .................. ``test_wrong_as_of_is_rejected``
++* stale scan ................... ``test_stale_scan_is_rejected``
++* partial ingest ............... ``test_partial_ingest_is_rejected``
++* missing report / artifacts ... ``test_missing_artifacts_are_rejected``
++* mismatched report / hashes ... ``test_mismatched_artifacts_are_rejected``
++* no live ingest run ........... ``test_live_scan_without_ingest_run_is_rejected``
++
++Only the readiness sub-check is stubbed (to keep the fixture small); the scan
++evidence reconstruction, hashing, as-of, ingest and artifact checks exercised
++here are the production code paths.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import os
++from datetime import datetime, timezone
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from goe import project_root
++from goe.db import Store
++from goe.scan_evidence import ScanEvidenceError, verify_scan_evidence
++
++AS_OF = "2026-01-03"
++SCAN_ID = "scan-p1-scan-2"
++STARTED_AT = "2026-01-03T20:00:00Z"
++FINISHED_AT = "2026-01-03T20:01:00Z"
++ARTIFACT_MTIME = datetime(2026, 1, 3, 20, 0, 30, tzinfo=timezone.utc).timestamp()
++CORE_SERIES = ("UST:2Y", "UST:10Y", "US_CPI", "US_POLICY_RATE")
++
++
++def _patch_readiness(monkeypatch):
++    """Isolate the fixture from the full 125-instrument readiness contract."""
++    monkeypatch.setattr(
++        "goe.scan_evidence.check_data_readiness",
++        lambda *args, **kwargs: SimpleNamespace(ok=True, critical=[]),
++    )
++
++
++def _make_scan(tmp_path: Path, *, db_name: str = "scan.db"):
++    """Create a self-consistent, synthetic scan that the gate accepts.
++
++    Two price observations are stored (2026-01-01 and as_of 2026-01-03) so the
++    "as_of must equal the last price date" branch can be tested without first
++    failing the "no observations" branch.
++    """
++    store = Store(tmp_path / db_name)
++    for source_id, kind in (("yahoo", "price"), ("test", "indicator")):
++        store.conn.execute(
++            "INSERT INTO sources(source_id,name,kind,tier) VALUES(?,?,?,?)",
++            (source_id, source_id, kind, "exchange"),
++        )
++    for price_date, close in (("2026-01-01", 99.0), (AS_OF, 100.0)):
++        store.conn.execute(
++            """INSERT INTO prices(instrument_id,date,open,high,low,close,adj_close,volume,
++                 source_id,fetched_at,run_id)
++               VALUES('US_EQ_SPY',?,?,?,?,?,?,1000,'yahoo',?,?)""",
++            (price_date, close, close, close, close, close, "2026-01-03T20:00:00Z", SCAN_ID),
++        )
++    for series_id in CORE_SERIES:
++        for indicator_date in ("2026-01-01", AS_OF):
++            store.conn.execute(
++                """INSERT INTO indicators(series_id,date,value,unit,source_id,fetched_at,run_id)
++                   VALUES(?,?,1,'pct','test','2026-01-03T20:00:00Z',?)""",
++                (series_id, indicator_date, SCAN_ID),
++            )
++    store.conn.execute(
++        """INSERT INTO anomalies(anomaly_id,as_of,available_date,detector,family,instrument_id,
++             direction,magnitude,score,percentile,window,evidence_json,fingerprint,run_id,created_at)
++           VALUES('AN-1',?,'2026-01-03','price_return_shock','price','US_EQ_SPY','down',
++             -0.1,0.9,0.1,'1d','{}','fp-1',?,'2026-01-03T20:00:00Z')""",
++        (AS_OF, SCAN_ID),
++    )
++    store.conn.commit()
++
++    config_hash = store.config_fingerprint()
++    data_hash = store.data_fingerprint(AS_OF)
++    output_fingerprint = store.scan_output_fingerprint(SCAN_ID)
++    stats = {
++        "data_readiness": {"ok": True, "price_rows": 2, "indicator_rows": 8},
++        "output_fingerprint": output_fingerprint,
++        "ingest": {"status": "offline"},
++        "anomalies": {"n": 1},
++        "transmissions": {"n_activated": 0},
++        "opportunities": {"created": 0},
++    }
++    store.conn.execute(
++        """INSERT INTO scan_runs(scan_id,as_of,mode,started_at,finished_at,status,
++             config_hash,data_hash,stats_json)
++           VALUES(?,?,'offline',?,?,'success',?,?,?)""",
++        (SCAN_ID, AS_OF, STARTED_AT, FINISHED_AT, config_hash, data_hash,
++         json.dumps(stats)),
++    )
++    store.conn.commit()
++    return store, config_hash, data_hash, stats, output_fingerprint
++
++
++def _set_mtime(path: Path) -> None:
++    """Freeze artifact mtime just after the (synthetic) scan start."""
++    os.utime(path, (ARTIFACT_MTIME, ARTIFACT_MTIME))
++
++
++def _artifact_key(path: Path) -> str:
++    """Mirror the production path key used by ``artifact_sha256``."""
++    try:
++        return path.resolve().relative_to(project_root().resolve()).as_posix()
++    except Exception:
++        return path.name
++
++
++def _artifact_hashes(paths) -> dict[str, str]:
++    return {_artifact_key(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
++
++
++def _write_artifacts(tmp_path: Path, config_hash: str, data_hash: str,
++                     output_fingerprint: str):
++    reports = tmp_path / "reports"
++    exports = tmp_path / "exports"
++    reports.mkdir(exist_ok=True)
++    exports.mkdir(exist_ok=True)
++    report = reports / f"report_{AS_OF}.md"
++    scan_json = reports / f"scan_{AS_OF}.json"
++    pipeline = exports / f"pipeline_{AS_OF}.json"
++
++    report.write_text(
++        f"# Global Opportunity Engine\n\nscan {SCAN_ID}\nas_of {AS_OF}\n"
++        f"config {config_hash[:16]}\ndata {data_hash[:16]}\n",
++        encoding="utf-8",
++    )
++    scan_json.write_text(
++        json.dumps({
++            "meta": {
++                "scan_id": SCAN_ID,
++                "as_of": AS_OF,
++                "config_hash": config_hash,
++                "data_hash": data_hash,
++                "output_fingerprint": output_fingerprint,
++            },
++            "anomalies": [{"anomaly_id": "AN-1"}],
++            "opportunities": [],
++        }, ensure_ascii=False),
++        encoding="utf-8",
++    )
++    pipeline.write_text(
++        json.dumps({
++            "provenance": {"config_hash": config_hash, "data_hash": data_hash},
++            "summary": {"n_opportunities": 0},
++            "opportunities": [],
++        }, ensure_ascii=False),
++        encoding="utf-8",
++    )
++    for path in (report, scan_json, pipeline):
++        _set_mtime(path)
++    return reports, exports, report, scan_json, pipeline
++
++
++def _verify(store: Store, *, reports: Path | None = None, exports: Path | None = None,
++            require_reports: bool = False, require_artifacts: bool = False,
++            reference_date: str = AS_OF):
++    base = store.path.parent
++    return verify_scan_evidence(
++        store,
++        reports_dir=reports if reports is not None else base / "reports",
++        exports_dir=exports if exports is not None else base / "exports",
++        require_reports=require_reports,
++        require_artifacts=require_artifacts,
++        reference_date=reference_date,
++    )
++
++
++def _expect_rejection(store: Store, pattern: str, *, reports: Path | None = None,
++                      exports: Path | None = None, **kwargs) -> str:
++    with pytest.raises(ScanEvidenceError, match=pattern) as excinfo:
++        _verify(store, reports=reports, exports=exports, **kwargs)
++    message = str(excinfo.value).strip()
++    assert message, "the validator must explain why evidence was rejected"
++    return message
++
++
++def _set_stats(store: Store, stats: dict) -> None:
++    store.conn.execute(
++        "UPDATE scan_runs SET stats_json=? WHERE scan_id=?", (json.dumps(stats), SCAN_ID)
++    )
++    store.conn.commit()
++
++
++def _rewrite_json(path: Path, doc: dict) -> None:
++    path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
++    _set_mtime(path)
++
++
++# --------------------------------------------------------------------- control
++def test_valid_baseline_with_frozen_artifacts_passes(tmp_path, monkeypatch):
++    """Control: the same fixture, untouched, must still be accepted."""
++    store, config_hash, data_hash, stats, output_fingerprint = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++    reports, exports, report, scan_json, pipeline = _write_artifacts(
++        tmp_path, config_hash, data_hash, output_fingerprint
++    )
++    hashes = _artifact_hashes((report, scan_json, pipeline))
++    _set_stats(store, {**stats, "artifact_sha256": hashes})
++
++    evidence = _verify(store, reports=reports, exports=exports,
++                       require_reports=True, require_artifacts=True)
++    assert evidence.scan_id == SCAN_ID
++    assert evidence.as_of == AS_OF
++    assert evidence.prices == 2
++    assert evidence.indicators == 8
++    assert evidence.anomalies == 1
++    assert evidence.readiness_ok is True
++    assert evidence.ingest_status == "offline"
++    assert evidence.report_sha256 == hashlib.sha256(report.read_bytes()).hexdigest()
++    assert evidence.scan_json_sha256 == hashlib.sha256(scan_json.read_bytes()).hexdigest()
++    assert evidence.pipeline_sha256 == hashlib.sha256(pipeline.read_bytes()).hexdigest()
++
++
++# --------------------------------------------------------------- empty evidence
++def test_empty_scan_evidence_is_rejected(tmp_path, monkeypatch):
++    _patch_readiness(monkeypatch)
++    empty = Store(tmp_path / "empty.db")
++    message = _expect_rejection(empty, "no scan_runs evidence")
++    assert "scan_runs" in message
++
++    # A bare success row with no market data is not evidence either.
++    empty.conn.execute(
++        """INSERT INTO scan_runs(scan_id,as_of,mode,started_at,finished_at,status,
++             config_hash,data_hash,stats_json)
++           VALUES('scan-empty',?,'offline',?,?,'success','','','{}')""",
++        (AS_OF, STARTED_AT, FINISHED_AT),
++    )
++    empty.conn.commit()
++    message = _expect_rejection(empty, "no price observations at scan as_of")
++    assert "as_of" in message
++
++
++# --------------------------------------------------------- forged / wrong hashes
++def test_forged_or_wrong_hashes_are_rejected(tmp_path, monkeypatch):
++    store, config_hash, data_hash, stats, _ = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++
++    store.conn.execute(
++        "UPDATE scan_runs SET config_hash=? WHERE scan_id=?", ("0" * 64, SCAN_ID)
++    )
++    store.conn.commit()
++    message = _expect_rejection(store, "config_hash does not match current config")
++    assert "config_hash" in message
++
++    store.conn.execute(
++        "UPDATE scan_runs SET config_hash=? WHERE scan_id=?", (config_hash, SCAN_ID)
++    )
++    store.conn.execute(
++        "UPDATE scan_runs SET data_hash=? WHERE scan_id=?", ("f" * 64, SCAN_ID)
++    )
++    store.conn.commit()
++    message = _expect_rejection(store, "data_hash does not match recomputed DB content")
++    assert "data_hash" in message
++
++    # A scan row that is internally consistent with the DB can still carry a
++    # forged hash in the frozen scan JSON; that must be caught too.
++    store.conn.execute(
++        "UPDATE scan_runs SET data_hash=? WHERE scan_id=?", (data_hash, SCAN_ID)
++    )
++    store.conn.commit()
++    reports, exports, _, scan_json, _ = _write_artifacts(
++        tmp_path, config_hash, data_hash, store.scan_output_fingerprint(SCAN_ID)
++    )
++    forged = json.loads(scan_json.read_text(encoding="utf-8"))
++    forged["meta"]["config_hash"] = "deadbeef" * 8
++    _rewrite_json(scan_json, forged)
++    message = _expect_rejection(
++        store, "scan json meta.config_hash disagrees with DB",
++        reports=reports, exports=exports, require_reports=True,
++    )
++    assert "config_hash" in message
++
++
++# ------------------------------------------------------------ tampered DB content
++def test_tampered_db_content_is_rejected(tmp_path, monkeypatch):
++    store, _, _, _, _ = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++
++    # Mutating an observation after the scan changes the recomputed data hash.
++    store.conn.execute(
++        "UPDATE prices SET close=101.0 WHERE instrument_id='US_EQ_SPY' AND date=?", (AS_OF,)
++    )
++    store.conn.commit()
++    message = _expect_rejection(store, "data_hash does not match recomputed DB content")
++    assert "data_hash" in message
++
++    # Restoring the observation but editing a derived output changes the scan
++    # output fingerprint (every visible column is covered).
++    store.conn.execute(
++        "UPDATE prices SET close=100.0 WHERE instrument_id='US_EQ_SPY' AND date=?", (AS_OF,)
++    )
++    store.conn.commit()
++    store.conn.execute("UPDATE anomalies SET score=0.1 WHERE anomaly_id='AN-1'")
++    store.conn.commit()
++    message = _expect_rejection(store, "scan output content changed after the scan")
++    assert "output" in message
++
++
++# ----------------------------------------------------- tampered artifact content
++def test_tampered_artifact_content_is_rejected(tmp_path, monkeypatch):
++    store, config_hash, data_hash, stats, output_fingerprint = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++    reports, exports, report, scan_json, pipeline = _write_artifacts(
++        tmp_path, config_hash, data_hash, output_fingerprint
++    )
++    hashes = _artifact_hashes((report, scan_json, pipeline))
++    _set_stats(store, {**stats, "artifact_sha256": hashes})
++
++    # Keep every provenance token (so the readable report check passes) but
++    # change the report bytes after the scan froze its hash.
++    report.write_text(report.read_text(encoding="utf-8") + "post-scan edit\n",
++                      encoding="utf-8")
++    _set_mtime(report)
++    message = _expect_rejection(
++        store, "report content does not match the scan-time artifact hash",
++        reports=reports, exports=exports, require_reports=True,
++        require_artifacts=True,
++    )
++    assert "artifact hash" in message
++
++    # Same for the pipeline export: trailing whitespace is still valid JSON but
++    # changes the frozen bytes.
++    _write_artifacts(tmp_path, config_hash, data_hash, output_fingerprint)
++    pipeline.write_text(pipeline.read_text(encoding="utf-8") + "\n", encoding="utf-8")
++    _set_mtime(pipeline)
++    message = _expect_rejection(
++        store, "pipeline content does not match the scan-time artifact hash",
++        reports=reports, exports=exports, require_reports=True,
++        require_artifacts=True,
++    )
++    assert "artifact hash" in message
++
++
++# ------------------------------------------------------------------ wrong as_of
++def test_wrong_as_of_is_rejected(tmp_path, monkeypatch):
++    store, _, _, _, _ = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++
++    store.conn.execute(
++        "UPDATE scan_runs SET as_of='2026-1-3' WHERE scan_id=?", (SCAN_ID,)
++    )
++    store.conn.commit()
++    message = _expect_rejection(store, "scan as_of is not a calendar date")
++    assert "2026-1-3" in message
++
++    # as_of inside the data range but not equal to the last completed bar.
++    store.conn.execute(
++        "UPDATE scan_runs SET as_of='2026-01-02' WHERE scan_id=?", (SCAN_ID,)
++    )
++    store.conn.commit()
++    message = _expect_rejection(store, "!= last price date")
++    assert "2026-01-02" in message
++
++    # as_of after the reference date is a future claim.
++    store.conn.execute(
++        "UPDATE scan_runs SET as_of='2026-01-04' WHERE scan_id=?", (SCAN_ID,)
++    )
++    store.conn.commit()
++    message = _expect_rejection(store, "is in the future relative to")
++    assert "2026-01-04" in message
++
++
++# ------------------------------------------------------------------ stale scan
++def test_stale_scan_is_rejected(tmp_path, monkeypatch):
++    store, _, _, _, _ = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++
++    # Eight days is just past the documented seven-day freshness window.
++    message = _expect_rejection(store, "is stale", reference_date="2026-01-11")
++    assert "stale" in message
++    assert "8 days > 7" in message
++
++
++# -------------------------------------------------------------- partial ingest
++def test_partial_ingest_is_rejected(tmp_path, monkeypatch):
++    store, _, _, stats, _ = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++
++    _set_stats(store, {**stats, "ingest": {"status": "partial"}})
++    message = _expect_rejection(store, "scan ingest status is partial")
++    assert "partial" in message
++
++    _set_stats(store, {**stats, "ingest": {"status": "failed"}})
++    message = _expect_rejection(store, "scan ingest status is failed")
++    assert "failed" in message
++
++
++# ------------------------------------------------------ live scan without ingest
++def test_live_scan_without_ingest_run_is_rejected(tmp_path, monkeypatch):
++    store, _, _, stats, _ = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++
++    store.conn.execute("UPDATE scan_runs SET mode='live' WHERE scan_id=?", (SCAN_ID,))
++    _set_stats(store, {**stats, "ingest": {"status": "success"}})
++    message = _expect_rejection(store, "no successful price ingest_run evidence")
++    assert "ingest_run" in message
++
++
++# ------------------------------------------------ missing reports / exports
++def test_missing_artifacts_are_rejected(tmp_path, monkeypatch):
++    store, _, _, _, _ = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++    reports = tmp_path / "reports"
++    exports = tmp_path / "exports"
++
++    message = _expect_rejection(
++        store, "required artifact missing", reports=reports, exports=exports,
++        require_reports=True,
++    )
++    assert f"report_{AS_OF}.md" in message
++
++    reports.mkdir()
++    report = reports / f"report_{AS_OF}.md"
++    report.write_text("placeholder\n", encoding="utf-8")
++    _set_mtime(report)
++    message = _expect_rejection(
++        store, "required artifact missing", reports=reports, exports=exports,
++        require_reports=True,
++    )
++    assert f"scan_{AS_OF}.json" in message
++
++    scan_json = reports / f"scan_{AS_OF}.json"
++    scan_json.write_text("{}", encoding="utf-8")
++    _set_mtime(scan_json)
++    message = _expect_rejection(
++        store, "required artifact missing", reports=reports, exports=exports,
++        require_reports=True,
++    )
++    assert f"pipeline_{AS_OF}.json" in message
++
++
++# --------------------------------------------- mismatched reports / provenance
++def test_mismatched_artifacts_are_rejected(tmp_path, monkeypatch):
++    store, config_hash, data_hash, _, output_fingerprint = _make_scan(tmp_path)
++    _patch_readiness(monkeypatch)
++
++    # 1) scan JSON carries a different config hash than the recomputed one.
++    reports, exports, _, scan_json, _ = _write_artifacts(
++        tmp_path, config_hash, data_hash, output_fingerprint
++    )
++    doc = json.loads(scan_json.read_text(encoding="utf-8"))
++    doc["meta"]["config_hash"] = "not-the-config"
++    _rewrite_json(scan_json, doc)
++    message = _expect_rejection(
++        store, "scan json meta.config_hash disagrees with DB",
++        reports=reports, exports=exports, require_reports=True,
++    )
++    assert "config_hash" in message
++
++    # 2) pipeline export provenance carries forged data/config hashes.
++    _, _, _, _, pipeline = _write_artifacts(
++        tmp_path, config_hash, data_hash, output_fingerprint
++    )
++    doc = json.loads(pipeline.read_text(encoding="utf-8"))
++    doc["provenance"]["data_hash"] = "forged-data-hash"
++    _rewrite_json(pipeline, doc)
++    message = _expect_rejection(
++        store, "pipeline export provenance hashes disagree with DB",
++        reports=reports, exports=exports, require_reports=True,
++    )
++    assert "provenance" in message
++
++    # 3) A report without the scan-id/as-of/hash provenance tokens is not evidence.
++    _, _, report, _, _ = _write_artifacts(
++        tmp_path, config_hash, data_hash, output_fingerprint
++    )
++    report.write_text("# report without provenance\n", encoding="utf-8")
++    _set_mtime(report)
++    message = _expect_rejection(
++        store, "report does not contain provenance token",
++        reports=reports, exports=exports, require_reports=True,
++    )
++    assert SCAN_ID in message
+-- 
+2.50.1 (Apple Git-155)
+

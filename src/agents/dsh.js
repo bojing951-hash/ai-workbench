@@ -7,7 +7,9 @@
 import fs from 'node:fs';
 import { commandExists, execCapture } from '../runner.js';
 import { ensureDir } from '../util.js';
+import { buildAgentEnv, resolveAgentPermission } from '../security.js';
 import { estimateCostCny } from '../pricing.js';
+import { resolveAgentIdentity } from '../model-identity.js';
 
 export const meta = {
   id: 'dsh',
@@ -41,12 +43,18 @@ export async function check(config) {
  * @param {string} [ctx.logPath]
  */
 export async function run(ctx) {
-  const { config, prompt, cwd, sessionId = '', timeoutMs, maxTokens = 0, signal = null, onEvent = null, logPath = '' } = ctx;
+  const { config, project = null, prompt, cwd, sessionId = '', timeoutMs, maxTokens = 0, signal = null, onEvent = null, logPath = '' } = ctx;
   const dsh = config.agents.dsh;
   if (!commandExists(dsh.bin)) {
     return { ok: false, error: `DSH CLI 不可用：${dsh.bin}`, agentKind: 'dsh', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, durationMs: 0, logPath };
   }
   ensureDir(dsh.home);
+  let permission;
+  try {
+    permission = resolveAgentPermission(config, 'dsh', project);
+  } catch (err) {
+    return { ok: false, error: err.message, agentKind: 'dsh', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, durationMs: 0, logPath, permissionBlocked: true };
+  }
 
   const local = new AbortController();
   let overBudget = false;
@@ -56,11 +64,12 @@ export async function run(ctx) {
     else signal.addEventListener('abort', onParentAbort, { once: true });
   }
 
+  const identity = resolveAgentIdentity({ config, agentId: 'dsh', project });
   const args = [
     'headless',
     '--json',
     '--permission-mode',
-    dsh.permissionMode,
+    permission.mode,
     '--approval-policy',
     dsh.approvalPolicy,
   ];
@@ -121,13 +130,7 @@ export async function run(ctx) {
   const startedAt = Date.now();
   const res = await execCapture(dsh.bin, args, {
     cwd,
-    env: {
-      ...process.env,
-      DSH_HOME: dsh.home,
-      DEEPSEEK_API_KEY: config.llm.deepseek.apiKey || process.env.DEEPSEEK_API_KEY || '',
-      NO_COLOR: '1',
-      CI: '1',
-    },
+    env: buildAgentEnv({ config, agentId: 'dsh', homeDir: ctx.agentHome }),
     timeoutMs: timeoutMs || dsh.timeoutMs,
     stdin: prompt,
     logPath,
@@ -144,7 +147,8 @@ export async function run(ctx) {
 
   const durationMs = Date.now() - startedAt;
   const totalTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-  const costCny = estimateCostCny('deepseek', 'deepseek-flash', usage);
+  const costProvider = identity.known ? identity.provider : 'unknown';
+  const costCny = estimateCostCny(costProvider, identity.model || 'unknown', usage);
   const completed = finalReason?.kind === 'completed';
   let error = '';
   if (overBudget) error = `Agent 超出单任务 token 预算（${totalTokens} > ${maxTokens}），已中止`;
@@ -158,6 +162,15 @@ export async function run(ctx) {
     text: finalText,
     error,
     agentKind: 'dsh',
+    provider: identity.known ? identity.provider : 'unknown',
+    providerKnown: identity.known,
+    providerSource: identity.source,
+    providerNote: identity.note,
+    model: identity.model || '',
+    exempt: identity.exempt,
+    canRunShell: permission.allowShell,
+    costReported: false,
+    costSource: 'estimated',
     sessionId: newSessionId,
     exitCode: res.code,
     timedOut: res.timedOut,

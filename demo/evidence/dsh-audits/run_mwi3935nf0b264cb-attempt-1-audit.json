@@ -1,0 +1,86 @@
+{
+  "provider": "deepseek",
+  "providerLabel": "DeepSeek Harness",
+  "model": "deepseek",
+  "status": "PASS",
+  "verdict": "pass",
+  "score": 84,
+  "criteria": [
+    {
+      "criterion": "src/domain.ts 存在并导出冻结测试所需 API",
+      "status": "pass",
+      "evidence": "src/domain.ts 共 443 行；:121 validateProfile、:141 analyzeProfile、:282 analyzePurchase、:367 compareScenarios、:263 totalCostOfOwnership、:271 unitCost、:391 getEvidence、:395 listTips 均为 export function，与 tests/unit/domain.test.ts:2-5 的导入符号完全对应。"
+    },
+    {
+      "criterion": "npm run test:unit 全部通过",
+      "status": "pass",
+      "evidence": "所附测试证据显示：npm ci --cache .npm-cache --no-audit --no-fund && npm run test:unit 退出码 0，Vitest v3.2.7 输出 Test Files 1 passed、Tests 9 passed；静态复核 domain.test.ts:9-86 的 9 条断言与实现一致（空画像 buckets=7、负数 errors、TCO=1240、unitCost=1000/240、证据 5 条）。审计沙箱无法执行命令，未独立复跑。"
+    },
+    {
+      "criterion": "相同收入不同负担/稳定性产生不同可解释建议",
+      "status": "pass",
+      "evidence": "src/domain.ts:152-171 依据 freeCashflow、fixedCostRatio、emergencyFundMonths、dependents、stability 生成不同 warnings；:203-208 的 family priority 对 dependents 0/1/3 分别为 low/medium/high；:210-215 的 insurance priority 对 commission 为 high；:173-189 的 riskPoints 使 stable=low、commission=medium；:367-389 compareScenarios 返回不同 riskLevel 与说明性 warning，对应 domain.test.ts:23-37、:60-68。"
+    },
+    {
+      "criterion": "证据库读取 contract/evidence.json 且不编造来源",
+      "status": "pass",
+      "evidence": "src/domain.ts:1 直接 import evidenceData from '../contract/evidence.json'；:391-393 getEvidence 仅映射并复制该 JSON；contract/evidence.json:1-52 的 5 条记录均含 source/url/date/evidenceType/conditions/limitations，URL 均为 https；domain.ts 内未硬编码其他来源或 URL，listTips :401/:407/:413/:424/:430 的 evidenceId 均能在 JSON 中找到对应 id。"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "medium",
+      "file": "src/domain.ts",
+      "line": 196,
+      "issue": "七个 bucket 的 share 固定为 0.25/0.15/0.1/0.15/0.15/0.1/0.1 且总和为 1，对空画像、低收入、高负担、佣金收入等所有画像完全一致，构成固定的预算/消费比例模板，违反 CONTRACT.md:6 的“禁止固定消费比例标准答案”；priority 与 reason 的变化并未改变固定份额本身。",
+      "required_fix": "让 share 随 freeCashflow、固定负担、家庭责任与收入稳定性条件化推导，或移除数值 share 只保留 priority/reason，并补充不同画像下配置确有不同的断言。"
+    },
+    {
+      "severity": "low",
+      "file": "src/domain.ts",
+      "line": 278,
+      "issue": "unitCost 使用未取整的 months*frequency 作分母，而 analyzePurchase 在 :289 用 Math.round 计算 uses；当 months*frequency 非整数时，:310 展示的“共 N 次”与单次成本分母不一致，totalCost/uses 不等于返回的 unitCost。",
+      "required_fix": "在 analyzePurchase 中只计算一次 uses，并让单次成本使用同一分母；或移除 Math.round 使展示口径与 unitCost 一致。"
+    },
+    {
+      "severity": "low",
+      "file": "src/domain.ts",
+      "line": 153,
+      "issue": "空画像 {} 的 monthlyIncome 与 fixedCosts 都是 0，freeCashflow<=0 触发“固定支出已达到或超过收入”的警告并加分；但实际是缺少收入数据而非支出超过收入，validateProfile({}) 又判定 valid，导致可用空画像得到误导性结论。",
+      "required_fix": "区分“无收入数据”与“支出超过收入”：空画像输出缺失收入/需补充信息的提示，不触发支出超支警告和对应风险加分。"
+    },
+    {
+      "severity": "low",
+      "file": "src/domain.ts",
+      "line": 381,
+      "issue": "compareScenarios 只要 riskLevel 不同就断言差异来自“收入波动（职业稳定性）”；两个 stability 均为 stable、仅 fixedCosts 或 emergencyFundMonths 不同的情景也会风险不同，该 warning 的因果归因错误。",
+      "required_fix": "根据实际差异因素生成 warning（固定负担、应急储备或稳定性），不要将所有风险差异一律归因于收入波动。"
+    }
+  ],
+  "requiredFixes": [
+    "将 bucket.share 改为按 freeCashflow/固定负担/稳定性条件化计算，或移除固定数值 share，避免输出固定预算比例模板。",
+    "统一使用次数口径：analyzePurchase 只计算一次 uses，并让 unitCost 使用同一分母（或移除 Math.round）。",
+    "区分“无收入数据”与“支出超过收入”：空画像输出缺失收入提示，不触发支出超支警告和风险加分。",
+    "compareScenarios 的 warning 根据实际差异因素生成（负担/储备/稳定性），不要一律归因于收入波动。"
+  ],
+  "unknownReasons": [],
+  "independence": {
+    "independent": true,
+    "coderFamily": "glm",
+    "note": "DSH CLI read-only audit; DeepSeek API budget"
+  },
+  "chunks": 1,
+  "versionInfo": {
+    "baseCommit": "0f6428e27f7b4fa6ce50c33d9422a428dca49eac",
+    "worktreeHash": "57aaba831de0c2cf16562995b575a8b22fbcc793",
+    "testedHash": "57aaba831de0c2cf16562995b575a8b22fbcc793"
+  },
+  "usage": {
+    "input": 23217,
+    "output": 19590,
+    "cacheRead": 115200,
+    "cacheWrite": 0
+  },
+  "costCny": 0.12926995200000002,
+  "raw": "{\"score\":84,\"criteria\":[{\"criterion\":\"src/domain.ts 存在并导出冻结测试所需 API\",\"status\":\"pass\",\"evidence\":\"src/domain.ts 共 443 行；:121 validateProfile、:141 analyzeProfile、:282 analyzePurchase、:367 compareScenarios、:263 totalCostOfOwnership、:271 unitCost、:391 getEvidence、:395 listTips 均为 export function，与 tests/unit/domain.test.ts:2-5 的导入符号完全对应。\"},{\"criterion\":\"npm run test:unit 全部通过\",\"status\":\"pass\",\"evidence\":\"所附测试证据显示：npm ci --cache .npm-cache --no-audit --no-fund && npm run test:unit 退出码 0，Vitest v3.2.7 输出 Test Files 1 passed、Tests 9 passed；静态复核 domain.test.ts:9-86 的 9 条断言与实现一致（空画像 buckets=7、负数 errors、TCO=1240、unitCost=1000/240、证据 5 条）。审计沙箱无法执行命令，未独立复跑。\"},{\"criterion\":\"相同收入不同负担/稳定性产生不同可解释建议\",\"status\":\"pass\",\"evidence\":\"src/domain.ts:152-171 依据 freeCashflow、fixedCostRatio、emergencyFundMonths、dependents、stability 生成不同 warnings；:203-208 的 family priority 对 dependents 0/1/3 分别为 low/medium/high；:210-215 的 insurance priority 对 commission 为 high；:173-189 的 riskPoints 使 stable=low、commission=medium；:367-389 compareScenarios 返回不同 riskLevel 与说明性 warning，对应 domain.test.ts:23-37、:60-68。\"},{\"criterion\":\"证据库读取 contract/evidence.json 且不编造来源\",\"status\":\"pass\",\"evidence\":\"src/domain.ts:1 直接 import evidenceData from '../contract/evidence.json'；:391-393 getEvidence 仅映射并复制该 JSON；contract/evidence.json:1-52 的 5 条记录均含 source/url/date/evidenceType/conditions/limitations，URL 均为 https；domain.ts 内未硬编码其他来源或 URL，listTips :401/:407/:413/:424/:430 的 evidenceId 均能在 JSON 中找到对应 id。\"}],\"findings\":[{\"severity\":\"medium\",\"file\":\"src/domain.ts\",\"line\":196,\"issue\":\"七个 bucket 的 share 固定为 0.25/0.15/0.1/0.15/0.15/0.1/0.1 且总和为 1，对空画像、低收入、高负担、佣金收入等所有画像完全一致，构成固定的预算/消费比例模板，违反 CONTRACT.md:6 的“禁止固定消费比例标准答案”；priority 与 reason 的变化并未改变固定份额本身。\",\"required_fix\":\"让 share 随 freeCashflow、固定负担、家庭责任与收入稳定性条件化推导，或移除数值 share 只保留 priority/reason，并补充不同画像下配置确有不同的断言。\"},{\"severity\":\"low\",\"file\":\"src/domain.ts\",\"line\":278,\"issue\":\"unitCost 使用未取整的 months*frequency 作分母，而 analyzePurchase 在 :289 用 Math.round 计算 uses；当 months*frequency 非整数时，:310 展示的“共 N 次”与单次成本分母不一致，totalCost/uses 不等于返回的 unitCost。\",\"required_fix\":\"在 analyzePurchase 中只计算一次 uses，并让单次成本使用同一分母；或移除 Math.round 使展示口径与 unitCost 一致。\"},{\"severity\":\"low\",\"file\":\"src/domain.ts\",\"line\":153,\"issue\":\"空画像 {} 的 monthlyIncome 与 fixedCosts 都是 0，freeCashflow<=0 触发“固定支出已达到或超过收入”的警告并加分；但实际是缺少收入数据而非支出超过收入，validateProfile({}) 又判定 valid，导致可用空画像得到误导性结论。\",\"required_fix\":\"区分“无收入数据”与“支出超过收入”：空画像输出缺失收入/需补充信息的提示，不触发支出超支警告和对应风险加分。\"},{\"severity\":\"low\",\"file\":\"src/domain.ts\",\"line\":381,\"issue\":\"compareScenarios 只要 riskLevel 不同就断言差异来自“收入波动（职业稳定性）”；两个 stability 均为 stable、仅 fixedCosts 或 emergencyFundMonths 不同的情景也会风险不同，该 warning 的因果归因错误。\",\"required_fix\":\"根据实际差异因素生成 warning（固定负担、应急储备或稳定性），不要将所有风险差异一律归因于收入波动。\"}],\"required_fixes\":[\"将 bucket.share 改为按 freeCashflow/固定负担/稳定性条件化计算，或移除固定数值 share，避免输出固定预算比例模板。\",\"统一使用次数口径：analyzePurchase 只计算一次 uses，并让 unitCost 使用同一分母（或移除 Math.round）。\",\"区分“无收入数据”与“支出超过收入”：空画像输出缺失收入提示，不触发支出超支警告和风险加分。\",\"compareScenarios 的 warning 根据实际差异因素生成（负担/储备/稳定性），不要一律归因于收入波动。\"],\"summary\":"
+}
