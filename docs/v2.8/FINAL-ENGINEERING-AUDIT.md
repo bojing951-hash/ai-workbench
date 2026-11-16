@@ -1,6 +1,8 @@
 # v2.8 自主研发闭环整改工程审计
 
 - 基线：v2.7.0 / PR #9 / commit `7af6d9a`
+- 交付：v2.8.0 分支 / PR #10 / 最终 commit `832fdef` / CI success
+- 运行实例：v2.8.0 healthy
 - 依据：CDL v0.2 实际 SQLite/Events/Attempts/Audits/Git 记录；用户引用的 `CDL_v0.2_independent_audit_2026-11-16.md` 在本机工作区不存在，未伪造其内容
 - 范围：只改 Workbench；未改 CDL/A/B/Reading Queue 产品代码
 - 当前状态：**部分验收完成**；真实零人工 E2E **BLOCKED**（无新独立 DSH 预算授权）；24h **NOT_VERIFIED**

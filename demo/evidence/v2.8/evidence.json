@@ -47,5 +47,11 @@
     "readingQueueBudgetBorrowed": false,
     "mainMerged": false,
     "deployed": false
+  },
+  "finalCommit": "832fdef",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/10",
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43855315884"
   }
 }
