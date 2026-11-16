@@ -49,7 +49,7 @@
 - **通用历史回放**：去掉 Consumption Decision Lab 专用名称/SHA/截图/固定数字；任意已授权项目可回放，事件支持分页。
 - **独立验收项目**：Reading Queue Planner（冻结契约/可见测试/项目外隐藏质量检查）已创建；因独立审计预算 BLOCKED，任务在编码前安全暂停。
 - **24h**：`24H_NOT_VERIFIED / BLOCKED`（无独立审计资源），未伪造长期结果。
-- 详见 [v2.7 报告](docs/v2.7/REPORT.md)、[验收矩阵](docs/v2.7/ACCEPTANCE-MATRIX.md)、[24h 记录](docs/v2.7/24H-ACCEPTANCE.md)。
+- 详见 [真实验收结果](docs/v2.7/FINAL-ACCEPTANCE.md)、[v2.7 报告](docs/v2.7/REPORT.md)、[验收矩阵](docs/v2.7/ACCEPTANCE-MATRIX.md)、[24h 记录](docs/v2.7/24H-ACCEPTANCE.md)。
 
 ## 0.6 v2.6 新增（看见 AI）
 

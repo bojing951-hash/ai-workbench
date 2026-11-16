@@ -2062,7 +2062,8 @@ export class Orchestrator {
         `测试：${safeCommand} 通过（指纹 ${testedHash.slice(0, 12)}）`,
         '生成：AI 开发工作台 v2.0',
       ].join('\n');
-      const planBranch = task.verification_json?.planBranch || task.branch || run.result_json?.planBranch || `wb/plan-${run.id.slice(-6)}`;
+      const currentBranch = (await gitops.git(worktree, ['branch', '--show-current'], { allowFail: true })).stdout.trim();
+      const planBranch = task.verification_json?.planBranch || run.result_json?.planBranch || currentBranch || task.branch || `wb/plan-${run.id.slice(-6)}`;
       this.assertProjectLease(project.id);
       let commit;
       const provisionalCommit = null;
@@ -2071,8 +2072,17 @@ export class Orchestrator {
       } else {
         commit = await gitops.commitAll(worktree, commitMessage);
         const committedTree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
-        if (commit.empty || committedTree !== testedHash) throw new PolicyError('COMMIT_FINGERPRINT_MISMATCH', '提交与测试/审计版本不一致');
-        await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
+        // 验证重试的特殊情况：工作树可能已被上一轮 Agent 提交（干净且 HEAD tree == testedHash）。
+        // 这时 commitAll 返回 empty，但复用已有 HEAD 是安全且幂等的，不能误报版本不一致。
+        if (commit.empty) {
+          if (committedTree !== testedHash) throw new PolicyError('COMMIT_FINGERPRINT_MISMATCH', '工作树干净但 HEAD tree 与测试/审计版本不一致');
+          commit = { commit: await gitops.currentHead(worktree), files: [] };
+        } else if (committedTree !== testedHash) {
+          throw new PolicyError('COMMIT_FINGERPRINT_MISMATCH', '提交与测试/审计版本不一致');
+        }
+        // 如果该分支正被当前 worktree 检出，不能 branch -f 它；它已经指向目标 commit 即可。
+        const sameCheckedOutBranch = currentBranch && currentBranch === planBranch && (await gitops.currentHead(worktree)) === commit.commit;
+        if (!sameCheckedOutBranch) await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
       }
       const headCommit = await gitops.currentHead(worktree);
       const verification = {
@@ -2082,6 +2092,7 @@ export class Orchestrator {
         verificationRetry: true,
       };
       this.store.updateTask(task.id, { status: TaskStatus.PASSED, head_commit: headCommit, verification_json: verification, blocked_reason: '', result_json: { ...verification, criteria: audit.criteria } });
+      this.store.updateRun(run.id, { result_json: { ...(run.result_json || {}), planBranch, planHead: headCommit } });
       await gitops.removeWorktree(project.local_path, worktree).catch(() => {});
       this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'task_passed', message: `任务通过（仅重试验证）：${task.title}（commit ${headCommit.slice(0, 8)}，审计 ${audit.provider} PASS）`, data: { commit: headCommit, planBranch, auditStatus, testedHash } });
       this.kick(run.id);
@@ -2317,7 +2328,7 @@ function validAgentKind(value) {
 }
 
 function validAuditProvider(value) {
-  return ['auto', 'openai', 'glm', 'deepseek'].includes(String(value)) ? String(value) : 'auto';
+  return ['auto', 'openai', 'glm', 'deepseek', 'dsh'].includes(String(value)) ? String(value) : 'auto';
 }
 
 async function enforceProtectedPaths(worktree, violations) {

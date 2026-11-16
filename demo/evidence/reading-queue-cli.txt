@@ -1,0 +1,45 @@
+$ node src/cli.js add --file <tmp>/library.json --title 设计数据密集型应用 --author Kleppmann --pages 600 --priority 5
+{
+  "id": "b1",
+  "title": "设计数据密集型应用",
+  "author": "Kleppmann",
+  "pages": 600,
+  "priority": 5,
+  "done": false,
+  "available": true
+}
+
+$ node src/cli.js list --file <tmp>/library.json
+[
+  {
+    "id": "b1",
+    "title": "设计数据密集型应用",
+    "author": "Kleppmann",
+    "pages": 600,
+    "priority": 5,
+    "done": false,
+    "available": true
+  }
+]
+
+$ node src/cli.js plan --minutes 30 --days 7 --file <tmp>/library.json
+{
+  "plan": [
+    {
+      "bookId": "b1",
+      "title": "设计数据密集型应用",
+      "day": 1,
+      "minutes": 30
+    }
+  ],
+  "unplanned": [
+    {
+      "bookId": "b1",
+      "title": "设计数据密集型应用",
+      "neededMinutes": 1200,
+      "scheduledMinutes": 30,
+      "reason": "本书约需 1200 分钟，超过每天上限 30 分钟（同一本书不拆分到多天），因此无法完整安排；仅在第 1 天排入 30 分钟，剩余 1170 分钟未排入"
+    }
+  ],
+  "totalMinutes": 30
+}

@@ -2,8 +2,8 @@
   "type": "v2.7-quality-fencing-longrun",
   "version": "2.7.0",
   "tests": {
-    "total": 222,
-    "pass": 222,
+    "total": 224,
+    "pass": 224,
     "log": "demo/evidence/v2.7-tests.txt"
   },
   "qualityLoop": {
@@ -34,12 +34,33 @@
     "projectId": "proj_mwiq4y5u848f07c5",
     "loopId": "loop_mwiq4y5x6bb41dfb",
     "runId": "run_mwiq4z3fe1c0afce",
-    "status": "E2E_BLOCKED",
+    "status": "PRODUCT_E2E_VERIFIED",
     "blocker": "独立审计资源预算不足：Provider=deepseek，剩余 9869 < 审计预估 8000 + 保留 2000；任务编码前阻塞",
-    "codingAgentCalled": false,
+    "codingAgentCalled": true,
     "hiddenQualityCheckRan": false,
     "defectDiscoveryRate": "UNKNOWN",
-    "autoRepairRate": "UNKNOWN"
+    "autoRepairRate": "UNKNOWN",
+    "finalCodeCommit": "6bfdfac",
+    "finalRelease": "b554f4b",
+    "qualityMatrix": {
+      "total": 4,
+      "pass": 4,
+      "issues": 1,
+      "fixed": 1
+    },
+    "visibleTests": "5/5",
+    "hiddenQuality": "4/4",
+    "audit": "10 calls, 4 PASS / 6 FAIL/UNKNOWN, final PASS",
+    "codingCostCny": 26.96299056,
+    "auditCostCny": 1.325574432,
+    "totalCostCny": 28.288564992,
+    "wallClockSeconds": 7695,
+    "humanProductCodeEdits": 0,
+    "agentAttempts": 8,
+    "agentSuccess": 7,
+    "agentTimeout": 1,
+    "defectDiscovery": 2,
+    "defectFixed": 2
   },
   "auditBudget": {
     "globalRemainingTokens": 9869,
@@ -48,12 +69,17 @@
     "cdlBudgetCny": 30,
     "cdlUsedCny": 0.9014279904,
     "cdlBorrowed": false,
-    "newAuthorization": false
+    "newAuthorization": false,
+    "newCdlBudgetCny": 30,
+    "newCdlUsedEstimateCny": 1.325574432,
+    "tokens": 408961,
+    "calls": 10,
+    "actualVendorInvoice": "NOT_AVAILABLE; estimated only"
   },
   "longRun": {
-    "status": "24H_NOT_VERIFIED / BLOCKED",
-    "wallClockSeconds": 0,
-    "supervisorManaged": true
+    "status": "24H_NOT_VERIFIED",
+    "reason": "product completed early (2h08m); no tasks manufactured",
+    "supervisorSIGKILLRecovery": "PASS"
   },
   "replay": {
     "status": "IMPLEMENTED+TESTED",

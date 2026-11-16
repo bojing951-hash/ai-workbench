@@ -216,9 +216,9 @@ export function repairTasksFromQuality(matrix, { maxIssues = 6 } = {}) {
         `qualityIssueId=${issue.id}`,
       ].join('\n'),
       acceptance: [
-        `质量命令中问题 ${issue.id} 不再出现`,
-        `原始需求与回归测试仍通过`,
-        `独立审计确认对应证据（如审计资源不可用则明确 UNKNOWN/BLOCKED，不得伪造 PASS）`,
+        `代码修改应修复质量问题「${issue.title}」，包含具体代码修改与可核对行为证据`,
+        `项目可见测试全部通过，且未修改冻结测试/契约`,
+        `不需要审计员运行项目外质量命令；质量命令复核由工作台质量评估执行`,
       ],
       agent: 'auto',
       qualityIssueId: issue.id,

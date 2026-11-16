@@ -1,0 +1,159 @@
+{
+  "type": "v2.7-reading-queue-e2e",
+  "at": "2026-11-16T06:01:35.523Z",
+  "project": {
+    "name": "Reading Queue Planner",
+    "id": "proj_mwiq4y5u848f07c5",
+    "repo": "projects/v2.7/reading-queue",
+    "releaseBranch": "release/v0.1.0",
+    "tag": "v0.1.0",
+    "codeCommit": "6bfdfacbe157ffe7502cf779459fba2a1851a491",
+    "docsCommit": "5eada62",
+    "loopId": "loop_mwisni5ka9abfb45",
+    "loopStatus": "completed",
+    "round": 2,
+    "maxRounds": 6,
+    "stopReason": "队列已空（没有伪造任务）"
+  },
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "书籍管理与校验",
+      "status": "PASS",
+      "evidence": "隐藏检查：添加/重复拒绝通过",
+      "priority": "P0"
+    },
+    {
+      "id": "R2",
+      "title": "阅读计划边界",
+      "status": "PASS",
+      "evidence": "隐藏检查：优先级/去重/完成与否/unplanned 通过",
+      "priority": "P0"
+    },
+    {
+      "id": "R3",
+      "title": "本地持久化",
+      "status": "PASS",
+      "evidence": "隐藏检查：持久化与损坏文件错误通过",
+      "priority": "P1"
+    },
+    {
+      "id": "R4",
+      "title": "CLI 用户流程",
+      "status": "PASS",
+      "evidence": "隐藏检查：CLI plan JSON 输出通过",
+      "priority": "P1"
+    }
+  ],
+  "quality": {
+    "allPass": true,
+    "coverage": {
+      "total": 4,
+      "pass": 4,
+      "fail": 0,
+      "unknown": 0,
+      "blocked": 0
+    },
+    "p0p1": []
+  },
+  "tasks": [
+    {
+      "id": "task_mwiq4z3g1c768166",
+      "title": "[RQP-1] 实现阅读队列规划器全部功能",
+      "status": "blocked",
+      "testCommand": "node --test tests/*.test.js",
+      "commit": ""
+    },
+    {
+      "id": "task_mwisnj3ia9bc15e3",
+      "title": "[RQP-1F] 修复 DSH 审计失败：阅读计划未完成书必须 unplanned",
+      "status": "passed",
+      "testCommand": "node --test tests/*.test.js",
+      "commit": "3d7f49de99d0393572bac851386f8119d9bb22be"
+    },
+    {
+      "id": "task_mwitigrx9a1523cf",
+      "title": "[Quality P1] 重复书籍未拒绝",
+      "status": "passed",
+      "testCommand": "node --test tests/*.test.js",
+      "commit": "6bfdfacbe157ffe7502cf779459fba2a1851a491"
+    }
+  ],
+  "attempts": {
+    "count": 8,
+    "completed": 7,
+    "timeout": 1,
+    "tokensIn": 309373,
+    "tokensOut": 120456,
+    "tokensCache": 3366336,
+    "costCny": 26.96299056
+  },
+  "audits": {
+    "count": 10,
+    "pass": 4,
+    "fail": 6,
+    "costCny": 1.3255744320000002
+  },
+  "auditBudget": {
+    "limitCny": 30,
+    "tokens": 408961,
+    "costCny": 1.325574432,
+    "calls": 10,
+    "costSource": "estimated from token usage; no vendor per-call invoice",
+    "globalRemainingTokens": 9869,
+    "cdlBudgetBorrowed": false
+  },
+  "duration": {
+    "start": "2026-11-16T03:48:56.947Z",
+    "end": "2026-11-16T05:57:11.275Z",
+    "seconds": 7694328,
+    "humanReadable": "2h08m15s"
+  },
+  "foundDefects": [
+    {
+      "id": "R2-planner-unplanned",
+      "discoveredBy": "DSH audit FAIL 60",
+      "evidence": "未完成书被截断而不是 unplanned",
+      "fixed": true,
+      "finalAudit": "PASS 97"
+    },
+    {
+      "id": "R1-duplicate-book",
+      "discoveredBy": "hidden quality check",
+      "evidence": "重复 title/author 未拒绝",
+      "fixed": true,
+      "finalAudit": "PASS 90"
+    }
+  ],
+  "humanInterventions": {
+    "productCodeEdits": 0,
+    "testHarnessFix": 1,
+    "workbenchEngineeringFixes": [
+      "DSH audit provider validation",
+      "retry verification clean worktree/branch handling",
+      "auditable quality repair criteria",
+      "lease/quality issues found in review"
+    ],
+    "manualRunControls": [
+      "cancel failed run",
+      "resume loop/retry verification after Workbench fixes"
+    ]
+  },
+  "supervisor": {
+    "status": "running",
+    "sigkillTest": "PASS",
+    "productCommitUnchanged": true
+  },
+  "longRun": {
+    "status": "24H_NOT_VERIFIED",
+    "reason": "product completed in 2h08m; no tasks manufactured",
+    "wallClockSeconds": 0
+  },
+  "finalStatus": {
+    "product": "PRODUCT_E2E_VERIFIED",
+    "qualityLoop": "AUTONOMOUS_QUALITY_LOOP_VERIFIED",
+    "fullyUnattended": "NO",
+    "24h": "NOT_VERIFIED",
+    "humanProductCodeEdits": 0
+  }
+}

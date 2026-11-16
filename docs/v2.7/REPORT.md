@@ -3,23 +3,27 @@
 - 版本：**v2.7.0**（基于 v2.6.0）
 - 范围：只开发 AI Workbench；**未修改 Consumption Decision Lab**；**未访问/修改/暂停/同步/接管 A/B**；未合并 main、未部署。
 - 严格区分状态：IMPLEMENTED / TESTED / E2E_VERIFIED / AUTONOMOUSLY_VERIFIED / 24H_VERIFIED / BLOCKED / UNKNOWN / FAILED。
-- 总测试：**222/222**（v2.6 原 212 全保留 + v2.7 新增 9）。
+- 总测试：**224/224**（v2.6 原 212 全保留 + v2.7 新增 9）。
 - Draft PR：**#9**（v2.7.0，未合并/未部署）。
+
+## 最终 E2E 结果
+
+> 权威结果见 [FINAL-ACCEPTANCE.md](FINAL-ACCEPTANCE.md)：Reading Queue Planner 4/4 需求、隐藏检查 4/4、DSH 最终 PASS；2 个产品缺陷自主发现并修复；编码 ¥26.9630 + 审计估算 ¥1.3256；24H_NOT_VERIFIED（产品提前完成）。
 
 ## 1. 结论速览
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| Product Quality Loop（需求矩阵 + 有证据问题 + 自动修复任务 + 再评估停止） | **IMPLEMENTED + TESTED** | `src/quality.js`、`src/loop.js` 集成、`tests/quality.test.js`（4）、`tests/quality-loop.test.js`（1） |
-| Requirements Coverage Matrix | **IMPLEMENTED + TESTED** | PASS/FAIL/UNKNOWN/BLOCKED；无证据不得 PASS；P2 记录不阻塞；API `/api/projects/:id/quality` |
+| Product Quality Loop（需求矩阵 + 有证据问题 + 自动修复任务 + 再评估停止） | **IMPLEMENTED + TESTED + E2E_VERIFIED** | `src/quality.js`、`src/loop.js` 集成、`tests/quality.test.js`（4）、`tests/quality-loop.test.js`（1） |
+| Requirements Coverage Matrix | **IMPLEMENTED + TESTED + 4/4 E2E PASS** | PASS/FAIL/UNKNOWN/BLOCKED；无证据不得 PASS；P2 记录不阻塞；API `/api/projects/:id/quality` |
 | Fencing Token / 真实单写 | **IMPLEMENTED + TESTED** | 原子 fence、续租/释放/run 租约守卫；`tests/fencing.test.js` 2 项（含两个独立进程竞争）、`tests/fencing-workbench.test.js`（两个编排器实例竞争） |
 | Provider-aware 预算/审计分账 | **IMPLEMENTED（沿用 v2.5）+ TESTED（既有）** | 项目/任务预算、缓存 token、vendor/estimated/unknown；CDL ¥30 未挪用 |
-| 独立审计新项目 | **BLOCKED** | 全局 DeepSeek 剩余 9,869 tokens < 审计预估 8,000 + 保留 2,000；无新审计授权；CDL ¥30 禁止挪用 |
-| 独立中等复杂度项目 | **FROZEN / E2E BLOCKED** | Reading Queue Planner；冻结契约/可见测试/隐藏质量检查；任务在**编码前**因独立审计资源阻塞，未写产品代码 |
-| 自主发现缺陷率/自动修复成功率 | **UNKNOWN** | 因审计 BLOCKED，未运行真实编码→质量闭环 E2E；只在测试夹具中验证质量闭环机制 |
-| 24 小时无人监督验收 | **NOT_VERIFIED / BLOCKED** | 未启动 24h 墙钟窗口；项目在审计预检即阻塞；Supervisor 运行中但无可用独立审计资源 |
+| 独立审计新项目 | **PASS（专项 ¥30）** | 专项预算；10 次 DSH；估算 ¥1.3256/30；CDL ¥30 未挪用 |
+| 独立中等复杂度项目 | **PRODUCT_E2E_VERIFIED** | Reading Queue Planner；Agent 源码、隐藏缺陷自动修复、质量 4/4、DSH 最终 PASS |
+| 自主发现缺陷率/自动修复成功率 | **2 个真实产品缺陷 / 2 个修复并复审通过** | DSH R2 + 隐藏 R1；详见 FINAL-ACCEPTANCE |
+| 24 小时无人监督验收 | **NOT_VERIFIED**（产品提前完成，未制造任务） | 实际 2h08m；产品 PASS 与 24h 分开；详见 24H-ACCEPTANCE |
 | 通用项目历史回放 | **IMPLEMENTED + TESTED** | 去 CDL 硬编码（名称/SHA/截图/任务数/费用/耗时）；项目选择器；事件分页；API `/api/replay`；浏览器验证 |
-| 外部人工写产品代码 | **0 次** | 本轮没有运行 Coding Agent 写产品代码；新项目被审计预检阻塞 |
+| 外部人工写产品代码 | **0 次** | 产品源码全部由 Claude Code/GLM 生成；外部只修验收命令/Workbench，不是产品源码 |
 
 ## 2. Product Quality Loop
 
@@ -58,46 +62,48 @@
 - UI 增加项目选择器；无截图素材的项目显示“未配置”，不混用其他项目截图。
 - 测试：`tests/replay.test.js` 7 项，含任意项目回放、无 CDL 素材、事件分页；浏览器验证见 `demo/evidence/v2.7-browser-test.txt`。
 
-## 5. 新独立验收项目（Reading Queue Planner）
+## 5. 真实独立验收项目（Reading Queue Planner）
 
-- 项目：`proj_mwiq4y5u848f07c5`
-- Loop：`loop_mwiq4y5x6bb41dfb`
-- Run：`run_mwiq4z3fe1c0afce`
-- 冻结：`projects/v2.7/reading-queue`（CONTRACT、可见测试、package）；隐藏质量检查 `projects/v2.7/quality-hidden/check.mjs`（不在产品仓库内）。
-- 需求：书籍管理、阅读计划边界、本地持久化、CLI 用户流程；4 条 P0/P1 需求；quality 配置 `max_cycles=2`。
-- 尝试启动后：**任务在编码前被审计资源预检阻塞**，原因：
-  `独立审计资源预算不足：Provider=deepseek，剩余预算折算 9869，审计预估 8000 + 保留 2000；任务在编码前阻塞并保存检查点`
-- 因此：
-  - **未写产品代码**（Coding Agent 没有被调用）；
-  - 未运行隐藏质量检查，缺陷发现率/自动修复成功率 = **UNKNOWN**；
-  - 新项目 E2E = **BLOCKED**，不是 PASS/FAIL；
-  - CDL 的 ¥30 项目审计预算未挪用，也未提高其他项目预算。
+- 项目：`proj_mwiq4y5u848f07c5`；最终 loop：`loop_mwisni5ka9abfb45`（completed, 2 轮）
+- 产品代码：分支 `release/v0.1.0`，tag `v0.1.0`；真实代码提交 `6bfdfac`（`b554f4b` 仅修 npm test 脚本）
+- 冻结：`projects/v2.7/reading-queue`；隐藏质量检查 `projects/v2.7/quality-hidden/check.mjs`（在产品仓库外）
+- 实际结果：
+  - 初始开发：Claude Code/GLM 生成 4 个模块；可见测试 5/5。
+  - DSH 审计发现 planner R2 边界问题：FAIL 60 → 修复后 PASS 97。
+  - 项目外隐藏质量检查发现 R1 重复书籍问题：质量矩阵 3/4 FAIL → 自动生成 `[Quality P1]` 修复任务 → Agent 修复 → 质量矩阵 4/4 PASS。
+  - 最终 DSH 审计 PASS 90；需求覆盖 4/4 PASS；可见测试 5/5；隐藏质量 4/4。
+  - 产品安装/运行：`npm test` 5/5；CLI add/list/plan 实测输出 JSON。
+- 状态：**PRODUCT_E2E_VERIFIED**；`AUTONOMOUS_QUALITY_LOOP_VERIFIED`（发现 1 个隐藏产品缺陷、自动修复、重审通过）。
+- 人工介入：产品源码 **0** 次；外部只修复验收 test command/package harness 与 Workbench 工程缺陷，并执行了失败后的 resume/retry；因此 **FULLY_UNATTENDED_END_TO_END = NO**。
+- 完整时间线、指标与 12 问回答见 `docs/v2.7/FINAL-ACCEPTANCE.md`、`demo/evidence/reading-queue-e2e.json`。
 
 ## 6. 24 小时无人监督验收
 
-- 状态：**NOT_VERIFIED / BLOCKED**。
-- 未启动 24h 墙钟窗口；新项目在审计预检即阻塞，无法进入编码/测试/审计/修复循环。
-- Supervisor：独立 Supervisor 运行中，项目 `supervisor_managed=true`；但无独立审计资源时不会伪造 24h 结果。
-- 24h 冻结目标/规则/项目状态见 `docs/v2.7/24H-ACCEPTANCE.md`。
-- 若项目提前完成，只能产品 PASS，不能宣称 24H_VERIFIED；本轮两者都未达到。
+- 状态：**24H_NOT_VERIFIED**（不是 BLOCKED；专项审计预算已到位）。
+- 产品在约 **2 小时 8 分**内完成；没有为凑 24h 制造新任务。
+- 按用户规则：**产品交付 PASS，24h 连续研发 NOT VERIFIED**，两者分开报告。
+- 24h 冻结目标/规则与说明见 `docs/v2.7/24H-ACCEPTANCE.md`。
 
 ## 7. 预算与审计
 
-- 全局非 GLM Token 剩余 **9,869**，审计预估 8,000 + 保留 2,000 → 预检阻塞；没有突破授权。
-- CDL 项目级 ¥30 审计预算仍只属于 CDL：已用 ¥0.9014/30，未用于本轮。
-- 未重置历史用量；未申报虚假成本。
-- 无新增模型调用成本用于新项目（编码前阻塞）。
-- DeepSeek/OpenAI 原有授权未变；GLM 编码按既有授权。
+- 专项项目审计账本：DSH 10 次，408,961 tokens，估算 **¥1.3256 / ¥30**；实际厂商逐调用账单不可得，费用为估算，不能声称精确硬封顶。
+- 编码：Claude Code/GLM 8 attempts，429,829 input+output tokens（缓存另计），**¥26.9630**（厂商 usage 返回值），GLM 按既有授权。
+- 产品模型总成本：**¥28.2886**。
+- 全局非 GLM Token 剩余 9,869 未变；CDL ¥30 未挪用；未重置历史用量；未提高其他项目预算。
 
-## 8. 独立审查与已知剩余问题
+## 8. 独立审查与失败驱动修复
 
-- 独立只读审查（非 DSH）：首轮无 P0、6 个 P1；本轮已修复心跳/过期/run 租约接管/非 owner 写入、质量命令故障误修复、占位证据 PASS、cycles、回放 UI 硬编码、质量 API 最新矩阵等；剩余问题见 `demo/evidence/v2.7-independent-audit.md`。
-- 未把修复后的独立复审标 PASS；没有 DSH 新审计预算。
-- 两个完整 Workbench HTTP 服务进程竞争、质量发现/修复真实 E2E、24h 均未验证。
+- 独立只读审查（非 DSH）首轮无 P0、6 个 P1；已修复关键项（租约心跳/过期、run 租约接管、非 owner 写入、质量命令故障误修复、占位证据 PASS、cycles、回放 UI 硬编码、质量 API 最新矩阵等）；剩余问题见 `demo/evidence/v2.7-independent-audit.md`。
+- 真实 E2E 暴露并修复的 Workbench 缺陷：
+  1. DSH audit provider 被兼容层降为 auto，专项预算未生效 → 修复；
+  2. `retryVerification` 对干净工作树/被检出分支误报提交指纹不一致 → 支持复用 HEAD、不 force 更新当前分支；
+  3. 自动质量修复任务验收标准要求审计员执行项目外命令 → 改为代码/可见测试可审计标准；
+  4. 租约过期/heartbeat、质量命令故障等可靠性问题（见审查记录）。
+- 仍不声称：完整双 HTTP Workbench 服务进程竞争 E2E、全控制 API fence、24h 无人监督。
 
 ## 9. 交付
 
-- 代码：分支 `v2.7.0`，Draft PR #9（未合并/未部署）。
-- 测试：222/222；新增长期/质量/分页测试。
-- 证据：`demo/evidence/v2.7-*.json/txt/png`。
-- 下一轮恢复：Resume `loop_mwiq4y5x6bb41dfb` 需要先获得独立审计资源；质量闭环代码已就绪。
+- Workbench：分支 `v2.7.0`，Draft PR #9（未合并/未部署）。
+- 测试：**224/224**。
+- 产品：`release/v0.1.0` / tag `v0.1.0`；bundle `demo/evidence/reading-queue-planner-final.bundle`。
+- 证据：`docs/v2.7/FINAL-ACCEPTANCE.md`、`demo/evidence/reading-queue-e2e.json`、`reading-queue-quality-final.json`、`reading-queue-cli.txt`、`v2.7-tests.txt`。
