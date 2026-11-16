@@ -1,0 +1,16 @@
+VERSION v2.6.0
+GUIDE steps 11
+LIVE metrics/events 6 19
+POLL preserved event open true
+BACK insight hidden/project visible false false
+TASKS 8
+ATTEMPTS 17
+AUDITS 4 UNKNOWN true
+SUMMARY true true true
+DIFF true
+MOBILE live overflow 0
+EMPTY 还没有可观察的项目
+
+没有可展示的项目
+ERRORS none
+TARGETED BACK hash #/p/proj_mwi251atbd752de4 insightHidden true projectVisible true

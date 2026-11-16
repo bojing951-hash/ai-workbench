@@ -1,0 +1,545 @@
+{
+  "type": "v2.1-final",
+  "at": "2026-11-15T13:28:53.150579+00:00",
+  "version": "2.1.0",
+  "budget": {
+    "maxTokens": 3000000,
+    "usedTokens": 19765407,
+    "usedBudgetTokens": 2756858,
+    "cacheTokenWeight": 0.1,
+    "glmUnlimited": true,
+    "exemptProviders": [
+      "glm"
+    ],
+    "glm": {
+      "tokensIn": 259678,
+      "tokensOut": 136122,
+      "tokensCache": 1083328,
+      "tokens": 1479128,
+      "costCny": 8.89713248
+    },
+    "nonGlm": {
+      "tokensIn": 751101,
+      "tokensOut": 280266,
+      "tokensCache": 17254912,
+      "costCny": 5.8403858688,
+      "names": [
+        "deepseek"
+      ],
+      "tokens": 18286279
+    },
+    "byProvider": {
+      "deepseek": {
+        "tokensIn": 751101,
+        "tokensOut": 280266,
+        "tokensCache": 17254912,
+        "tokens": 18286279,
+        "costCny": 5.8403858688
+      },
+      "glm": {
+        "tokensIn": 259678,
+        "tokensOut": 136122,
+        "tokensCache": 1083328,
+        "tokens": 1479128,
+        "costCny": 8.89713248
+      }
+    },
+    "maxCostCny": 30,
+    "usedCostCny": 14.7375,
+    "usedBudgetCostCny": 5.8404,
+    "remainingTokens": 243141.7999999998,
+    "remainingCostCny": 24.1596141312,
+    "tokensPercent": 91.9,
+    "costPercent": 19.5,
+    "breakdown": {
+      "tokensIn": 1010779,
+      "tokensOut": 416388,
+      "tokensCache": 18338240,
+      "tokens": 19765407,
+      "costCny": 14.7375183488,
+      "byProvider": {
+        "deepseek": {
+          "tokensIn": 751101,
+          "tokensOut": 280266,
+          "tokensCache": 17254912,
+          "tokens": 18286279,
+          "costCny": 5.8403858688
+        },
+        "glm": {
+          "tokensIn": 259678,
+          "tokensOut": 136122,
+          "tokensCache": 1083328,
+          "tokens": 1479128,
+          "costCny": 8.89713248
+        }
+      },
+      "budgetTokens": 2756858.2,
+      "budgetCostCny": 5.8403858688,
+      "glmUnlimited": true,
+      "exemptProviders": [
+        "glm"
+      ],
+      "glm": {
+        "tokensIn": 259678,
+        "tokensOut": 136122,
+        "tokensCache": 1083328,
+        "tokens": 1479128,
+        "costCny": 8.89713248
+      },
+      "nonGlm": {
+        "tokensIn": 751101,
+        "tokensOut": 280266,
+        "tokensCache": 17254912,
+        "costCny": 5.8403858688,
+        "names": [
+          "deepseek"
+        ],
+        "tokens": 18286279
+      },
+      "cacheTokenWeight": 0.1
+    },
+    "note": "GLM 模型按用户授权不受工作台 token/费用上限约束，但真实用量与费用完整记录并单列；其余模型仍受原预算（缓存按权重折算）约束"
+  },
+  "providers": {
+    "byProvider": {
+      "deepseek": {
+        "tokensIn": 751101,
+        "tokensOut": 280266,
+        "tokensCache": 17254912,
+        "tokens": 18286279,
+        "costCny": 5.8403858688
+      },
+      "glm": {
+        "tokensIn": 259678,
+        "tokensOut": 136122,
+        "tokensCache": 1083328,
+        "tokens": 1479128,
+        "costCny": 8.89713248
+      }
+    },
+    "glm": {
+      "tokensIn": 259678,
+      "tokensOut": 136122,
+      "tokensCache": 1083328,
+      "tokens": 1479128,
+      "costCny": 8.89713248
+    },
+    "nonGlm": {
+      "tokensIn": 751101,
+      "tokensOut": 280266,
+      "tokensCache": 17254912,
+      "tokens": 18286279,
+      "costCny": 5.8403858688,
+      "names": [
+        "deepseek"
+      ]
+    },
+    "budget": {
+      "maxTokens": 3000000,
+      "usedTokens": 2756858,
+      "remainingTokens": 243141.7999999998,
+      "maxCostCny": 30,
+      "usedCostCny": 5.8404,
+      "remainingCostCny": 24.1596141312,
+      "cacheTokenWeight": 0.1,
+      "tokensPercent": 91.9,
+      "costPercent": 19.5
+    },
+    "note": "GLM 用量完整记录并在 glm 单列，不受工作台内部 token/费用上限约束；nonGlm 汇总其余非豁免 provider，budget 为其预算约束口径的用量与余量（缓存 token 按 cacheTokenWeight 折算）；byProvider 为各 provider 的原始 tokens/cost 明细。"
+  },
+  "isolation": {
+    "kernelIsolation": "BLOCKED",
+    "kernelAvailable": false,
+    "note": "Docker daemon 不可用；使用受限独立运行环境，强隔离能力标记 BLOCKED",
+    "restrictedRuntime": {
+      "available": true,
+      "controls": [
+        "per-run/task 独立 HOME 与 TMPDIR（位于仓库外）",
+        "Agent/测试最小环境变量；不继承 GITHUB_TOKEN/无关模型 Key",
+        "Claude Code 工具白名单；DSH workspace-write；危险权限需显式开关",
+        "测试命令 allowlist；工作副本/产物路径边界校验",
+        "每次运行独立 Git worktree + 计划分支；不同项目独立目录"
+      ],
+      "limitations": [
+        "无内核级文件系统/网络隔离",
+        "DSH/Claude 仍以宿主用户身份运行；无法阻止读取宿主同用户可读文件",
+        "Docker/sandbox-exec 不可用时不能宣称强隔离"
+      ]
+    }
+  },
+  "loops": [
+    {
+      "id": "loop_mwhv5nmgad1042e7",
+      "project_id": "proj_mwhttnd766222e2a",
+      "goal": "验证研发循环在真实进程中断后的持久化与恢复能力。",
+      "mode": "queue",
+      "status": "cancelled",
+      "round": 0,
+      "max_rounds": 1,
+      "queue_json": [],
+      "history_json": [],
+      "contract_files_json": [
+        "docs/v2.1/BACKLOG.md",
+        "docs/API.md"
+      ],
+      "current_run_id": "run_mwhv5ojz07ea07d5",
+      "last_run_id": "run_mwhv5ojz07ea07d5",
+      "stop_reason": "中断恢复机制已验证（SIGKILL→interrupted→resume→运行重试）；该文档任务审计 UNKNOWN，按不伪造原则停止",
+      "created_at": "2026-11-15T13:21:41.848Z",
+      "updated_at": "2026-11-15T13:27:19.965Z",
+      "project": {
+        "id": "proj_mwhttnd766222e2a",
+        "name": "AI Workbench Loop（W·隔离克隆）",
+        "default_branch": "wb/plan-dc22b6"
+      },
+      "progress": {
+        "round": 0,
+        "maxRounds": 1,
+        "percent": 0
+      }
+    },
+    {
+      "id": "loop_mwhttndce5243d66",
+      "project_id": "proj_mwhttnd766222e2a",
+      "goal": "按 docs/v2.1/BACKLOG.md 的顺序推进真实工程缺口：每轮只完成一项并验证，禁止修改测试/推送/合并；完成一项后自动进入下一项。",
+      "mode": "plan",
+      "status": "completed",
+      "round": 3,
+      "max_rounds": 3,
+      "queue_json": [],
+      "history_json": [
+        {
+          "round": 1,
+          "runId": "run_mwhttrhz095bfe41",
+          "task": {
+            "title": "[API] 新增 GET /api/usage/providers 分离 Provider 用量接口",
+            "description": "在 src/server.js 中新增只读接口 GET /api/usage/providers，复用 orchestrator.budget() 的按 provider 统计，返回 {ok:true,data:{byProvider,glm,nonGlm,budget,note}}：byProvider 为各 provider 的 tokens/cost 明细，glm 单列 GLM 用量（不受工作台内部预算上限约束但完整记录），nonGlm 汇总其余 provider 并保留预算约束口径，budget 给出约束口径的用量与余量，note 说明口径。保持现有 /api/state 与 /api/budget 行为不变；沿用现有认证中间件。同步更新 docs/API.md 中该接口的字段说明（若已存在则校正为实际实现）。禁止修改 tests/**、package.json、.github/**。"
+          },
+          "status": "LOCAL_VERIFIED",
+          "commit": "90e9d11b2f495d571212b96708eae976fb4fb0ea",
+          "branch": "wb/plan-5bfe41",
+          "audit": [
+            {
+              "provider": "glm",
+              "verdict": "fail",
+              "score": 76
+            },
+            {
+              "provider": "glm",
+              "verdict": "pass",
+              "score": 92
+            }
+          ],
+          "finishedAt": "2026-11-15T12:52:41.686Z"
+        },
+        {
+          "round": 2,
+          "runId": "run_mwhu4gui04f698e7",
+          "task": {
+            "title": "[UI] 研发循环面板：在 Web 界面展示 loops 状态与历史",
+            "description": "在 web/index.html 增加“研发循环”面板容器（含标题、刷新按钮、空状态提示），在 web/app.js 中从 /api/state 的 loops 字段渲染每个循环的 status/round/maxRounds/stopReason 及最近历史条目，并支持手动刷新；保持现有暗色设计语言与既有面板布局不变，不引入外部依赖，不修改后端与测试。"
+          },
+          "status": "LOCAL_VERIFIED",
+          "commit": "6875f8a075ff38d840174f0dfb6773610d1fe819",
+          "branch": "wb/plan-f698e7",
+          "audit": [
+            {
+              "provider": "glm",
+              "verdict": "pass",
+              "score": 95
+            }
+          ],
+          "finishedAt": "2026-11-15T12:59:31.925Z"
+        },
+        {
+          "round": 3,
+          "runId": "run_mwhud9irfedc22b6",
+          "task": {
+            "title": "[CLI] 为 bin/workbench.js 增加 loop 子命令",
+            "description": "在 bin/workbench.js 中新增 `loop` 子命令组，复用现有 HTTP API（/api/loops 系列，沿用 data/api-token 认证）实现 list/status/pause/resume/cancel，并提供 `loop --help` 用法输出；不改变现有 serve/run 等命令行为，不引入外部依赖，不修改 tests/**、package.json、.github/**。同时在 docs/USAGE.md 增加 loop 子命令用法说明。"
+          },
+          "status": "LOCAL_VERIFIED",
+          "commit": "b92a2afc764a18d009a724b57ba8884892d6da96",
+          "branch": "wb/plan-dc22b6",
+          "audit": [
+            {
+              "provider": "glm",
+              "verdict": "pass",
+              "score": 85
+            }
+          ],
+          "finishedAt": "2026-11-15T13:07:17.442Z"
+        }
+      ],
+      "contract_files_json": [
+        "README.md",
+        "docs/API.md",
+        "docs/v2.1/BACKLOG.md"
+      ],
+      "current_run_id": "",
+      "last_run_id": "run_mwhud9irfedc22b6",
+      "stop_reason": "已完成 3 轮",
+      "created_at": "2026-11-15T12:44:22.032Z",
+      "updated_at": "2026-11-15T13:07:17.442Z",
+      "project": {
+        "id": "proj_mwhttnd766222e2a",
+        "name": "AI Workbench Loop（W·隔离克隆）",
+        "default_branch": "wb/plan-dc22b6"
+      },
+      "progress": {
+        "round": 3,
+        "maxRounds": 3,
+        "percent": 100
+      }
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj_mwhtvjp7dd1ec9f7",
+      "name": "Investment Agent（B·v2.1 隔离）",
+      "local_path": "/Users/cast/Downloads/开发工作台/projects/v2.1/ia-latest",
+      "default_branch": "main",
+      "remote_push_authorized": 0,
+      "ci_required": 0
+    },
+    {
+      "id": "proj_mwhtvjoo04ad93b9",
+      "name": "Global Opportunity Engine（A·v2.1 隔离）",
+      "local_path": "/Users/cast/Downloads/开发工作台/projects/v2.1/goe-latest",
+      "default_branch": "architecture/research-v2",
+      "remote_push_authorized": 0,
+      "ci_required": 0
+    },
+    {
+      "id": "proj_mwhttnd766222e2a",
+      "name": "AI Workbench Loop（W·隔离克隆）",
+      "local_path": "/Users/cast/Downloads/开发工作台/projects/v2.1/workbench-loop",
+      "default_branch": "wb/plan-dc22b6",
+      "remote_push_authorized": 0,
+      "ci_required": 0
+    }
+  ],
+  "runs": {
+    "Investment Agent（B·v2.1 隔离）": [
+      {
+        "id": "run_mwhu4q2v3702842c",
+        "status": "awaiting_acceptance",
+        "verification": "LOCAL_VERIFIED",
+        "verified_sha": "986f6d3e99e1b46d059d4fa389345eff6f30facf",
+        "goal": "在 B 最新 R37 隔离克隆中增加 A→B handoff 离线契约冒烟测试（纯新增测试，不修改权威树/既有测试/冻结文档）。",
+        "spent": {
+          "tokens": 2911175,
+          "costCny": 1.4548979584,
+          "updatedAt": "2026-11-15T13:19:27.659Z"
+        },
+        "tasks": [
+          {
+            "title": "在 B 最新 R37 隔离克隆中增加 A→B handoff 离线契约冒烟测试（纯新增测试，不修改权威树/既有测试/冻结文档）。",
+            "status": "passed",
+            "commit": "986f6d3e99e1b46d059d4fa389345eff6f30facf",
+            "audits": [
+              {
+                "provider": "glm",
+                "verdict": "pass",
+                "status": "PASS",
+                "score": 94
+              },
+              {
+                "provider": "glm",
+                "verdict": "fail",
+                "status": "UNKNOWN",
+                "score": 96
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "Global Opportunity Engine（A·v2.1 隔离）": [
+      {
+        "id": "run_mwhu4mjo7b3333c5",
+        "status": "awaiting_acceptance",
+        "verification": "LOCAL_VERIFIED",
+        "verified_sha": "7a40071fd2d6550fbb75c6b258bbf7ccbb1b9edf",
+        "goal": "为 Global Opportunity Engine 最新 committed 基线补齐 P1-SCAN-2 对抗性扫描证据测试（Claude 受限会话无进展后改用 DSH 执行同一任务）。",
+        "spent": {
+          "tokens": 2068911,
+          "costCny": 0.8762185728,
+          "updatedAt": "2026-11-15T13:03:54.120Z"
+        },
+        "tasks": [
+          {
+            "title": "为 Global Opportunity Engine 最新 committed 基线补齐 P1-SCAN-2 对抗性扫描证据测试（Claude 受限会话无进展后改用 DSH 执行同一任务）。",
+            "status": "passed",
+            "commit": "7a40071fd2d6550fbb75c6b258bbf7ccbb1b9edf",
+            "audits": [
+              {
+                "provider": "glm",
+                "verdict": "pass",
+                "status": "PASS",
+                "score": 91
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "run_mwhtvohb32b40f60",
+        "status": "cancelled",
+        "verification": "LOCAL_VERIFIED",
+        "verified_sha": "",
+        "goal": "补齐 Global Opportunity Engine 的 P1-SCAN-2 对抗性扫描证据测试（最新 committed 基线隔离克隆）。",
+        "spent": {
+          "tokens": 0,
+          "costCny": 0,
+          "updatedAt": "2026-11-15T12:50:28.633Z"
+        },
+        "tasks": [
+          {
+            "title": "补齐 Global Opportunity Engine 的 P1-SCAN-2 对抗性扫描证据测试（最新 committed 基线隔离克隆）。",
+            "status": "coding",
+            "commit": "",
+            "audits": []
+          }
+        ]
+      }
+    ],
+    "AI Workbench Loop（W·隔离克隆）": [
+      {
+        "id": "run_mwhv5ojz07ea07d5",
+        "status": "cancelled",
+        "verification": "LOCAL_VERIFIED",
+        "verified_sha": "",
+        "goal": "[Loop round 1] [REC] 记录一次真实中断恢复的研发循环运行说明",
+        "spent": {
+          "tokens": 1317557,
+          "costCny": 0.6702956672,
+          "updatedAt": "2026-11-15T13:26:44.218Z"
+        },
+        "tasks": [
+          {
+            "title": "[REC] 记录一次真实中断恢复的研发循环运行说明",
+            "status": "auditing",
+            "commit": "",
+            "audits": [
+              {
+                "provider": "glm",
+                "verdict": "fail",
+                "status": "UNKNOWN",
+                "score": 95
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "run_mwhud9irfedc22b6",
+        "status": "awaiting_acceptance",
+        "verification": "LOCAL_VERIFIED",
+        "verified_sha": "b92a2afc764a18d009a724b57ba8884892d6da96",
+        "goal": "[Loop round 3] [CLI] 为 bin/workbench.js 增加 loop 子命令",
+        "spent": {
+          "tokens": 1222608,
+          "costCny": 0.5657028896,
+          "updatedAt": "2026-11-15T13:07:17.109Z"
+        },
+        "tasks": [
+          {
+            "title": "[CLI] 为 bin/workbench.js 增加 loop 子命令",
+            "status": "passed",
+            "commit": "b92a2afc764a18d009a724b57ba8884892d6da96",
+            "audits": [
+              {
+                "provider": "glm",
+                "verdict": "pass",
+                "status": "PASS",
+                "score": 85
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "run_mwhu4gui04f698e7",
+        "status": "awaiting_acceptance",
+        "verification": "LOCAL_VERIFIED",
+        "verified_sha": "6875f8a075ff38d840174f0dfb6773610d1fe819",
+        "goal": "[Loop round 2] [UI] 研发循环面板：在 Web 界面展示 loops 状态与历史",
+        "spent": {
+          "tokens": 3151584,
+          "costCny": 0.9861196671999999,
+          "updatedAt": "2026-11-15T12:59:26.977Z"
+        },
+        "tasks": [
+          {
+            "title": "[UI] 研发循环面板：在 Web 界面展示 loops 状态与历史",
+            "status": "passed",
+            "commit": "6875f8a075ff38d840174f0dfb6773610d1fe819",
+            "audits": [
+              {
+                "provider": "glm",
+                "verdict": "pass",
+                "status": "PASS",
+                "score": 95
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "run_mwhttrhz095bfe41",
+        "status": "awaiting_acceptance",
+        "verification": "LOCAL_VERIFIED",
+        "verified_sha": "90e9d11b2f495d571212b96708eae976fb4fb0ea",
+        "goal": "[Loop round 1] [API] 新增 GET /api/usage/providers 分离 Provider 用量接口",
+        "spent": {
+          "tokens": 917573,
+          "costCny": 0.6608219552,
+          "updatedAt": "2026-11-15T12:52:32.934Z"
+        },
+        "tasks": [
+          {
+            "title": "[API] 新增 GET /api/usage/providers 分离 Provider 用量接口",
+            "status": "passed",
+            "commit": "90e9d11b2f495d571212b96708eae976fb4fb0ea",
+            "audits": [
+              {
+                "provider": "glm",
+                "verdict": "fail",
+                "status": "UNKNOWN",
+                "score": 76
+              },
+              {
+                "provider": "glm",
+                "verdict": "pass",
+                "status": "PASS",
+                "score": 92
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "test_count": 186,
+  "prs": [
+    {
+      "number": 3,
+      "url": "https://github.com/bojing951-hash/ai-workbench/pull/3",
+      "ci": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43718922859"
+    },
+    {
+      "number": 2,
+      "url": "https://github.com/bojing951-hash/ai-workbench/pull/2"
+    }
+  ],
+  "patches": [
+    "docs/v2.1/patches/A-P1-SCAN-2-7a40071.patch",
+    "docs/v2.1/patches/B-handoff-contract-986f6d3.patch"
+  ],
+  "notes": [
+    "GLM 真实用量单列且不受预算；DeepSeek 受原预算",
+    "W loop 3 轮真实任务通过；SIGKILL 恢复机制验证；恢复文档任务审计 UNKNOWN 未伪造",
+    "A/B 仅操作隔离克隆，未触碰权威工作区/现有研发进程；远端推送未授权"
+  ]
+}
