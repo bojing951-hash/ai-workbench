@@ -4,6 +4,7 @@
 - 本轮范围：仅 Workbench 可靠性、质量执行、Fencing/故障恢复、证据一致性；不新增产品功能、不升级版本、不合并 main。
 - 独立审查：`reliability-reviewer`（只读子代理，两轮）；首轮 4 个 P1 已全部整改并复审确认无剩余 P0/P1；详见 `INDEPENDENT-REVIEW.md`。
 - 机器可读汇总：`demo/evidence/v2.7-reliability-audit.json`。
+- CI：GitHub Actions success，commit `6752d29`；干净 worktree（无 `projects/`）237/237。
 - 未触碰：Global Opportunity Engine、Investment Agent、Consumption Decision Lab；生产 Workbench 4477 仅在阅读/测试，不重启其研发任务。
 
 ## 问题与整改

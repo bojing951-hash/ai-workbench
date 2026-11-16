@@ -1,29 +1,197 @@
 {
   "baselineCommit": "8d56700",
   "remediationCommit": "d829274",
-  "reviewer": { "name": "reliability-reviewer", "readOnly": true, "firstRound": "no P0; 4 P1 confirmed", "reReview": "no remaining P0/P1; four P1 independently verified fixed", "path": "docs/v2.7/reliability/INDEPENDENT-REVIEW.md" },
-  "tests": { "total": 237, "pass": 237, "log": "demo/evidence/v2.7-reliability-tests.txt" },
+  "reviewer": {
+    "name": "reliability-reviewer",
+    "readOnly": true,
+    "firstRound": "no P0; 4 P1 confirmed",
+    "reReview": "no remaining P0/P1; four P1 independently verified fixed",
+    "path": "docs/v2.7/reliability/INDEPENDENT-REVIEW.md"
+  },
+  "tests": {
+    "total": 237,
+    "pass": 237,
+    "log": "demo/evidence/v2.7-reliability-tests.txt",
+    "cleanWorktree": "PASS 237/237 (git worktree without projects/)"
+  },
   "issues": [
-    { "id": "P0", "title": "quality command env/credential isolation, async, nonzero/timeout/invalid JSON", "status": "PARTIAL", "fixed": ["no process.env inheritance", "no credentials", "async execCapture", "failure classes", "allowlist"], "blocked": ["macOS sandbox_apply EPERM on this host; env-only fallback; FS/network forced sandbox UNVERIFIED"], "evidence": ["tests/quality-execution.test.js", "demo/evidence/v2.7-postfix-quality-run.json"] },
-    { "id": "P1-A", "title": "plan-mode quality repair", "status": "IMPLEMENTED+TESTED", "fixed": ["plan/queue shared repair queue", "priority over planning", "max_cycles", "task restored on startRun failure"], "unknown": ["real plan-mode Agent E2E"], "evidence": ["tests/quality-plan-mode.test.js", "src/loop.js"] },
-    { "id": "P1-B", "title": "quality command failure classification", "status": "PASS", "fixed": ["NONZERO_EXIT", "TIMEOUT", "INVALID_JSON", "SPAWN_ERROR", "no PASS from failure"], "evidence": ["tests/quality-execution.test.js"] },
-    { "id": "P1-C", "title": "quality command blocks event loop", "status": "PASS(test)", "fixed": ["async execCapture", "timeout/abort", "loop await"], "unknown": ["long real HTTP health pressure test"], "evidence": ["tests/quality-execution.test.js"] },
-    { "id": "P1-D", "title": "fencing/control writes/two HTTP processes/recovery", "status": "PARTIAL+TESTED", "fixed": ["dual HTTP one run", "non-owner control rejected", "dead-owner lease cleanup", "live-owner recovery skip", "control lease release on failure", "loop completeRound lease"], "unknown": ["all Git/quality write paths exhaustive fencing"], "evidence": ["tests/fencing-http.test.js", "tests/control-lease.test.js", "tests/fencing.test.js", "fault-injection-*"] },
-    { "id": "P1-E", "title": "evidence credibility", "status": "PASS(current product)+PARTIAL(engine)", "fixed": ["status/cost/time/commit consistency test", "clause coverage artifact", "removed stale BLOCKED fields"], "remaining": ["quality engine automatic clause-level verdict not complete"], "evidence": ["tests/evidence-consistency.test.js", "demo/evidence/reading-queue-clause-coverage.json"] }
+    {
+      "id": "P0",
+      "title": "quality command env/credential isolation, async, nonzero/timeout/invalid JSON",
+      "status": "PARTIAL",
+      "fixed": [
+        "no process.env inheritance",
+        "no credentials",
+        "async execCapture",
+        "failure classes",
+        "allowlist"
+      ],
+      "blocked": [
+        "macOS sandbox_apply EPERM on this host; env-only fallback; FS/network forced sandbox UNVERIFIED"
+      ],
+      "evidence": [
+        "tests/quality-execution.test.js",
+        "demo/evidence/v2.7-postfix-quality-run.json"
+      ]
+    },
+    {
+      "id": "P1-A",
+      "title": "plan-mode quality repair",
+      "status": "IMPLEMENTED+TESTED",
+      "fixed": [
+        "plan/queue shared repair queue",
+        "priority over planning",
+        "max_cycles",
+        "task restored on startRun failure"
+      ],
+      "unknown": [
+        "real plan-mode Agent E2E"
+      ],
+      "evidence": [
+        "tests/quality-plan-mode.test.js",
+        "src/loop.js"
+      ]
+    },
+    {
+      "id": "P1-B",
+      "title": "quality command failure classification",
+      "status": "PASS",
+      "fixed": [
+        "NONZERO_EXIT",
+        "TIMEOUT",
+        "INVALID_JSON",
+        "SPAWN_ERROR",
+        "no PASS from failure"
+      ],
+      "evidence": [
+        "tests/quality-execution.test.js"
+      ]
+    },
+    {
+      "id": "P1-C",
+      "title": "quality command blocks event loop",
+      "status": "PASS(test)",
+      "fixed": [
+        "async execCapture",
+        "timeout/abort",
+        "loop await"
+      ],
+      "unknown": [
+        "long real HTTP health pressure test"
+      ],
+      "evidence": [
+        "tests/quality-execution.test.js"
+      ]
+    },
+    {
+      "id": "P1-D",
+      "title": "fencing/control writes/two HTTP processes/recovery",
+      "status": "PARTIAL+TESTED",
+      "fixed": [
+        "dual HTTP one run",
+        "non-owner control rejected",
+        "dead-owner lease cleanup",
+        "live-owner recovery skip",
+        "control lease release on failure",
+        "loop completeRound lease"
+      ],
+      "unknown": [
+        "all Git/quality write paths exhaustive fencing"
+      ],
+      "evidence": [
+        "tests/fencing-http.test.js",
+        "tests/control-lease.test.js",
+        "tests/fencing.test.js",
+        "fault-injection-*"
+      ]
+    },
+    {
+      "id": "P1-E",
+      "title": "evidence credibility",
+      "status": "PASS(current product)+PARTIAL(engine)",
+      "fixed": [
+        "status/cost/time/commit consistency test",
+        "clause coverage artifact",
+        "removed stale BLOCKED fields"
+      ],
+      "remaining": [
+        "quality engine automatic clause-level verdict not complete"
+      ],
+      "evidence": [
+        "tests/evidence-consistency.test.js",
+        "demo/evidence/reading-queue-clause-coverage.json"
+      ]
+    }
   ],
   "faultInjection": {
-    "activeTaskSIGKILL": { "status": "PASS_AFTER_FIX", "beforeFix": "resumed:false, lease held by dead pid", "afterFix": "resumed:true", "cancelledBeforeAudit": true, "fakePass": false, "artifacts": ["demo/evidence/fault-injection-before-fix.log", "demo/evidence/fault-injection-after-fix.log", "demo/evidence/fault-injection-run-after-fix.json"] },
-    "supervisor": { "crash": 1, "restart": 1, "healthRestored": true, "productCommitChanged": false }
+    "activeTaskSIGKILL": {
+      "status": "PASS_AFTER_FIX",
+      "beforeFix": "resumed:false, lease held by dead pid",
+      "afterFix": "resumed:true",
+      "cancelledBeforeAudit": true,
+      "fakePass": false,
+      "artifacts": [
+        "demo/evidence/fault-injection-before-fix.log",
+        "demo/evidence/fault-injection-after-fix.log",
+        "demo/evidence/fault-injection-run-after-fix.json"
+      ]
+    },
+    "supervisor": {
+      "crash": 1,
+      "restart": 1,
+      "healthRestored": true,
+      "productCommitChanged": false
+    }
   },
-  "realE2E": { "previousProduct": "PASS (2h08m14s, Reading Queue Planner v0.1.0)", "newAfterFixes": "BLOCKED: no new DSH ¥30 authorization; old project budget not transferable", "planAgentE2E": "UNKNOWN/BLOCKED" },
-  "longRun": { "status": "24H_NOT_VERIFIED", "observedSeconds": 0 },
+  "realE2E": {
+    "previousProduct": "PASS (2h08m14s, Reading Queue Planner v0.1.0)",
+    "newAfterFixes": "BLOCKED: no new DSH ¥30 authorization; old project budget not transferable",
+    "planAgentE2E": "UNKNOWN/BLOCKED"
+  },
+  "longRun": {
+    "status": "24H_NOT_VERIFIED",
+    "observedSeconds": 0
+  },
   "costs": {
     "newDSHSpendCny": 0,
     "newE2EDSHBlocked": true,
-    "previousProduct": { "codingCny": 26.96299056, "auditEstimateCny": 1.325574432, "totalCny": 28.288564992, "auditLimitCny": 30, "vendorInvoice": "NOT_AVAILABLE" },
-    "faultInjectionCandidate": { "provider": "dsh", "attempts": 2, "tokensInOut": 8125, "tokensCache": 90368, "estimateCny": 0.0387753408, "auditCancelled": true, "scope": "isolated candidate DB, not production budget" }
+    "previousProduct": {
+      "codingCny": 26.96299056,
+      "auditEstimateCny": 1.325574432,
+      "totalCny": 28.288564992,
+      "auditLimitCny": 30,
+      "vendorInvoice": "NOT_AVAILABLE"
+    },
+    "faultInjectionCandidate": {
+      "provider": "dsh",
+      "attempts": 2,
+      "tokensInOut": 8125,
+      "tokensCache": 90368,
+      "estimateCny": 0.0387753408,
+      "auditCancelled": true,
+      "scope": "isolated candidate DB, not production budget"
+    }
   },
-  "constraints": { "abTouched": false, "cdlTouched": false, "cdlBudgetBorrowed": false, "mainMerged": false, "deployed": false, "productCodeByExternal": false },
-  "residualP2": ["quality cancel signal not wired", "quality temp HOME not cleaned", "clause tracking manual", "supervisor nextRestartAt stale", "full suite clean-CI repro not independently run"],
-  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/9"
+  "constraints": {
+    "abTouched": false,
+    "cdlTouched": false,
+    "cdlBudgetBorrowed": false,
+    "mainMerged": false,
+    "deployed": false,
+    "productCodeByExternal": false
+  },
+  "residualP2": [
+    "quality cancel signal not wired",
+    "quality temp HOME not cleaned",
+    "clause tracking manual",
+    "supervisor nextRestartAt stale",
+    "full suite clean-CI repro not independently run"
+  ],
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/9",
+  "finalCommit": "6752d29",
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43823794740",
+    "head": "6752d29"
+  }
 }

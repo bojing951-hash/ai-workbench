@@ -37,5 +37,5 @@
 - HTTP 测试：`CLAUDE_BIN=/nonexistent DSH_BIN=/nonexistent` 下 1/1 pass；不过当时测试仍写 `agent:'claude'`，复审指出文档与代码不一致；已在最终代码改为 `agent:'custom'`。
 - P2 重名/错标 fault 文件已清理；clause artifact 路径已指向实际产品测试；证据计数 237/237。
 - 剩余 P2：质量取消 signal 未接入、质量临时 HOME 未清理、手工 clause 追踪、supervisor `nextRestartAt` 陈旧；`bin/workbench.js` 的 `loops.recover()` 返回形状日志问题已在最终代码修复。
-- 未复查：完整 CI 的 237/237（记录日志已存在；复审者只跑 targeted）；plan 模式真实 Agent E2E；FS/network 沙箱；完整 Git/质量写路径 fencing。
+- 未复查：完整 CI 的 237/237（复审者只跑 targeted；最终干净 worktree 与 GitHub Actions 均为 237/237 success）；plan 模式真实 Agent E2E；FS/network 沙箱；完整 Git/质量写路径 fencing。
 
