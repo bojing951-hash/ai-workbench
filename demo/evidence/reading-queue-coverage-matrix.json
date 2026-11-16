@@ -1,0 +1,96 @@
+{
+  "projectId": "proj_mwiq4y5u848f07c5",
+  "loopId": "loop_mwisni5ka9abfb45",
+  "allPass": true,
+  "coverage": {
+    "total": 4,
+    "pass": 4,
+    "fail": 0,
+    "unknown": 0,
+    "blocked": 0
+  },
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "书籍管理与校验",
+      "description": "",
+      "priority": "P0",
+      "required": true,
+      "acceptance": [
+        "addBook/listBooks/searchBooks 行为符合契约",
+        "重复与非法输入拒绝"
+      ],
+      "codeRefs": [],
+      "testRefs": [
+        "tests/library.test.js"
+      ],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "隐藏检查：添加/重复拒绝通过",
+      "auditEvidence": [],
+      "issues": []
+    },
+    {
+      "id": "R2",
+      "title": "阅读计划边界",
+      "description": "",
+      "priority": "P0",
+      "required": true,
+      "acceptance": [
+        "按优先级/页数/每天分钟生成计划",
+        "不重复、不含完成/不可用，未安排项有原因"
+      ],
+      "codeRefs": [],
+      "testRefs": [
+        "tests/planner.test.js"
+      ],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "隐藏检查：优先级/去重/完成与否/unplanned 通过",
+      "auditEvidence": [],
+      "issues": []
+    },
+    {
+      "id": "R3",
+      "title": "本地持久化",
+      "description": "",
+      "priority": "P1",
+      "required": true,
+      "acceptance": [
+        "JSON 往返保持",
+        "损坏文件抛出错误"
+      ],
+      "codeRefs": [],
+      "testRefs": [
+        "tests/store-cli.test.js"
+      ],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "隐藏检查：持久化与损坏文件错误通过",
+      "auditEvidence": [],
+      "issues": []
+    },
+    {
+      "id": "R4",
+      "title": "CLI 用户流程",
+      "description": "",
+      "priority": "P1",
+      "required": true,
+      "acceptance": [
+        "plan 输出稳定 JSON",
+        "错误参数 exit=1"
+      ],
+      "codeRefs": [],
+      "testRefs": [
+        "tests/cli.test.js"
+      ],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "隐藏检查：CLI plan JSON 输出通过",
+      "auditEvidence": [],
+      "issues": []
+    }
+  ],
+  "p0p1": [],
+  "generatedAt": "2026-11-16T05:57:10.067Z"
+}

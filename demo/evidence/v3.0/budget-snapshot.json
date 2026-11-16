@@ -1,0 +1,122 @@
+{
+  "ok": true,
+  "data": {
+    "maxTokens": 3000000,
+    "usedTokens": 41525730,
+    "usedBudgetTokens": 2991346,
+    "projectAudit": {
+      "tokensIn": 564080,
+      "tokensOut": 426701,
+      "tokensCache": 0,
+      "tokens": 990781,
+      "costCny": 3.8522379168
+    },
+    "cacheTokenWeight": 0.1,
+    "glmUnlimited": true,
+    "exemptProviders": [
+      "glm"
+    ],
+    "glm": {
+      "tokensIn": 1632635,
+      "tokensOut": 644485,
+      "tokensCache": 19119360,
+      "tokens": 21396480,
+      "costCny": 130.4254896,
+      "known": true
+    },
+    "nonGlm": {
+      "tokensIn": 890672,
+      "tokensOut": 306549,
+      "tokensCache": 17941248,
+      "costCny": 6.340354473600001,
+      "names": [
+        "deepseek"
+      ],
+      "tokens": 19138469
+    },
+    "byProvider": {
+      "deepseek": {
+        "tokensIn": 890672,
+        "tokensOut": 306549,
+        "tokensCache": 17941248,
+        "tokens": 19138469,
+        "costCny": 6.340354473600001,
+        "known": true
+      },
+      "glm": {
+        "tokensIn": 1632635,
+        "tokensOut": 644485,
+        "tokensCache": 19119360,
+        "tokens": 21396480,
+        "costCny": 130.4254896,
+        "known": true
+      }
+    },
+    "maxCostCny": 30,
+    "usedCostCny": 140.6181,
+    "usedBudgetCostCny": 6.3404,
+    "remainingTokens": 8654.200000000186,
+    "remainingCostCny": 23.6596455264,
+    "tokensPercent": 99.7,
+    "costPercent": 21.1,
+    "breakdown": {
+      "tokensIn": 2523307,
+      "tokensOut": 951034,
+      "tokensCache": 37060608,
+      "tokens": 40534949,
+      "costCny": 136.7658440736,
+      "byProvider": {
+        "deepseek": {
+          "tokensIn": 890672,
+          "tokensOut": 306549,
+          "tokensCache": 17941248,
+          "tokens": 19138469,
+          "costCny": 6.340354473600001,
+          "known": true
+        },
+        "glm": {
+          "tokensIn": 1632635,
+          "tokensOut": 644485,
+          "tokensCache": 19119360,
+          "tokens": 21396480,
+          "costCny": 130.4254896,
+          "known": true
+        }
+      },
+      "projectAudit": {
+        "tokensIn": 564080,
+        "tokensOut": 426701,
+        "tokensCache": 0,
+        "tokens": 990781,
+        "costCny": 3.8522379168
+      },
+      "budgetTokens": 2991345.8,
+      "budgetCostCny": 6.340354473600001,
+      "glmUnlimited": true,
+      "exemptProviders": [
+        "glm"
+      ],
+      "glm": {
+        "tokensIn": 1632635,
+        "tokensOut": 644485,
+        "tokensCache": 19119360,
+        "tokens": 21396480,
+        "costCny": 130.4254896,
+        "known": true
+      },
+      "nonGlm": {
+        "tokensIn": 890672,
+        "tokensOut": 306549,
+        "tokensCache": 17941248,
+        "costCny": 6.340354473600001,
+        "names": [
+          "deepseek"
+        ],
+        "tokens": 19138469
+      },
+      "cacheTokenWeight": 0.1
+    },
+    "note": "仅当实际模型供应商被识别为 GLM 时豁免工作台 token/费用上限；未知供应商不豁免；其余模型仍受原预算（缓存按权重折算）约束",
+    "identityPolicy": "provider identity: glm(exempt) / deepseek / openai / anthropic / unknown(not exempt)"
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "type": "v2.4-supervisor-evidence",
+  "at": "2026-11-15T16:06:30.852655+00:00",
+  "supervisor": {
+    "pid": 49602,
+    "childPid": 49776,
+    "startedAt": "2026-11-15T16:05:14.524Z",
+    "circuitOpen": false,
+    "crashes": [
+      {
+        "at": "2026-11-15T16:05:42.546Z",
+        "code": null,
+        "signal": "SIGKILL",
+        "pid": 49604
+      }
+    ],
+    "restarts": [
+      {
+        "at": "2026-11-15T16:05:42.539Z",
+        "reason": "health-unresponsive",
+        "attempt": 1,
+        "delayMs": 5000
+      }
+    ],
+    "recoveries": [
+      {
+        "at": "2026-11-15T16:05:21.201Z",
+        "ok": true,
+        "result": {
+          "recoveredRuns": [],
+          "recoveredLoops": [],
+          "at": "2026-11-15T16:05:21.198Z"
+        }
+      },
+      {
+        "at": "2026-11-15T16:05:54.144Z",
+        "ok": true,
+        "result": {
+          "recoveredRuns": [],
+          "recoveredLoops": [],
+          "at": "2026-11-15T16:05:54.142Z"
+        }
+      }
+    ]
+  },
+  "keyLogLines": [
+    "[2026-11-15T16:00:14.729Z] Supervisor 启动 pid=47775 root=/Users/cast/Downloads/开发工作台 port=4477",
+    "[2026-11-15T16:00:14.732Z] Workbench 启动 pid=47777",
+    "[2026-11-15T16:00:21.267Z] 健康恢复后对账/续跑完成：{\"recoveredRuns\":[],\"recoveredLoops\":[],\"at\":\"2026-11-15T16:00:21.264Z\"}",
+    "[2026-11-15T16:00:47.150Z] Workbench 退出 code=null signal=SIGKILL",
+    "[2026-11-15T16:00:47.151Z] 计划重启 #1（process-exit），5s 后",
+    "[2026-11-15T16:00:52.155Z] Workbench 启动 pid=48016",
+    "[2026-11-15T16:00:58.890Z] 健康恢复后对账/续跑完成：{\"recoveredRuns\":[{\"runId\":\"run_mwi0twlq3c6d5986\",\"resumed\":true}],\"recoveredLoops\":[{\"loopId\":\"loop_mwi0tvo5d7bf6a00\",\"resumed\":true}],\"at\":\"2026-11-15T16:00:58.888Z\"}",
+    "[2026-11-15T16:04:50.608Z] 健康检查失败 3/3：This operation was aborted",
+    "[2026-11-15T16:04:50.610Z] Workbench 存活但服务无响应，强制终止并重启",
+    "[2026-11-15T16:04:50.635Z] 计划重启 #2（health-unresponsive），10s 后",
+    "[2026-11-15T16:04:50.639Z] Workbench 退出 code=null signal=SIGKILL",
+    "[2026-11-15T16:04:50.639Z] 计划重启 #3（process-exit），20s 后",
+    "[2026-11-15T16:04:52.608Z] Workbench 存活但服务无响应，强制终止并重启",
+    "[2026-11-15T16:04:52.608Z] 计划重启 #4（health-unresponsive），40s 后",
+    "[2026-11-15T16:04:57.608Z] Workbench 存活但服务无响应，强制终止并重启",
+    "[2026-11-15T16:04:57.608Z] 计划重启 #5（health-unresponsive），80s 后",
+    "[2026-11-15T16:05:00.916Z] Workbench 启动 pid=49548",
+    "[2026-11-15T16:05:07.553Z] 健康恢复后对账/续跑完成：{\"recoveredRuns\":[],\"recoveredLoops\":[],\"at\":\"2026-11-15T16:05:07.551Z\"}",
+    "[2026-11-15T16:05:10.906Z] Workbench 启动 pid=49577",
+    "[2026-11-15T16:05:11.335Z] Workbench 退出 code=1 signal=null",
+    "[2026-11-15T16:05:11.341Z] 计划重启 #6（process-exit），160s 后",
+    "[2026-11-15T16:05:14.526Z] Supervisor 启动 pid=49602 root=/Users/cast/Downloads/开发工作台 port=4477",
+    "[2026-11-15T16:05:14.530Z] Workbench 启动 pid=49604",
+    "[2026-11-15T16:05:21.202Z] 健康恢复后对账/续跑完成：{\"recoveredRuns\":[],\"recoveredLoops\":[],\"at\":\"2026-11-15T16:05:21.198Z\"}",
+    "[2026-11-15T16:05:42.538Z] 健康检查失败 3/3：This operation was aborted",
+    "[2026-11-15T16:05:42.539Z] Workbench 存活但服务无响应，强制终止并重启",
+    "[2026-11-15T16:05:42.540Z] 计划重启 #1（health-unresponsive），5s 后",
+    "[2026-11-15T16:05:42.546Z] Workbench 退出 code=null signal=SIGKILL",
+    "[2026-11-15T16:05:47.543Z] Workbench 启动 pid=49776",
+    "[2026-11-15T16:05:54.144Z] 健康恢复后对账/续跑完成：{\"recoveredRuns\":[],\"recoveredLoops\":[],\"at\":\"2026-11-15T16:05:54.142Z\"}"
+  ],
+  "notes": [
+    "SIGKILL 16:00:47Z 后 Supervisor 16:00:52Z 自动拉起，16:00:58Z 调用受管恢复接口并恢复 run/loop；无人工重启/resume/改码。",
+    "健康无响应注入 16:05:26Z SIGSTOP，3 次健康失败后 Supervisor 16:05:42Z 自动终止并重启，16:05:54Z 恢复。",
+    "测试中发现旧 Supervisor 健康失败与进程退出重复 schedule 重启的竞态，已修复 restartScheduled/clearInterval 幂等；新 Supervisor 单次重启验证通过。"
+  ]
+}

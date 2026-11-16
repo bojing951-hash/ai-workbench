@@ -218,8 +218,8 @@ async function createHarness({ deps = {}, budget = {}, projectInput = {} } = {})
     },
     agents: {
       default: 'auto',
-      dsh: { bin: '/nonexistent/wb-test-bin/dsh', timeoutMs: 30_000 },
-      claude: { bin: '/nonexistent/wb-test-bin/claude', timeoutMs: 30_000 },
+      dsh: { bin: '/nonexistent/wb-test-bin/dsh', timeoutMs: 30_000, permissionMode: 'workspace-write' },
+      claude: { bin: '/nonexistent/wb-test-bin/claude', timeoutMs: 30_000, permissionMode: 'acceptEdits' },
     },
     llm: {
       openai: { apiKey: '' },
@@ -333,7 +333,7 @@ test('场景A：单任务完整流水线，审计先 fail 后 pass，第二轮 A
     const planBranch = `wb/plan-${started.runId.slice(-6)}`;
     assert.equal(run.result_json.planBranch, planBranch);
     assert.equal(run.result_json.publish.localOnly, true);
-    assert.ok(run.result_json.publish.blocked.some((r) => r.includes('GITHUB_TOKEN')));
+    assert.ok(run.result_json.publish.blocked.some((r) => /未授权远端推送|GITHUB_TOKEN/.test(r)));
 
     // ---- 任务 passed / head_commit / 分支 ----
     const tasks = h.store.listTasks({ runId: started.runId });
@@ -419,12 +419,13 @@ test('场景A：单任务完整流水线，审计先 fail 后 pass，第二轮 A
     assert.equal(actions.length, 1);
     assert.equal(actions[0].type, 'github-publish');
     assert.equal(actions[0].status, 'blocked');
-    assert.ok(String(actions[0].result_json.reason || '').includes('GITHUB_TOKEN'));
+    assert.ok(/未授权远端推送|GITHUB_TOKEN/.test(String(actions[0].result_json.reason || '')));
 
     // ---- 人工验收：只记录验收，不合并主分支 ----
-    const accepted = h.orchestrator.acceptRun(started.runId);
+    const accepted = h.orchestrator.acceptRun(started.runId, { confirmLocalOnly: true });
     assert.equal(accepted.status, 'accepted');
     assert.equal(accepted.result_json.merged, false);
+    assert.equal(accepted.result_json.localOnlyAccepted, true);
     assert.ok(accepted.result_json.acceptedAt);
     assert.ok(eventTypes(h.store, started.runId).includes('run_accepted'));
     // 已结束的运行不允许再 resume
