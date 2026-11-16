@@ -40,7 +40,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '3.1.0';
+const VERSION = '3.2.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
@@ -576,7 +576,7 @@ export class Orchestrator {
         tasks: input.tasks,
       });
     } catch (err) {
-      if (plannerReservation?.reservation?.id) this.store.releaseModelReservation(plannerReservation.reservation.id);
+      if (plannerReservation?.reservation?.id) this.store.markModelReservationUnknown(plannerReservation.reservation.id);
       this.releaseProjectLease(project.id);
       throw err;
     }
@@ -596,6 +596,7 @@ export class Orchestrator {
           status: RunStatus.QUEUED,
           budget,
           spent: { tokens: 0, costCny: 0 },
+          result: input.loopId ? { loopId: input.loopId } : {},
           wallDeadline,
           verificationStatus: 'LOCAL_VERIFIED',
           parentRunId: input.parentRunId || '',
@@ -1215,7 +1216,7 @@ export class Orchestrator {
           agentResult = { ...watchdog.result, stalled: !!watchdog.stalled };
         } finally {
           release();
-          if (agentReservation?.reservation?.id && !agentResult) this.store.releaseModelReservation(agentReservation.reservation.id);
+          if (agentReservation?.reservation?.id && !agentResult) this.store.markModelReservationUnknown(agentReservation.reservation.id);
         }
         if (agentReservation?.reservation?.id) {
           const au = summarizeUsage(agentResult?.usage || {});
@@ -1414,7 +1415,7 @@ export class Orchestrator {
             signal,
           });
         } catch (err) {
-          if (auditReservation?.reservation?.id) this.store.releaseModelReservation(auditReservation.reservation.id);
+          if (auditReservation?.reservation?.id) this.store.markModelReservationUnknown(auditReservation.reservation.id);
           if (signal.aborted) return { ok: false, reason: '运行被暂停/取消，审计检查点已保留' };
           const message = redact(`独立审计无法完成：${err?.message || err}`, this.config);
           this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'audit-error', filename: `attempt-${attemptNo}-audit-error.txt`, content: message });
@@ -1762,9 +1763,10 @@ export class Orchestrator {
       return;
     }
 
-    // P0-2：冻结验收契约是最终完成判定，不能因为“任务全部 passed”就交付。
+    // 任务级 Run（Loop 内）只验证当前任务；产品级冻结验收由 Loop 在所有计划任务后执行。
+    const loopScoped = !!run.result_json?.loopId;
     const acceptance = this.contractAcceptanceStatus(project, tasks);
-    if (acceptance.required && !acceptance.ok) {
+    if (!loopScoped && acceptance.required && !acceptance.ok) {
       const resultJson = run.result_json || {};
       const repairs = Number(resultJson.acceptanceRepairCount || 0);
       const maxRepairs = Math.max(1, Math.min(3, Number(project.config_json?.test_plan?.maxAcceptanceRepairs ?? 2)));
@@ -1832,6 +1834,8 @@ export class Orchestrator {
       planBranch,
       planHead,
       verifiedSha: planHead,
+      loopId: run.result_json?.loopId || '',
+      taskLevelOnly: !!loopScoped,
       verificationStatus: verification.status,
       verificationNote: verification.note,
       taskCount: tasks.length,
@@ -2251,6 +2255,9 @@ export class Orchestrator {
       throw new PolicyError('RUN_NOT_READY', `运行尚未完成，当前状态：${run.status}`);
     }
     const project = this.store.getProject(run.project_id);
+    if (run.result_json?.loopId && !['PASS', 'NOT_CONFIGURED'].includes(run.result_json?.productAcceptance)) {
+      throw new PolicyError('RUN_NOT_FINAL', '该运行只是 Loop 的任务级阶段，产品级冻结验收尚未通过，不能验收');
+    }
     const tasks = this.store.listTasks({ runId: run.id });
     const acceptance = this.contractAcceptanceStatus(project, tasks);
     if (acceptance.required && !acceptance.ok) {
@@ -2348,6 +2355,69 @@ export class Orchestrator {
       return { ok: true, branch, head, reused: true };
     }
     return { ok: false, reason: '失败任务没有可保留的 Git 产物/分支' };
+  }
+
+  /**
+   * 产品级验收：在最终 Git Commit 上独立审计全部冻结验收条款。
+   * 与任务级 runTask 分离；历史 PASS 不能替代最终 Commit 的重新审计。
+   */
+  async productAcceptanceAudit({ project, expected = [], planHead = '', baseCommit = '', latestRun = null, latestTask = null } = {}) {
+    if (!expected.length) return { ok: true, required: false, status: 'SKIPPED', criteria: [], missing: [] };
+    if (!planHead) return { ok: false, required: true, status: 'UNKNOWN', reason: '缺少最终 Git Commit，不能进行产品验收', missing: expected };
+    const parent = await gitops.git(project.local_path, ['rev-parse', `${planHead}^`], { allowFail: true }).then((r) => r.stdout.trim()).catch(() => '');
+    const base = baseCommit || parent || planHead;
+    const diffRes = await gitops.git(project.local_path, ['diff', base, planHead], { timeoutMs: 120_000 });
+    let diff = diffRes.stdout || '';
+    if (diff.length > Number(this.config.audit.maxDiffChars || 70_000)) diff = `${diff.slice(0, Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.7))}
+... [产品验收 diff 截断] ...
+${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3))}`;
+    const diffStat = await gitops.git(project.local_path, ['diff', '--stat', base, planHead], { allowFail: true }).then((r) => (r.stdout || '').trim());
+    const repoFiles = await gitops.listTree(project.local_path, planHead, { max: 150 });
+    const contextFiles = await this.collectAuditContext(project.local_path);
+    const lastAttempt = latestTask ? this.store.listAttempts(latestTask.id).filter((a) => a.stage === 'coding').slice(-1)[0] : null;
+    const coderFamily = coderFamilyFor(lastAttempt?.agent_kind || latestTask?.agent_kind || 'dsh', this.config);
+    let reservation = null;
+    let auditInfo = null;
+    try { auditInfo = this.deps.runAudit === runAudit ? this.auditResourcePreflight(project, coderFamily) : { provider: 'fake', model: 'fake', exempt: true, estimate: 0 }; } catch (err) { return { ok: false, required: true, status: 'BLOCKED', reason: err.message, missing: expected }; }
+    let audit;
+    try {
+      if (this.deps.runAudit === runAudit && auditInfo && !auditInfo.exempt && !this.isDshAuditProject(project)) {
+        reservation = assertModelBudget({ config: this.config, store: this.store, provider: auditInfo.provider, model: auditInfo.model || '', estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true });
+      }
+      audit = await this.deps.runAudit({
+        config: this.config, project,
+        task: { id: latestTask?.id || 'product-acceptance', seq: 999, title: 'Product acceptance', acceptance_json: expected, agent_kind: latestTask?.agent_kind || 'auto' },
+        diff, diffStat, testResult: latestTask?.result_json || {}, repoFiles, coderFamily, contextFiles,
+        versionInfo: { commit: planHead, planHead, worktreeHash: planHead, testedHash: planHead },
+        worktree: project.local_path, commit: planHead,
+      });
+    } catch (err) {
+      if (reservation?.reservation?.id) this.store.markModelReservationUnknown(reservation.reservation.id);
+      return { ok: false, required: true, status: 'BLOCKED', reason: `产品验收审计异常：${err.message}`, missing: expected };
+    }
+    if (reservation?.reservation?.id) {
+      const u = summarizeUsage(audit.usage || {});
+      this.store.settleModelReservation(reservation.reservation.id, { actualTokens: u.total, actualCostCny: audit.costCny || 0, usageKnown: !!(audit.usage && u.total > 0) });
+    }
+    const status = String(audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL')).toUpperCase();
+    const criteria = Array.isArray(audit.criteria) ? audit.criteria : [];
+    const norm = (x) => String(x || '').toLowerCase().replace(/[\s，。；：、,.!?！？:;（）()\-—]/g, '');
+    const evidence = criteria.filter((c) => String(c.status || '').toLowerCase() === 'pass' && String(c.evidence || '').trim().length >= 12);
+    const missing = expected.filter((clause) => !evidence.some((c) => { const a = norm(c.criterion); const b = norm(clause); return a && b && (a.includes(b) || b.includes(a)); }));
+    const ok = status === 'PASS' && missing.length === 0;
+    let auditRow = null;
+    if (latestRun && latestTask) {
+      const identity = resolveLlmIdentity({ config: this.config, provider: audit.provider });
+      auditRow = this.store.createAudit({
+        id: newId('aud'), runId: latestRun.id, taskId: latestTask.id, attemptNo: 999,
+        provider: identity.known ? identity.provider : 'unknown', providerKnown: identity.known, providerSource: identity.source || audit.providerSource || '',
+        budgetScope: this.isDshAuditProject(project) ? 'project_audit' : 'global', model: audit.model || '', verdict: ok ? 'pass' : 'fail', score: audit.score || 0,
+        criteria, findings: audit.findings || [], requiredFixes: audit.requiredFixes || [], summary: `产品级验收（${planHead.slice(0, 12)}）：${ok ? 'PASS' : status + '，缺失 ' + missing.length}`,
+        tokensIn: audit.usage?.input || 0, tokensOut: audit.usage?.output || 0, costCny: audit.costCny || 0,
+        verificationStatus: ok ? 'PASS' : status, evidenceHash: planHead, diffHash: hashText(diff), independence: audit.independence?.independent ? 'independent' : 'same-family',
+      });
+    }
+    return { ok, required: true, status, criteria, missing, requiredFixes: audit.requiredFixes || [], auditRow, planHead, diffHash: hashText(diff) };
   }
 
   /**
@@ -2461,7 +2531,7 @@ export class Orchestrator {
           versionInfo: { baseCommit, worktreeHash: testedHash, testedHash }, worktree, commit: '', signal: retrySignal,
         });
       } catch (err) {
-        if (auditReservation?.reservation?.id) this.store.releaseModelReservation(auditReservation.reservation.id);
+        if (auditReservation?.reservation?.id) this.store.markModelReservationUnknown(auditReservation.reservation.id);
         throw err;
       }
       if (auditReservation?.reservation?.id) {

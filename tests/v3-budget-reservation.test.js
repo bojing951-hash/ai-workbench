@@ -76,3 +76,47 @@ test('v3.1 P1-2：两个独立 Node 进程并发预留，硬额度内只能一�
     assert.equal([ra.ok, rb.ok].filter(Boolean).length, 1, '并发进程只能有一个预留成功');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('v3.1 P1-2：released 预留用同 key 重试必须重新做完整额度检查', () => {
+  const { root, store } = mk(1_000);
+  try {
+    const first = store.reserveModelBudget({ id: 'res-released', requestKey: 'retry-key', provider: 'deepseek', estimatedTokens: 400, maxTokens: 1_000, maxCostCny: 30 });
+    assert.equal(first.ok, true);
+    store.releaseModelReservation('res-released');
+    store.addLlmUsage({ source: 'test', sourceId: 'used-900', provider: 'deepseek', providerKnown: true, tokensIn: 900, tokensOut: 0, budgetScope: 'global' });
+    const retry = store.reserveModelBudget({ id: 'res-released-2', requestKey: 'retry-key', provider: 'deepseek', estimatedTokens: 400, maxTokens: 1_000, maxCostCny: 30, minReserveTokens: 0 });
+    assert.equal(retry.ok, false, '已释放的 400 预留不能在仅剩 100 额度时无检查重新占用');
+    assert.equal(store.getAction ? true : true, true);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+test('v3.1 P1-2：未知用量保留估算额度，不被视为免费', () => {
+  const { root, store } = mk(10_000);
+  try {
+    const r = store.reserveModelBudget({ id: 'res-unknown', requestKey: 'unknown-key', provider: 'deepseek', estimatedTokens: 2_000, maxTokens: 10_000, maxCostCny: 30 });
+    assert.equal(r.ok, true);
+    store.markModelReservationUnknown('res-unknown');
+    assert.equal(store.listModelReservations().find((x) => x.id === 'res-unknown').status, 'unknown');
+    assert.equal(store.reservedBudgetTotals().tokens, 2_000);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.1 P1-2：settled 同 key 不重复付费；过期预留转 unknown；DSH 专项不占全局', () => {
+  const { root, store } = mk(10_000);
+  try {
+    const a = store.reserveModelBudget({ id: 'settle-a', requestKey: 'settle-key', provider: 'deepseek', estimatedTokens: 1_000, maxTokens: 10_000, maxCostCny: 30 });
+    store.settleModelReservation(a.reservation.id, { actualTokens: 500, actualCostCny: 0.01, usageKnown: true });
+    const before = store.listModelReservations().length;
+    const again = store.reserveModelBudget({ id: 'settle-b', requestKey: 'settle-key', provider: 'deepseek', estimatedTokens: 1_000, maxTokens: 10_000, maxCostCny: 30 });
+    assert.equal(again.existing, true);
+    assert.equal(store.listModelReservations().length, before, 'settled 同 key 不能插入新付费调用');
+    // 过期：转 unknown，不自动当作零成本
+    const b = store.reserveModelBudget({ id: 'expire-a', requestKey: 'expire-key', provider: 'deepseek', estimatedTokens: 700, maxTokens: 10_000, maxCostCny: 30 });
+    store.db.prepare("UPDATE model_reservations SET expires_at='2000-01-01T00:00:00.000Z' WHERE id=?").run(b.reservation.id);
+    store.reserveModelBudget({ id: 'trigger-clean', requestKey: 'trigger-clean', provider: 'deepseek', estimatedTokens: 10, maxTokens: 10_000, maxCostCny: 30 });
+    assert.equal(store.listModelReservations().find((x) => x.id === 'expire-a').status, 'unknown');
+    // project_audit 不进入全局 reservation 分母
+    store.addLlmUsage({ source: 'audit', sourceId: 'dsh-global-check', provider: 'deepseek', providerKnown: true, tokensIn: 9_000, tokensOut: 0, budgetScope: 'project_audit' });
+    const afterDsh = store.reserveModelBudget({ id: 'global-after-dsh', requestKey: 'global-after-dsh', provider: 'deepseek', estimatedTokens: 5_000, maxTokens: 10_000, maxCostCny: 30 });
+    assert.equal(afterDsh.ok, true, 'DSH project_audit 不应污染全局额度');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});

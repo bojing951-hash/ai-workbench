@@ -337,6 +337,7 @@ export class Store {
       ],
       loops: [
         ['pending_task_json', "TEXT DEFAULT '{}'"],
+        ['product_repair_count', 'INTEGER DEFAULT 0'],
         ['auto_repair_count', 'INTEGER DEFAULT 0'],
         ['auto_retry_count', 'INTEGER DEFAULT 0'],
       ],
@@ -664,7 +665,7 @@ export class Store {
         JSON.stringify(r.budget || {}),
         JSON.stringify(r.spent || { tokens: 0, costCny: 0 }),
         '',
-        '{}',
+        JSON.stringify(r.result || {}),
         r.verificationStatus || 'LOCAL_VERIFIED',
         '',
         '',
@@ -1146,16 +1147,15 @@ export class Store {
     const expires = new Date(Date.now() + ttlMs).toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.prepare("UPDATE model_reservations SET status='expired' WHERE status='reserved' AND expires_at<=?").run(now);
+      // 预留 TTL 到期不等于调用没产生费用：转为 unknown 并继续占用估算额度，等待人工对账/结算。
+      this.db.prepare("UPDATE model_reservations SET status='unknown', usage_known=0 WHERE status='reserved' AND expires_at<=?").run(now);
+      let retryExisting = null;
       if (requestKey) {
         const existing = this.db.prepare('SELECT * FROM model_reservations WHERE request_key=?').get(requestKey);
         if (existing) {
           if (existing.status === 'reserved' || existing.status === 'settled') { this.db.exec('COMMIT'); return { ok: true, existing: true, reservation: existing }; }
-          // 失败/超时释放过的同 key（客户端安全重试）允许重新预留，不产生重复调用占额。
-          this.db.prepare("UPDATE model_reservations SET status='reserved', estimated_tokens=?, estimated_cost_cny=?, provider=?, model=?, created_at=?, expires_at=?, settled_at='' WHERE id=?")
-            .run(Number(estimatedTokens || 0), Number(estimatedCostCny || 0), provider, model, now, expires, existing.id);
-          this.db.exec('COMMIT');
-          return { ok: true, existing: true, reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(existing.id) };
+          // released/expired/unknown 的同 key 重试必须重新执行完整预算检查，不能无检查重新占额。
+          retryExisting = existing;
         }
       }
       const exempt = new Set((exemptProviders || []).map((x) => String(x).toLowerCase()));
@@ -1167,7 +1167,7 @@ export class Store {
         usedTokens += Number(r.tin || 0) + Number(r.tout || 0) + Number(r.tc || 0) * Number(cacheTokenWeight || 0);
         usedCost += Number(r.cost || 0);
       }
-      const reserved = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status='reserved' AND expires_at>?").get(now);
+      const reserved = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status IN ('reserved','unknown') AND id<>?").get(retryExisting?.id || '');
       const totalTokens = usedTokens + Number(reserved.t || 0) + Number(estimatedTokens || 0);
       const totalCost = usedCost + Number(reserved.c || 0) + Number(estimatedCostCny || 0);
       const remainingTokens = Number(maxTokens) - usedTokens - Number(reserved.t || 0);
@@ -1176,6 +1176,12 @@ export class Store {
       if (!okTokens || !okCost) {
         this.db.exec('ROLLBACK');
         return { ok: false, reason: 'budget-exceeded', usedTokens, usedCost, reservedTokens: Number(reserved.t || 0), reservedCostCny: Number(reserved.c || 0), estimatedTokens, estimatedCostCny };
+      }
+      if (retryExisting) {
+        this.db.prepare("UPDATE model_reservations SET status='reserved', estimated_tokens=?, estimated_cost_cny=?, provider=?, model=?, created_at=?, expires_at=?, settled_at='', actual_tokens=0, actual_cost_cny=0, usage_known=0 WHERE id=?")
+          .run(Number(estimatedTokens || 0), Number(estimatedCostCny || 0), provider, model, now, expires, retryExisting.id);
+        this.db.exec('COMMIT');
+        return { ok: true, existing: true, reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(retryExisting.id) };
       }
       this.db.prepare('INSERT INTO model_reservations (id,request_key,provider,model,estimated_tokens,estimated_cost_cny,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(id, requestKey, provider, model, Number(estimatedTokens || 0), Number(estimatedCostCny || 0), 'reserved', now, expires);
@@ -1186,18 +1192,25 @@ export class Store {
 
   settleModelReservation(id, { actualTokens = 0, actualCostCny = 0, usageKnown = true } = {}) {
     const now = nowIso();
-    this.db.prepare("UPDATE model_reservations SET status='settled', actual_tokens=?, actual_cost_cny=?, usage_known=?, settled_at=? WHERE id=? AND status IN ('reserved','settled')")
-      .run(Number(actualTokens || 0), Number(actualCostCny || 0), usageKnown ? 1 : 0, now, id);
+    const status = usageKnown ? 'settled' : 'unknown';
+    this.db.prepare("UPDATE model_reservations SET status=?, actual_tokens=?, actual_cost_cny=?, usage_known=?, settled_at=? WHERE id=? AND status IN ('reserved','settled','unknown')")
+      .run(status, Number(actualTokens || 0), Number(actualCostCny || 0), usageKnown ? 1 : 0, now, id);
     return this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) || null;
   }
 
   releaseModelReservation(id, { reason = 'released', usageKnown = false } = {}) {
+    // 仅用于“调用确定没有发生”的显式释放；已发起但结果未知的调用必须 markModelReservationUnknown。
     this.db.prepare("UPDATE model_reservations SET status='released', usage_known=?, settled_at=? WHERE id=? AND status='reserved'").run(usageKnown ? 1 : 0, nowIso(), id);
     return this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) || null;
   }
 
+  markModelReservationUnknown(id) {
+    this.db.prepare("UPDATE model_reservations SET status='unknown', usage_known=0, settled_at=? WHERE id=? AND status IN ('reserved','unknown')").run(nowIso(), id);
+    return this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) || null;
+  }
+
   reservedBudgetTotals() {
-    const row = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status='reserved' AND expires_at>?").get(nowIso());
+    const row = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status IN ('reserved','unknown')").get();
     return { tokens: Number(row.t || 0), costCny: Number(row.c || 0) };
   }
 
@@ -1375,9 +1388,14 @@ export class Store {
   updateLoop(id, patch) {
     const cur = this.getLoop(id); if (!cur) return null;
     const m = { ...cur, ...patch };
-    this.db.prepare('UPDATE loops SET status=?,round=?,max_rounds=?,queue_json=?,history_json=?,contract_files_json=?,current_run_id=?,last_run_id=?,stop_reason=?,auto_repair_count=?,auto_retry_count=?,updated_at=? WHERE id=?')
-      .run(m.status, m.round, m.max_rounds, JSON.stringify(m.queue_json || []), JSON.stringify(m.history_json || []), JSON.stringify(m.contract_files_json || []), m.current_run_id || '', m.last_run_id || '', m.stop_reason || '', Number(m.auto_repair_count || 0), Number(m.auto_retry_count || 0), nowIso(), id);
+    this.db.prepare('UPDATE loops SET status=?,round=?,max_rounds=?,queue_json=?,history_json=?,contract_files_json=?,current_run_id=?,last_run_id=?,stop_reason=?,product_repair_count=?,auto_repair_count=?,auto_retry_count=?,updated_at=? WHERE id=?')
+      .run(m.status, m.round, m.max_rounds, JSON.stringify(m.queue_json || []), JSON.stringify(m.history_json || []), JSON.stringify(m.contract_files_json || []), m.current_run_id || '', m.last_run_id || '', m.stop_reason || '', Number(m.product_repair_count || 0), Number(m.auto_repair_count || 0), Number(m.auto_retry_count || 0), nowIso(), id);
     return this.getLoop(id);
+  }
+
+  incrementLoopProductRepair(loopId) {
+    this.db.prepare('UPDATE loops SET product_repair_count=product_repair_count+1, updated_at=? WHERE id=?').run(nowIso(), loopId);
+    return Number(this.db.prepare('SELECT product_repair_count FROM loops WHERE id=?').get(loopId)?.product_repair_count || 0);
   }
 
   incrementLoopAutoRepair(loopId) {

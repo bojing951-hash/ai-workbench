@@ -56,12 +56,12 @@ export async function chatTurn({ config, store, conversation, userMessage, proje
       maxTokens: 1200, temperature: 0.2, timeoutMs: 90_000,
     });
   } catch (err) {
-    if (budget.reservation?.id) store.releaseModelReservation(budget.reservation.id);
+    if (budget.reservation?.id) store.markModelReservationUnknown(budget.reservation.id);
     throw err;
   }
   const j = result.json || {};
   if (!j.reply) {
-    if (budget.reservation?.id) store.releaseModelReservation(budget.reservation.id);
+    if (budget.reservation?.id) store.markModelReservationUnknown(budget.reservation.id);
     throw new PolicyError('CHAT_MODEL_BAD_OUTPUT', '对话模型未返回可用回复；不伪造预设回复');
   }
   const goal = String(j.goal || conversation.goal || '').trim();
