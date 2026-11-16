@@ -34,8 +34,8 @@
   },
   "realE2E": "BLOCKED",
   "24h": "NOT_VERIFIED",
-  "commit": "PENDING",
-  "pr": "PENDING",
+  "commit": "2bbf76e",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/15",
   "budget": {
     "remainingTokens": 0,
     "remainingCostCny": 14.7625,
@@ -43,5 +43,9 @@
     "maxTokens": 3000000,
     "reservedTokens": 0,
     "noReset": true
+  },
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43962421486"
   }
 }
