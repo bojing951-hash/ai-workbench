@@ -43,7 +43,7 @@
 
 ## 回归
 
-- 本地全量：**303 tests / 299 pass / 4 skipped / 0 fail**；4 skip 为 Docker/symlink 环境能力。
+- 本地全量：**306 tests / 302 pass / 4 skipped / 0 fail**；4 skip 为 Docker/symlink 环境能力。
 - Playwright：15/15。
 - 真实 E2E：BLOCKED。
 - 24H：NOT_VERIFIED。

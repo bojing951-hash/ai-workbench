@@ -137,7 +137,7 @@ test('v3.2 P0-2：UNKNOWN 历史调用不被重试覆盖；新付费请求拥有
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('v3.2 P0-2：SIGKILL 后重新打开 DB，未结算预留仍占额；超时转 UNKNOWN 后新调用独立计费', () => {
+test('v3.2 P0-2：DB 关闭重开后未结算预留仍占额；超时转 UNKNOWN 后新调用独立计费', () => {
   const { root, config, store } = mk(10_000);
   const dbPath = store.dbPath;
   try {
@@ -192,4 +192,56 @@ test('v3.2 P0-2：settled/reserved 的 assertModelBudget 不会再次发起付�
     assert.throws(() => assertModelBudget({ config, store, provider: 'deepseek', estimatedTokens: 1000, estimatedCostCny: 0.01, reserve: true, requestKey: 'dup-paid' }), /MODEL_CALL_DUPLICATE|重复付费/);
     assert.equal(store.listModelReservations().length, 1);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.3 P0-2：结算不可重复；二次结算不得覆盖首次数额', () => {
+  const { root, store } = mk(10_000);
+  try {
+    const r = store.reserveModelBudget({ id: 'settle-once', requestKey: 'settle-once', provider: 'deepseek', estimatedTokens: 1_000, maxTokens: 10_000, maxCostCny: 30 });
+    store.settleModelReservation(r.reservation.id, { actualTokens: 10, actualCostCny: 0.01, usageKnown: true });
+    store.settleModelReservation(r.reservation.id, { actualTokens: 999, actualCostCny: 9, usageKnown: true });
+    const row = store.listModelReservations().find((x) => x.id === 'settle-once');
+    assert.equal(Number(row.actual_tokens), 10, '二次结算不得覆盖');
+    assert.equal(Number(row.actual_cost_cny), 0.01);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.3 P0-2：真实子进程 SIGKILL 后预留仍占额，重启恢复不丢账', { timeout: 30_000 }, async () => {
+  const { spawn } = await import('node:child_process');
+  const { root, store } = mk(10_000);
+  const dbPath = store.dbPath; store.close();
+  const dbUrl = new URL('../src/db.js', import.meta.url).href;
+  const code = `import { openStore } from ${JSON.stringify(dbUrl)}; const s=openStore(process.argv[1]); const r=s.reserveModelBudget({id:'sigkill-res',requestKey:'sigkill-key',provider:'deepseek',estimatedTokens:3000,maxTokens:10000,maxCostCny:30}); console.log(JSON.stringify({ok:r.ok,id:r.reservation.id})); setInterval(()=>{},1000);`;
+  const child = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', '--input-type=module', '-e', code, dbPath], { stdio: ['ignore','pipe','pipe'] });
+  try {
+    await new Promise((resolve, reject) => { let out=''; child.stdout.on('data',(d)=>{out+=d;if(out.includes('"ok":true')) resolve();}); child.on('error',reject); setTimeout(()=>reject(new Error('child reserve timeout')),5000); });
+    child.kill('SIGKILL');
+    await new Promise((resolve)=>child.on('close',resolve));
+    const reopened = openStore(dbPath);
+    try {
+      const row = reopened.listModelReservations().find((x) => x.id === 'sigkill-res');
+      assert.equal(row.status, 'reserved', 'SIGKILL 后未结算预留必须保留');
+      assert.equal(reopened.reservedBudgetTotals().tokens, 3_000, '重启后必须继续占额');
+    } finally { reopened.close(); }
+  } finally { try { child.kill('SIGKILL'); } catch {} fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.3 P0-1：历史推断身份重启迁移后降级为 unknown，不自动豁免', () => {
+  const { root, store } = mk(10_000);
+  const dbPath = store.dbPath;
+  try {
+    // 模拟旧库：历史上按 agentKind 推断为 glm 且被标成 known=1。
+    store.db.prepare(`INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,duration_ms,log_path,created_at,updated_at,provider,provider_known,provider_source,model)
+      VALUES ('legacy-a','r','t',1,'coding','claude','','',0,'ok','','',1300,600,100,0.05,1,'','2026-01-01','2026-01-01','glm',1,'legacy_inferred','glm-4')`).run();
+  } finally { store.close(); }
+  const reopened = openStore(dbPath);
+  try {
+    const row = reopened.db.prepare("SELECT provider_known,provider_source FROM attempts WHERE id='legacy-a'").get();
+    assert.equal(Number(row.provider_known), 0, '历史推断不得自动升级');
+    assert.equal(row.provider_source, 'legacy_inferred');
+    const raw = reopened.usageTotals();
+    assert.equal(raw.byProvider['glm@unknown']?.tokensIn, 1300);
+    assert.equal(raw.byProvider['glm@unknown']?.known, false);
+    assert.equal(raw.byProvider.glm === undefined || raw.byProvider.glm.tokensIn === 0, true, '历史推断不得进入 confirmed GLM 豁免桶');
+  } finally { reopened.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

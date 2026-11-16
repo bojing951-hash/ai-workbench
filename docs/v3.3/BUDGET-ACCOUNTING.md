@@ -36,7 +36,7 @@
 
 ## 证据
 
-- `tests/v3-budget-reservation.test.js` 11 tests；
+- `tests/v3-budget-reservation.test.js` 14 tests；
 - 1,000/900/400 released retry 拒绝；
 - 多 Node 进程并发；
 - settled 重放；

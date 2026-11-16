@@ -37,7 +37,7 @@
 
 ## 验证
 
-- 串行全量：**303 tests / 299 pass / 4 skipped / 0 fail**（Docker/symlink 环境能力不可用；日志 `demo/evidence/v3.3/tests.log`）。
+- 串行全量：**306 tests / 302 pass / 4 skipped / 0 fail**（Docker/symlink 环境能力不可用；日志 `demo/evidence/v3.3/tests.log`）。
 - Playwright：15/15。
 - 真实 E2E：**BLOCKED**，资源申请见 `REAL-E2E.md`。
 - 24H：**NOT_VERIFIED**。

@@ -1196,7 +1196,7 @@ export class Store {
   settleModelReservation(id, { actualTokens = 0, actualCostCny = 0, usageKnown = true } = {}) {
     const now = nowIso();
     const status = usageKnown ? 'settled' : 'unknown';
-    this.db.prepare("UPDATE model_reservations SET status=?, actual_tokens=?, actual_cost_cny=?, usage_known=?, settled_at=? WHERE id=? AND status IN ('reserved','settled','unknown')")
+    this.db.prepare("UPDATE model_reservations SET status=?, actual_tokens=?, actual_cost_cny=?, usage_known=?, settled_at=? WHERE id=? AND status IN ('reserved','unknown')")
       .run(status, Number(actualTokens || 0), Number(actualCostCny || 0), usageKnown ? 1 : 0, now, id);
     return this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) || null;
   }
