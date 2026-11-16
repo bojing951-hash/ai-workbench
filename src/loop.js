@@ -7,10 +7,37 @@
  * 所有状态持久化到 SQLite；进程重启后可恢复。
  */
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import * as gitops from './git.js';
 import { nowIso, newId } from './util.js';
-import { PolicyError, redact } from './policy.js';
+import { PolicyError, redact, modelFamily } from './policy.js';
 import { planNextTask } from './planner.js';
 import { buildCoverageMatrix, qualityConfig, repairTasksFromQuality, runQualityCommand } from './quality.js';
+
+function lastAttemptFamily(loop, store) {
+  try {
+    const run = loop.current_run_id ? store.getRun(loop.current_run_id) : null;
+    const task = run ? store.listTasks({ runId: run.id })[0] : null;
+    const attempt = task ? store.listAttempts(task.id).at(-1) : null;
+    return attempt?.provider ? modelFamily(attempt.provider, attempt.model || '') : null;
+  } catch { return null; }
+}
+
+function classifyLoopFailure(evidence = []) {
+  const text = evidence.join(' ');
+  if (/没有可用的 Coding Agent|Coding Agent.*配置|AGENT_UNAVAILABLE|没有可用.*Agent/i.test(text)) return 'agent_unavailable';
+  if (/exit=127|command not found|not found|npm ci|依赖|node_modules/i.test(text)) return 'dependency_or_environment';
+  if (/超时|timeout|max_turns|max turns|轮次/i.test(text)) return 'agent_or_audit_timeout';
+  if (/审计|DSH|audit/i.test(text)) return 'audit_failure';
+  if (/测试|test|vitest|playwright/i.test(text)) return 'test_failure';
+  return 'unknown';
+}
+
+function safeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  try { const v = JSON.parse(String(value || '[]')); return Array.isArray(v) ? v : []; } catch { return []; }
+}
 
 export class LoopManager {
   constructor({ config, store, bus, orchestrator }) {
@@ -100,6 +127,30 @@ export class LoopManager {
 
   /** 启动时把未完成的循环标记为 interrupted，等待人工/API 恢复。 */
   recover() {
+    // P0-2：先对账 pending 认领，再处理循环状态；崩溃在 startRun 前后都不能丢/重复任务。
+    const pendingRecovered = [];
+    const ownerAliveForLoop = (owner) => {
+      const m = String(owner || '').match(/^wb:(\d+):/);
+      if (!m) return false;
+      try { process.kill(Number(m[1]), 0); return true; } catch (err) { return err.code !== 'ESRCH'; }
+    };
+    for (const lp of this.store.listLoopsWithPending()) {
+      try {
+        const pj = this.store.getProject(lp.project_id);
+        const lease = pj ? this.store.getProjectLease(pj.id) : null;
+        if (lease?.write_owner && lease.lease_expires_at > new Date().toISOString() && ownerAliveForLoop(lease.write_owner)) {
+          this.emit(lp, 'loop_pending_recovery_skipped', 'pending 由另一个活 Workbench 进程持有，本进程跳过恢复', 'warn');
+          continue;
+        }
+        const rec = this.store.recoverLoopPending(lp.id);
+        if (rec.changed) {
+          pendingRecovered.push({ loopId: lp.id, ...rec });
+          this.emit(lp, 'loop_pending_recovered', rec.linked ? `已按 requestKey 绑定已创建 Run ${rec.runId}` : '已把未创建 Run 的 pending 任务放回队列', 'warn', { ...rec });
+        }
+      } catch (err) {
+        this.emit(lp, 'loop_pending_recovery_failed', `pending 对账失败：${err.message}`, 'error');
+      }
+    }
     const alive = (owner) => {
       const m = String(owner || '').match(/^wb:(\d+):/);
       if (!m) return false;
@@ -115,7 +166,7 @@ export class LoopManager {
       this.emit(loop, 'loop_interrupted', '检测到未完成的研发循环，已标记中断；状态与历史已保留', 'warn');
       recovered.push(loop.id);
     }
-    return { recovered, skipped };
+    return { recovered, skipped, pendingRecovered };
   }
 
   emit(loop, type, message, level = 'info', data = {}) {
@@ -182,6 +233,18 @@ export class LoopManager {
           return;
         }
         if (['paused', 'failed', 'interrupted', 'cancelled'].includes(run.status)) {
+          // P0-1：真实测试/审计失败时自动生成修复任务，而不是要求用户新建第二个 Run。
+          if (run.status !== 'cancelled') {
+            let controlLease = false;
+            if (this.orchestrator?.ensureControlLease) {
+              try { this.orchestrator.ensureControlLease(project.id); controlLease = true; }
+              catch (err) { this.emit(loop, 'loop_write_lease_blocked', `自动修复写入未取得项目写租约：${err.message}`, 'warn'); this.schedule(id, 5000); return; }
+            }
+            try {
+              const auto = await this.maybeAutoRepair(loop, project, run);
+              if (auto) { this.schedule(id, 1200); return; }
+            } finally { if (controlLease) this.orchestrator.releaseProjectLease(project.id); }
+          }
           const reason = `第 ${loop.round + 1} 轮运行 ${run.id} 状态为 ${run.status}：${run.stop_reason || '无说明'}`;
           this.store.updateLoop(id, { status: run.status === 'cancelled' ? 'cancelled' : 'paused', stop_reason: reason });
           this.emit(loop, 'loop_paused', reason, 'warn', { runId: run.id });
@@ -202,19 +265,24 @@ export class LoopManager {
       let task = null;
       let rationale = '';
       let queuedTask = null;
+      let pending = null;
       const queued = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
-      const hasQualityRepair = queued.some((t) => t && t.qualityIssueId);
-      // plan 模式也允许质量闭环产生的修复任务优先于新规划；普通任务仍遵循显式队列。
+      const hasQualityRepair = queued.some((t) => t && (t.qualityIssueId || t.autoRepair));
+      // plan/queue 均允许质量/自动修复任务优先于新规划。
       if (loop.mode === 'queue' || hasQualityRepair) {
         if (!queued.length) {
           this.store.updateLoop(id, { status: 'completed', stop_reason: '队列已空（没有伪造任务）' });
           this.emit(loop, 'loop_completed', '研发循环完成：没有更多真实任务（队列为空）');
           return;
         }
-        const next = queued.shift();
+        const queueIndex = queued.findIndex((t) => t && t.title);
+        const next = queued[queueIndex];
         queuedTask = next;
         task = { ...next, seq: 1, acceptance: Array.isArray(next.acceptance) ? next.acceptance : [next.title], agent: next.agent || 'auto', testCommand: next.testCommand || '' };
-        this.store.updateLoop(id, { queue_json: queued });
+        // P0-2：队列不在 startRun 前删除；先写 pending/requestKey，Run 创建成功后再原子 claim。
+        pending = { task: queuedTask, queueIndex, requestKey: newId('claim'), at: nowIso() };
+        this.store.setLoopPending(id, pending);
+        this.emit(loop, 'loop_task_pending', `任务已持久化待认领：${task.title}（requestKey=${pending.requestKey}）`, 'info', { task: task.title, requestKey: pending.requestKey });
         rationale = next.qualityIssueId ? `来自质量闭环修复任务（${next.qualityIssueId}）` : '来自显式任务队列';
       } else {
         try {
@@ -270,22 +338,124 @@ export class LoopManager {
           tasks: [task],
           acceptance: task.acceptance,
           maxAttempts: Number(project.budget_json?.max_attempts || this.config.budget.maxAttempts),
+          requestKey: pending?.requestKey || '',
         });
       } catch (err) {
-        // startRun 失败（租约竞争/预算/进程状态）必须把任务放回队列，不能静默丢失。
-        const current = this.store.getLoop(id);
-        const restore = Array.isArray(current?.queue_json) ? [...current.queue_json] : [];
-        if (queuedTask && !restore.some((t) => t.qualityIssueId && queuedTask.qualityIssueId && t.qualityIssueId === queuedTask.qualityIssueId) && !restore.some((t) => !queuedTask.qualityIssueId && t.title === queuedTask.title)) restore.unshift(queuedTask);
-        this.store.updateLoop(id, { queue_json: restore, status: 'paused', stop_reason: `启动运行失败，任务已保留：${err?.message || err}` });
-        this.emit(loop, 'loop_start_failed', `启动运行失败，任务已放回队列，未丢失：${err?.message || err}`, 'warn', { task: task.title });
+        // 队列保持原样；只清 pending，任务不丢失。
+        this.store.setLoopPending(id, {});
+        this.store.updateLoop(id, { status: 'paused', stop_reason: `启动运行失败，任务已保留：${err?.message || err}` });
+        this.emit(loop, 'loop_start_failed', `启动运行失败，任务已保留在队列：${err?.message || err}`, 'warn', { task: task.title });
         return;
       }
-      loop = this.store.updateLoop(id, { current_run_id: started.runId, last_run_id: started.runId, queue_json: (Array.isArray(loop.queue_json) ? loop.queue_json : []).filter((t) => t !== queuedTask) });
+      // 原子：移除队列项 + 清 pending + 绑定 run；崩溃在 startRun 与 claim 之间时由 requestKey 恢复。
+      let claimed;
+      try {
+        claimed = this.store.claimLoopTask({ loopId: id, requestKey: pending?.requestKey || '', runId: started.runId });
+      } catch (err) {
+        claimed = { ok: false, reason: err?.message || String(err) };
+      }
+      if (!claimed?.ok) {
+        this.store.updateLoop(id, { status: 'paused', stop_reason: `Run 已创建但任务认领事务失败：${claimed?.reason || 'unknown'}；恢复时将按 requestKey 对账` });
+        this.emit(loop, 'loop_claim_failed', `Run ${started.runId} 已创建，认领事务失败；pending 保留用于恢复`, 'error', { runId: started.runId, reason: claimed?.reason });
+        return;
+      }
+      loop = this.store.updateLoop(id, { current_run_id: started.runId, last_run_id: started.runId });
       this.emit(loop, 'loop_round_started', `第 ${loop.round + 1}/${loop.max_rounds} 轮开始：${task.title}${rationale ? `（${rationale}）` : ''}`, 'info', { task: task.title, runId: started.runId });
       this.schedule(id, 5000);
     } finally {
       this.ticking.delete(id);
     }
+  }
+
+  /**
+   * P0-1：把一次真实失败转换为有证据、优先、可审计的自动修复任务。
+   * 只修复已落盘的 Agent 代码基线；不改冻结测试/契约；最多 MAX_AUTO_REPAIRS 次。
+   */
+  async maybeAutoRepair(loop, project, run) {
+    if (typeof this.orchestrator?.prepareAutoRepair !== 'function') return false;
+    const maxAuto = Math.max(0, Math.min(3, Number(project?.config_json?.auto_repair_max ?? 2)));
+    const count = Number(loop.auto_repair_count || 0);
+    if (count >= maxAuto) {
+      this.emit(loop, 'auto_repair_exhausted', `自动修复达到上限 ${maxAuto}，保留现场并阻塞，不继续无限重试`, 'warn', { runId: run.id });
+      return false;
+    }
+    const tasks = this.store.listTasks({ runId: run.id });
+    const failed = tasks.filter((t) => ['blocked', 'failed'].includes(t.status));
+    if (!failed.length) return false;
+    const task = failed[0];
+    const audits = this.store.listAudits(task.id);
+    const latestAudit = audits.at(-1) || null;
+    // P1-2：审计 UNKNOWN（例如超时）优先自动重试验证，不把基础设施失败伪装成产品代码缺陷。
+    if (latestAudit && String(latestAudit.verification_status || '').toUpperCase() === 'UNKNOWN' && task.worktree_path && typeof this.orchestrator?.retryVerification === 'function') {
+      const maxRetry = Math.max(0, Math.min(2, Number(project?.config_json?.auto_verification_retry_max ?? 1)));
+      const retryCount = Number(loop.auto_retry_count || 0);
+      if (retryCount < maxRetry) {
+        const n = this.store.incrementLoopAutoRetry(loop.id);
+        this.emit(loop, 'auto_verification_retry', `审计 UNKNOWN（${latestAudit.summary || '证据不足'}），自动重试测试+独立审计 ${n}/${maxRetry}，不生成产品代码修复任务`, 'warn', { taskId: task.id, auditId: latestAudit.id });
+        try {
+          if (typeof this.orchestrator.auditResourcePreflight === 'function') this.orchestrator.auditResourcePreflight(project, lastAttemptFamily(loop, this.store));
+        } catch (err) {
+          this.emit(loop, 'auto_verification_retry_blocked', `审计资源预检失败，安全阻塞而不是转产品修复：${err?.message || err}`, 'warn', { taskId: task.id, auditId: latestAudit.id });
+          return false;
+        }
+        try {
+          await this.orchestrator.retryVerification(task.id);
+          return true;
+        } catch (err) {
+          this.emit(loop, 'auto_verification_retry_failed', `自动重试验证失败：${err?.message || err}`, 'warn', { taskId: task.id });
+        }
+      }
+    }
+    const requiredFixes = latestAudit ? safeJsonArray(latestAudit.required_fixes_json) : [];
+    const auditEvidence = requiredFixes.length ? requiredFixes : [];
+    const failureEvidence = [
+      task.blocked_reason || '',
+      run.stop_reason || '',
+      ...auditEvidence,
+    ].filter(Boolean).slice(0, 8);
+    // 没有可执行证据（例如纯预算/授权阻塞）不伪造修复任务。
+    if (!failureEvidence.length) return false;
+    // 只有可归因到代码/测试/审计/环境失败才自动修；纯权限/预算等策略阻塞不生成产品修复任务。
+    const failureClass = classifyLoopFailure(failureEvidence);
+    if (failureClass === 'unknown' || failureClass === 'agent_unavailable') {
+      this.emit(loop, 'auto_repair_skipped', '失败没有可执行的产品/测试/审计/环境证据（可能是授权/预算策略阻塞），保留 BLOCKED，不生成修复任务', 'warn', { runId: run.id, taskId: task.id });
+      return false;
+    }
+    const base = await this.orchestrator.prepareAutoRepair({ project, task, label: `loop-${loop.id}-run-${run.id}` });
+    if (!base?.ok) {
+      this.emit(loop, 'auto_repair_blocked', `无法保存失败任务基线，不能生成修复任务：${base?.reason || 'unknown'}`, 'warn', { runId: run.id, taskId: task.id });
+      return false;
+    }
+    // 失败 Run 必须先进入终态，否则 startRun 会被 activeRunForProject(PROJECT_BUSY) 拒绝。
+    this.store.updateRun(run.id, {
+      status: 'failed',
+      stop_reason: `自动修复已接管：${failureEvidence.slice(0, 3).join('；')}`.slice(0, 1000),
+      ended_at: nowIso(),
+      current_task_id: '',
+    });
+    const n = this.store.incrementLoopAutoRepair(loop.id);
+    const repair = {
+      title: `[Auto Repair ${n}/${maxAuto}] ${task.title}`,
+      description: `Workbench 自动修复任务（由真实失败证据生成，不是外部追加提示词）。\n\n原始目标：${loop.goal}\n原始任务：${task.title}\n失败证据：\n${failureEvidence.map((x) => `- ${x}`).join('\n')}\n\n要求：在修复基线上定位并修复导致测试/独立审计失败的原因；不得修改冻结测试或契约；不得降低验收标准；修复后必须重新运行完整测试并接受独立审计。`,
+      acceptance: [...(safeJsonArray(task.acceptance_json).length ? safeJsonArray(task.acceptance_json) : [task.title]), '修复后原始验收标准重新通过', '失败证据中的测试/审计问题全部解决'],
+      testCommand: task.test_command || project.test_command || '',
+      agent: task.agent_kind && task.agent_kind !== 'auto' ? task.agent_kind : 'auto',
+      autoRepair: true,
+      repairOfTaskId: task.id,
+      repairOfRunId: run.id,
+      repairEvidence: failureEvidence,
+      failureClass,
+    };
+    const queue = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
+    queue.unshift(repair);
+    this.store.updateLoop(loop.id, {
+      status: 'running', current_run_id: '', stop_reason: '',
+      queue_json: queue, auto_repair_count: n,
+    });
+    this.emit(loop, 'auto_repair_queued', `检测到真实失败，已自动生成修复任务 ${n}/${maxAuto}：${task.title}`, 'warn', {
+      failedTaskId: task.id, failedRunId: run.id, repairTitle: repair.title, evidence: failureEvidence, baseline: base,
+    });
+    return true;
   }
 
   async completeRound(loop, project, run) {
@@ -348,7 +518,33 @@ export class LoopManager {
     let quality = null;
     if (qcfg) {
       try {
-        const qualityRun = await runQualityCommand({ config: this.config, project });
+        // 质量检查必须针对本轮验证过的 planHead，而不是项目主目录当前分支。
+        const qualityHead = run.result_json?.planHead || tasks[0]?.head_commit || '';
+        let qualityWorktree = '';
+        if (qualityHead) {
+          qualityWorktree = path.join(this.config.paths.worktreesDir, `quality-${run.id.slice(-8)}`);
+          try {
+            await gitops.createWorktree(project.local_path, qualityWorktree, `wb/quality-${run.id.slice(-8)}`, qualityHead);
+            // host-only 受信质量夹具需要依赖；Docker 中不应依赖宿主 node_modules。
+            if (String(project?.config_json?.quality?.isolation || '') === 'host') {
+              for (const name of ['node_modules', '.playwright-browsers']) {
+                const src = path.join(project.local_path, name);
+                if (fs.existsSync(src) && !fs.existsSync(path.join(qualityWorktree, name))) {
+                  try { fs.symlinkSync(src, path.join(qualityWorktree, name), 'dir'); } catch { /* ignore */ }
+                }
+              }
+            }
+          } catch (err) {
+            this.emit(loop, 'quality_worktree_error', `无法创建质量检查 worktree：${err.message}`, 'warn');
+            qualityWorktree = '';
+          }
+        }
+        let qualityRun;
+        try {
+          qualityRun = await runQualityCommand({ config: this.config, project, options: { runId: run.id, commit: qualityHead, worktree: qualityWorktree || undefined } });
+        } finally {
+          if (qualityWorktree) await gitops.removeWorktree(project.local_path, qualityWorktree).catch(() => {});
+        }
         const audits = this.store.listTasks({ projectId: project.id }).flatMap((t) => this.store.listAudits(t.id));
         quality = buildCoverageMatrix({ project, qualityRun, audits });
         history[history.length - 1].quality = quality;

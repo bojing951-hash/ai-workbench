@@ -34,10 +34,9 @@ test('拒绝挂载宿主根/ HOME / Docker socket', () => {
 });
 
 test('Docker/镜像不可用或缺失时 fail-closed', async () => {
-  if (!docker.available) {
-    await assert.rejects(() => runTestInContainer({ config, worktree: process.cwd(), command: 'true' }), /CONTAINER_UNAVAILABLE|Docker/);
-    return;
-  }
+  // 用确定性的无效 dockerBin 测试不可用分支，避免 Docker daemon 启停竞态让测试偶发跳过。
+  const badConfig = { ...config, isolation: { ...config.isolation, container: { ...config.isolation.container, dockerBin: '/nonexistent/docker-container-test' } } };
+  await assert.rejects(() => runTestInContainer({ config: badConfig, worktree: process.cwd(), command: 'true' }), /CONTAINER_UNAVAILABLE|Docker/);
   if (image.available) {
     await assert.rejects(() => runTestInContainer({ config, worktree: process.cwd(), command: 'true', image: 'no-such-image:does-not-exist' }), /CONTAINER_IMAGE_MISSING|镜像/);
   }

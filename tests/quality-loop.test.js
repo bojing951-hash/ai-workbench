@@ -41,7 +41,7 @@ test('v2.7 质量闭环：有证据失败自动排队修复；全部需求 PASS 
   try {
     const project = store.createProject({
       id: 'p1', name: 'quality integration', localPath: repo, testCommand: 'true', ciRequired: false,
-      config: { quality: { quality_command: 'node quality-check.cjs', max_cycles: 2, requirements: [
+      config: { quality: { quality_command: 'node quality-check.cjs', sandbox: 'off', host_isolation_acknowledged: true, require_clause_evidence: false, max_cycles: 2, requirements: [
         { id: 'R1', title: '核心计算', priority: 'P0', acceptance: ['隐藏测试通过'] },
         { id: 'R2', title: '边界', priority: 'P1', acceptance: ['边界通过'] },
       ] } },

@@ -12,7 +12,7 @@ function mk(command, extraQuality = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-qexec-'));
   const repo = path.join(root, 'repo'); fs.mkdirSync(repo, { recursive: true });
   const config = getConfig({ root, paths: { root, dataDir: path.join(root, 'data'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(root, 'worktrees'), artifactsDir: path.join(root, 'artifacts'), logsDir: path.join(root, 'logs'), agentsDir: path.join(root, 'agents'), dbPath: path.join(root, 'data', 'test.db'), dshHome: path.join(root, 'agents', 'dsh-home'), claudeHome: path.join(root, 'agents', 'claude-home') }, llm: { openai: { apiKey: '' }, glm: { apiKey: '' }, deepseek: { apiKey: '' } }, github: { token: '' } });
-  const project = { id: 'p1', name: 'q', local_path: repo, config_json: { quality: { quality_command: command, timeout_ms: 2000, sandbox: 'off', requirements: [{ id: 'R1', title: 'R1', priority: 'P0', acceptance: ['ok'] }], ...extraQuality } } };
+  const project = { id: 'p1', name: 'q', local_path: repo, config_json: { quality: { quality_command: command, timeout_ms: 2000, sandbox: 'off', host_isolation_acknowledged: true, requirements: [{ id: 'R1', title: 'R1', priority: 'P0', acceptance: ['ok'] }], ...extraQuality } } };
   return { root, repo, config, project };
 }
 

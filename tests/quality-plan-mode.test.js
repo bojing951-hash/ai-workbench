@@ -25,7 +25,7 @@ test('v2.7 P1-A：plan 模式发现 P0 质量缺陷后仍生成修复任务队�
   const store = openStore(config.paths.dbPath);
   try {
     const repoPath = repo;
-    const project = store.createProject({ id: 'p1', name: 'plan quality', localPath: repoPath, testCommand: 'true', ciRequired: false, config: { quality: { quality_command: `node -e "console.log(JSON.stringify({requirements:[{id:'R1',status:'fail',evidence:'hidden regression evidence 123',issues:[{id:'Q1',title:'plan bug',priority:'P0',evidence:'hidden regression evidence 123'}]}]}))"`, max_cycles: 2, requirements: [{ id: 'R1', title: 'must', priority: 'P0', acceptance: ['ok'] }] } } });
+    const project = store.createProject({ id: 'p1', name: 'plan quality', localPath: repoPath, testCommand: 'true', ciRequired: false, config: { quality: { quality_command: `node -e "console.log(JSON.stringify({requirements:[{id:'R1',status:'fail',evidence:'hidden regression evidence 123',issues:[{id:'Q1',title:'plan bug',priority:'P0',evidence:'hidden regression evidence 123'}]}]}))"`, sandbox: 'off', host_isolation_acknowledged: true, require_clause_evidence: false, max_cycles: 2, requirements: [{ id: 'R1', title: 'must', priority: 'P0', acceptance: ['ok'] }] } } });
     const loop = store.createLoop({ id: 'loop-plan', projectId: project.id, goal: 'plan mode', mode: 'plan', maxRounds: 4, queue: [] });
     const manager = new LoopManager({ config, store, bus: new EventBus(), orchestrator: { emit: () => {}, startRun: async () => ({}) } });
     const commit = git('rev-parse', 'HEAD'); const branch = 'wb/plan-mode'; git('branch', branch, commit);

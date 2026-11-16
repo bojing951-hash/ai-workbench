@@ -28,6 +28,7 @@ import { resolveAgentIdentity, resolveLlmIdentity, isExemptIdentity } from './mo
 import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
+import { deriveClausePlan } from './quality.js';
 import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
 import { AsyncSemaphore } from './semaphore.js';
@@ -377,6 +378,25 @@ export class Orchestrator {
     const defaultBranch = input.defaultBranch || (await gitops.resolveDefaultBranch(localPath));
     const testCommand = String(input.testCommand || input.test_command || '').trim() || detectTestCommand(localPath);
     const protectedPaths = [...new Set([...(parseList(input.protectedPaths)), ...(input.protectTests ? ['tests/**', 'test/**', '**/*.test.js', '**/*.test.mjs', '**/*.spec.js'] : [])])];
+    const contractFiles = parseList(input.contractFiles || input.contract_files);
+    let qualityConfigInput = input.quality || input.qualityConfig || input.quality_config || undefined;
+    let qualityPlanInput = null;
+    // P1-1：没有显式 quality requirements 时，从冻结契约文本自动生成条款级计划；
+    // 仍需要质量命令/独立审计提供逐条款证据，不能仅凭生成计划判 PASS。
+    if (!qualityConfigInput && contractFiles.length) {
+      const texts = [];
+      for (const rel of contractFiles) {
+        try { const p = path.join(localPath, rel); if (fs.existsSync(p) && fs.statSync(p).isFile()) texts.push(fs.readFileSync(p, 'utf8')); } catch { /* ignore */ }
+      }
+      const derived = deriveClausePlan(texts.join('\n\n'));
+      if (derived.length) {
+        const qcmd = String(input.qualityCommand || input.quality_command || '').trim();
+        // 没有质量命令时只保存 plan，不启用不可执行的 quality gate；避免把本来可完成的契约项目全部 BLOCKED。
+        if (qcmd) qualityConfigInput = { requirements: derived, require_clause_evidence: true, quality_command: qcmd };
+        else qualityPlanInput = derived;
+        this.emit({ projectId: '', type: 'quality_plan_derived', message: `已从 ${contractFiles.length} 个冻结契约文件生成 ${derived.length} 条需求/条款质量计划${qcmd ? '（已启用质量门）' : '（未配置 quality_command，仅保存计划，质量闭环未启用）'}`, data: { requirements: derived.length, gateEnabled: !!qcmd } });
+      }
+    }
     const project = this.store.createProject({
       id: newId('proj'),
       name,
@@ -391,7 +411,7 @@ export class Orchestrator {
       protectedPaths,
       budget: input.budget || {},
       agentConfig: input.agentConfig || {},
-      contractFiles: parseList(input.contractFiles || input.contract_files),
+      contractFiles,
       ciRequired: input.ciRequired !== false && input.ci_required !== false,
       allowLocalAcceptance: input.allowLocalAcceptance !== false && input.allow_local_acceptance !== false,
       remotePushAuthorized: input.remotePushAuthorized === true || input.remote_push_authorized === true,
@@ -406,7 +426,8 @@ export class Orchestrator {
         low_budget_finalize: input.lowBudgetFinalize === true || input.low_budget_finalize === true,
         supervisor_managed: input.supervisorManaged === true || input.supervisor_managed === true,
         audit_budget: input.auditBudget || input.audit_budget || {},
-        quality: input.quality || input.qualityConfig || input.quality_config || undefined,
+        quality: qualityConfigInput,
+        quality_plan: qualityPlanInput,
         replay_assets: input.replayAssets || input.replay_assets || undefined,
         agent_fallback: parseList(input.agentFallback || input.agent_fallback),
         agent_stall_timeout_ms: Number(input.agentStallTimeoutMs || input.agent_stall_timeout_ms || 0) || undefined,
@@ -474,6 +495,13 @@ export class Orchestrator {
     if (!goal) throw new PolicyError('GOAL_REQUIRED', '请填写开发目标');
     const mode = input.mode === 'plan' ? 'plan' : 'single';
     const acceptance = parseList(input.acceptance);
+    const requestKey = String(input.requestKey || '').trim();
+
+    // P0-2：同一请求键的 Run 只能创建一次；崩溃恢复/重复调用返回已有 Run。
+    if (requestKey) {
+      const existing = this.store.getRunByRequestKey(requestKey);
+      if (existing) return { runId: existing.id, planId: existing.plan_id, existing: true };
+    }
 
     this.assertBudget(5_000);
 
@@ -528,19 +556,28 @@ export class Orchestrator {
     }
 
     try {
-      this.store.createRun({
-        id: runId,
-        projectId: project.id,
-        planId,
-        goal,
-        mode,
-        status: RunStatus.QUEUED,
-        budget,
-        spent: { tokens: 0, costCny: 0 },
-        wallDeadline,
-        verificationStatus: 'LOCAL_VERIFIED',
-        parentRunId: input.parentRunId || '',
-      });
+      try {
+        this.store.createRun({
+          id: runId,
+          projectId: project.id,
+          planId,
+          goal,
+          mode,
+          status: RunStatus.QUEUED,
+          budget,
+          spent: { tokens: 0, costCny: 0 },
+          wallDeadline,
+          verificationStatus: 'LOCAL_VERIFIED',
+          parentRunId: input.parentRunId || '',
+          requestKey,
+        });
+      } catch (err) {
+        if (requestKey) {
+          const existing = this.store.getRunByRequestKey(requestKey);
+          if (existing) { this.releaseProjectLease(project.id); return { runId: existing.id, planId: existing.plan_id, existing: true }; }
+        }
+        throw err;
+      }
     this.store.createPlan({
       id: planId,
       projectId: project.id,
@@ -581,6 +618,10 @@ export class Orchestrator {
       });
     }
     } catch (err) {
+      // P0-2：半创建 Run 不能永久占住项目；失败时清理为 failed，保留错误原因。
+      try {
+        if (this.store.getRun(runId)) this.store.updateRun(runId, { status: RunStatus.FAILED, stop_reason: `运行创建失败：${redact(err?.message || err, this.config)}`.slice(0, 1000), ended_at: nowIso() });
+      } catch { /* ignore */ }
       this.releaseProjectLease(project.id);
       throw err;
     }
@@ -897,25 +938,46 @@ export class Orchestrator {
   }
 
   async runProjectTest({ project, worktree, command, timeoutMs, logPath, signal = null }) {
-    if (this.containerTestRequested(project)) {
-      const caps = containerCapabilities(this.config);
-      if (!caps.testExecution) {
-        throw new PolicyError('CONTAINER_UNAVAILABLE', `项目要求容器测试，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}（fail-closed，不降级）`);
+    const runOnce = async (cmd, pathName) => {
+      if (this.containerTestRequested(project)) {
+        const caps = containerCapabilities(this.config);
+        if (!caps.testExecution) {
+          throw new PolicyError('CONTAINER_UNAVAILABLE', `项目要求容器测试，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}（fail-closed，不降级）`);
+        }
+        return runTestInContainer({ config: this.config, worktree, command: cmd, env: this.containerTestEnv(project), timeoutMs, logPath: pathName, signal });
       }
-      return runTestInContainer({ config: this.config, worktree, command, env: this.containerTestEnv(project), timeoutMs, logPath, signal });
+      const sandbox = tmpHomeFor(this.config, `local-${newId('run')}`, newId('task'));
+      return execShell(cmd, {
+        cwd: worktree,
+        timeoutMs,
+        logPath: pathName,
+        env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandbox, 'test-home') }),
+      });
+    };
+    let res = await runOnce(command, logPath);
+    // P1-2：测试命令因缺少项目依赖而失败（典型 exit=127，如 vitest/npm 不可执行）时，
+    // 若项目显式配置 test_setup_command，先执行环境准备再重试一次；不修改产品业务代码。
+    const setup = String(project?.config_json?.test_setup_command || '').trim();
+    if (res.code === 127 && setup) {
+      if (setup.length > 1200 || /[\n\r]/.test(setup)) throw new PolicyError('TEST_SETUP_INVALID', 'test_setup_command 非法');
+      const setupLog = `${logPath}.setup.log`;
+      const setupRes = await runOnce(setup, setupLog);
+      if (setupRes.code === 0) {
+        res = await runOnce(command, `${logPath}.retry.log`);
+        res.setupRetried = true;
+        res.setupCommand = setup;
+        res.setupLogPath = setupLog;
+      } else {
+        res.setupRetried = true;
+        res.setupCommand = setup;
+        res.setupLogPath = setupLog;
+        res.setupFailed = true;
+        res.stderr = `${res.stderr || ''}\n[test_setup_command exit=${setupRes.code}]\n${(setupRes.stderr || setupRes.stdout || '').slice(-2000)}`;
+      }
     }
-    const sandbox = tmpHomeFor(this.config, `local-${newId('run')}`, newId('task'));
-    return execShell(command, {
-      cwd: worktree,
-      timeoutMs,
-      logPath,
-      env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandbox, 'test-home') }),
-    });
+    return res;
   }
 
-  // ============================================================
-  // 单任务流水线
-  // ============================================================
   async runTask(run, task, signal) {
     const project = this.store.getProject(task.project_id);
     const plan = this.store.getPlan(task.plan_id);
@@ -1181,6 +1243,7 @@ export class Orchestrator {
           command: safeCommand, code: testRes.code, timedOut: testRes.timedOut,
           durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr,
           isolation: testRes.isolation || null,
+          setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed,
         };
         this.writeArtifact({
           runId: run.id, taskId: task.id, kind: 'test', filename: `attempt-${attemptNo}-test.txt`,
@@ -1982,6 +2045,40 @@ export class Orchestrator {
   }
 
   /**
+   * P0-1：把失败任务的 Agent 产物保存为可继续的修复基线，供 LoopManager 自动创建修复任务。
+   * 只提交 worktree 当前内容（由 Agent 产生），不修改业务逻辑；返回后更新项目默认分支。
+   */
+  async prepareAutoRepair({ project, task, label = 'auto-repair' } = {}) {
+    const suffix = newId('ar').replace(/^ar_?/, '').slice(0, 8);
+    let head = '';
+    if (task?.worktree_path && fs.existsSync(task.worktree_path)) {
+      const worktree = task.worktree_path;
+      try {
+        const commit = await gitops.commitAll(worktree, `chore(auto-repair): preserve failed task ${task.id} (${label})`);
+        head = commit?.commit || (await gitops.currentHead(worktree));
+      } catch {
+        head = (await gitops.currentHead(worktree).catch(() => '')) || task.head_commit || '';
+      }
+      if (!head) head = task.head_commit || '';
+      if (head) {
+        const branch = `wb/auto-repair-${suffix}`;
+        await gitops.updateRef(project.local_path, branch, head);
+        await gitops.removeWorktree(project.local_path, worktree).catch(() => {});
+        this.store.updateProject(project.id, { default_branch: branch });
+        this.emit({ projectId: project.id, taskId: task.id, type: 'auto_repair_baseline', message: `已保存失败任务产物为修复基线 ${branch}（${head.slice(0, 8)}）`, data: { branch, head, sourceTaskId: task.id } });
+        return { ok: true, branch, head, worktree: '' };
+      }
+    }
+    const branch = task?.branch || '';
+    head = task?.head_commit || '';
+    if (branch && head) {
+      this.store.updateProject(project.id, { default_branch: branch });
+      return { ok: true, branch, head, reused: true };
+    }
+    return { ok: false, reason: '失败任务没有可保留的 Git 产物/分支' };
+  }
+
+  /**
    * 仅重试"验证/审计"阶段：复用已存在的任务 worktree，不重新调用 Coding Agent。
    * 用于审计模型暂时不可用/审计空返回等场景；仍执行真实测试、独立审计与提交。
    */
@@ -2034,7 +2131,7 @@ export class Orchestrator {
         timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
         logPath: path.join(logDir, `verify-${Date.now()}-test.log`),
       });
-      const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null };
+      const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null, setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed };
       this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
       await gitops.stageAll(worktree);
       const afterHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();

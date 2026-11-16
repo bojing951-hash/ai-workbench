@@ -262,6 +262,12 @@ export class Store {
         ['lease_expires_at', "TEXT DEFAULT ''"],
         ['lease_fence', 'INTEGER DEFAULT 0'],
         ['reconciliation_json', "TEXT DEFAULT '{}'"],
+        ['request_key', "TEXT DEFAULT ''"],
+      ],
+      loops: [
+        ['pending_task_json', "TEXT DEFAULT '{}'"],
+        ['auto_repair_count', 'INTEGER DEFAULT 0'],
+        ['auto_retry_count', 'INTEGER DEFAULT 0'],
       ],
       tasks: [
         ['verification_json', "TEXT DEFAULT '{}'"],
@@ -296,6 +302,11 @@ export class Store {
           /* 列已存在 */
         }
       }
+    }
+    try {
+      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS runs_request_key_unique ON runs(request_key) WHERE request_key<>''");
+    } catch {
+      /* 旧库可能已有重复非空 key；保留现状并让 startRun 的回查兜底 */
     }
     // 旧记录回填 provider（用于按模型族分开统计；不改动金额/用量）
     try {
@@ -466,8 +477,8 @@ export class Store {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO runs (id,project_id,plan_id,goal,mode,status,current_task_id,budget_json,spent_json,stop_reason,result_json,verification_status,verified_sha,ci_status,ci_url,ci_checked_at,wall_deadline,parent_run_id,started_at,ended_at,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO runs (id,project_id,plan_id,goal,mode,status,current_task_id,budget_json,spent_json,stop_reason,result_json,verification_status,verified_sha,ci_status,ci_url,ci_checked_at,wall_deadline,parent_run_id,request_key,started_at,ended_at,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         r.id,
@@ -488,6 +499,7 @@ export class Store {
         '',
         r.wallDeadline || '',
         r.parentRunId || '',
+        r.requestKey || '',
         '',
         '',
         now,
@@ -502,6 +514,14 @@ export class Store {
       spent_json: {},
       result_json: {},
     });
+  }
+
+  getRunByRequestKey(requestKey) {
+    const key = String(requestKey || '').trim();
+    if (!key) return null;
+    return parseRow(this.db.prepare('SELECT * FROM runs WHERE request_key = ? ORDER BY created_at DESC LIMIT 1').get(key), {
+      budget_json: {}, spent_json: {}, result_json: {},
+    }) || null;
   }
 
   listRuns(projectId, limit = 20) {
@@ -1063,6 +1083,11 @@ export class Store {
     return parseRow(this.db.prepare('SELECT * FROM loops WHERE id=?').get(id), { queue_json: [], history_json: [], contract_files_json: [] });
   }
 
+  listLoopsWithPending() {
+    return this.db.prepare("SELECT * FROM loops WHERE pending_task_json IS NOT NULL AND pending_task_json<>'' AND pending_task_json<>'{}' ORDER BY created_at ASC LIMIT 100").all()
+      .map((r) => parseRow(r, { queue_json: [], history_json: [], contract_files_json: [] }));
+  }
+
   listLoops({ projectId = '', status = '' } = {}) {
     const where = []; const params = [];
     if (projectId) { where.push('project_id=?'); params.push(projectId); }
@@ -1074,9 +1099,82 @@ export class Store {
   updateLoop(id, patch) {
     const cur = this.getLoop(id); if (!cur) return null;
     const m = { ...cur, ...patch };
-    this.db.prepare('UPDATE loops SET status=?,round=?,max_rounds=?,queue_json=?,history_json=?,contract_files_json=?,current_run_id=?,last_run_id=?,stop_reason=?,updated_at=? WHERE id=?')
-      .run(m.status, m.round, m.max_rounds, JSON.stringify(m.queue_json || []), JSON.stringify(m.history_json || []), JSON.stringify(m.contract_files_json || []), m.current_run_id || '', m.last_run_id || '', m.stop_reason || '', nowIso(), id);
+    this.db.prepare('UPDATE loops SET status=?,round=?,max_rounds=?,queue_json=?,history_json=?,contract_files_json=?,current_run_id=?,last_run_id=?,stop_reason=?,auto_repair_count=?,auto_retry_count=?,updated_at=? WHERE id=?')
+      .run(m.status, m.round, m.max_rounds, JSON.stringify(m.queue_json || []), JSON.stringify(m.history_json || []), JSON.stringify(m.contract_files_json || []), m.current_run_id || '', m.last_run_id || '', m.stop_reason || '', Number(m.auto_repair_count || 0), Number(m.auto_retry_count || 0), nowIso(), id);
     return this.getLoop(id);
+  }
+
+  incrementLoopAutoRepair(loopId) {
+    this.db.prepare('UPDATE loops SET auto_repair_count=auto_repair_count+1, updated_at=? WHERE id=?').run(nowIso(), loopId);
+    return Number(this.db.prepare('SELECT auto_repair_count FROM loops WHERE id=?').get(loopId)?.auto_repair_count || 0);
+  }
+
+  incrementLoopAutoRetry(loopId) {
+    this.db.prepare('UPDATE loops SET auto_retry_count=auto_retry_count+1, updated_at=? WHERE id=?').run(nowIso(), loopId);
+    return Number(this.db.prepare('SELECT auto_retry_count FROM loops WHERE id=?').get(loopId)?.auto_retry_count || 0);
+  }
+
+  getLoopPending(loopId) {
+    const row = this.db.prepare('SELECT pending_task_json FROM loops WHERE id=?').get(loopId);
+    if (!row) return {};
+    try { return JSON.parse(row.pending_task_json || '{}') || {}; } catch { return {}; }
+  }
+
+  setLoopPending(loopId, pending) {
+    this.db.prepare('UPDATE loops SET pending_task_json=?, updated_at=? WHERE id=?').run(JSON.stringify(pending || {}), nowIso(), loopId);
+    return this.getLoopPending(loopId);
+  }
+
+  /**
+   * P0-2：原子完成“移除队列任务 + 清除 pending + 绑定 Run”。
+   * 进程在 startRun 之后、此事务之前崩溃时，pending 仍保留；恢复通过 requestKey 找到同一 Run，不重复创建。
+   */
+  claimLoopTask({ loopId, requestKey, runId }) {
+    const key = String(requestKey || '');
+    if (!key || !runId) throw new Error('claimLoopTask requires requestKey/runId');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT pending_task_json, queue_json, current_run_id FROM loops WHERE id=?').get(loopId);
+      if (!row) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'loop-not-found' }; }
+      let pending = {};
+      try { pending = JSON.parse(row.pending_task_json || '{}') || {}; } catch { pending = {}; }
+      if (pending.requestKey !== key) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'stale-pending-key' }; }
+      const queue = (() => { try { return JSON.parse(row.queue_json || '[]'); } catch { return []; } })();
+      const task = pending.task || {};
+      let removed = false;
+      if (Number.isInteger(pending.queueIndex) && pending.queueIndex >= 0 && queue[pending.queueIndex] && queue[pending.queueIndex].title === task.title) {
+        queue.splice(pending.queueIndex, 1); removed = true;
+      } else if (task.title) {
+        const idx = queue.findIndex((t) => t.title === task.title);
+        if (idx >= 0) { queue.splice(idx, 1); removed = true; }
+      }
+      if (Number.isInteger(pending.queueIndex) && pending.queueIndex >= 0 && !removed) {
+        this.db.exec('ROLLBACK');
+        return { ok: false, reason: 'queue-item-missing' };
+      }
+      this.db.prepare('UPDATE loops SET queue_json=?, pending_task_json=?, current_run_id=?, last_run_id=?, updated_at=? WHERE id=?').run(JSON.stringify(queue), '{}', runId, runId, nowIso(), loopId);
+      this.db.exec('COMMIT');
+      return { ok: true, removed, runId };
+    } catch (err) { try { this.db.exec('ROLLBACK'); } catch { /* ignore */ } throw err; }
+  }
+
+  /** 恢复 pending：拿掉已绑定 Run 的 pending，或把未创建 Run 的任务放回队列。 */
+  recoverLoopPending(loopId) {
+    const loop = this.getLoop(loopId);
+    if (!loop) return { changed: false, reason: 'loop-not-found' };
+    const pending = this.getLoopPending(loopId);
+    if (!pending.requestKey) return { changed: false };
+    const run = this.getRunByRequestKey(pending.requestKey);
+    if (run) {
+      const claimed = this.claimLoopTask({ loopId, requestKey: pending.requestKey, runId: run.id });
+      if (!claimed?.ok) return { changed: false, linked: false, runId: run.id, reason: claimed?.reason || 'claim-failed' };
+      return { changed: true, linked: true, runId: run.id };
+    }
+    const queue = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
+    const task = pending.task;
+    if (task && !queue.some((t) => t.title === task.title && (t.qualityIssueId || '') === (task.qualityIssueId || ''))) queue.unshift(task);
+    this.db.prepare('UPDATE loops SET queue_json=?, pending_task_json=?, updated_at=? WHERE id=?').run(JSON.stringify(queue), '{}', nowIso(), loopId);
+    return { changed: true, restored: true };
   }
 
   /**

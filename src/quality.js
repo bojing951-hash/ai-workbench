@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execCapture } from './runner.js';
+import { runTestInContainer } from './container.js';
 import { buildTestEnv } from './security.js';
 import { PolicyError, redact } from './policy.js';
 import { nowIso } from './util.js';
@@ -21,6 +22,41 @@ const NORM = { pass: 'PASS', passed: 'PASS', fail: 'FAIL', failed: 'FAIL', unpro
 const PRIORITY = { p0: 'P0', p1: 'P1', p2: 'P2' };
 function osHome() { return process.env.HOME || process.env.USERPROFILE || '/tmp'; }
 function requireTmpDir() { return os.tmpdir(); }
+
+/**
+ * P1-1：从冻结验收契约的 Markdown 文本推导条款级质量计划。
+ * 只做“结构化提取”，不把契约文本/测试自己当 PASS；质量命令仍必须提供逐条款证据。
+ */
+export function deriveClausePlan(contractText, { idPrefix = 'R' } = {}) {
+  const lines = String(contractText || '').split(/\r?\n/);
+  const requirements = [];
+  let current = null;
+  let index = 0;
+  const flush = () => { if (current && current.acceptance.length) requirements.push(current); current = null; };
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const heading = line.match(/^#{2,4}\s+(.+)$/);
+    if (heading) {
+      flush();
+      index += 1;
+      current = { id: `${idPrefix}${index}`, title: heading[1].replace(/^[0-9]+[.)、]?\s*/, '').slice(0, 200), priority: /P0|必须|必须通过/i.test(heading[1]) ? 'P0' : /P2|可选/i.test(heading[1]) ? 'P2' : 'P1', acceptance: [] };
+      continue;
+    }
+    const bullet = line.match(/^(?:[-*+]\s+|\d+[.)、]\s+)(?:\[[ xX]\]\s*)?(.+)$/);
+    if (bullet && current) { current.acceptance.push(bullet[1].slice(0, 500)); }
+  }
+  flush();
+  // 没有 heading 时：把带复选框/编号的条款按需求条目提取
+  if (!requirements.length) {
+    for (const raw of lines) {
+      const line = raw.trim();
+      const checkbox = line.match(/^(?:[-*+]\s+)?\[[ xX]\]\s*(.+)$/);
+      if (checkbox) { index += 1; requirements.push({ id: `${idPrefix}${index}`, title: checkbox[1].slice(0, 160), priority: /P0|必须/i.test(line) ? 'P0' : 'P1', acceptance: [checkbox[1].slice(0, 500)] }); }
+    }
+  }
+  return requirements.map((r) => ({ ...r, acceptance: r.acceptance.length ? r.acceptance : [r.title] }));
+}
 
 export function qualityConfig(project) {
   const cfg = project?.config_json?.quality;
@@ -45,10 +81,13 @@ export function qualityConfig(project) {
     maxIssuesPerCycle: Math.max(1, Math.min(20, Number(cfg.max_issues_per_cycle ?? 6))),
     timeoutMs: Math.max(500, Number(cfg.timeout_ms || 300_000)),
     stopOnUnknown: cfg.stop_on_unknown !== false,
+    requireClauseEvidence: cfg.require_clause_evidence !== false,
     envAllowlist: Array.isArray(cfg.env_allowlist) ? cfg.env_allowlist : [],
     allowedCommands: Array.isArray(cfg.allowed_commands) ? cfg.allowed_commands.map(String) : [],
     denyNetwork: cfg.deny_network !== false,
     sandbox: String(cfg.sandbox || 'auto'),
+    isolation: String(cfg.isolation || cfg.isolation_mode || (cfg.sandbox === 'off' ? 'host' : 'docker')),
+    mounts: Array.isArray(cfg.mounts) ? cfg.mounts : [],
   };
 }
 
@@ -76,7 +115,7 @@ function parseJsonOutput(stdout) {
  * - 异步可取消/超时，避免阻塞 Workbench 健康检查事件循环；
  * - 非零退出码、超时、spawn 异常、无效 JSON 一律 commandFailed，不能 PASS。
  */
-export async function runQualityCommand({ config, project, signal = null }) {
+export async function runQualityCommand({ config, project, signal = null, options = {} } = {}) {
   const q = qualityConfig(project);
   if (!q) return { ok: false, commandFailed: true, reason: '项目未配置质量需求/quality_command', skipped: true, requirements: [], issues: [], stdout: '', stderr: '', exitCode: null };
   if (!q.qualityCommand) return { ok: false, commandFailed: true, reason: '项目未配置 quality_command，不能伪造质量通过', requirements: [], issues: [], stdout: '', stderr: '', exitCode: null };
@@ -85,6 +124,10 @@ export async function runQualityCommand({ config, project, signal = null }) {
   if (q.allowedCommands.length && !q.allowedCommands.includes(q.qualityCommand)) {
     return { ok: false, commandFailed: true, reason: '质量命令不在项目 allowlist 中，已拒绝执行（安全策略）', requirements: [], issues: [], stdout: '', stderr: '', exitCode: null };
   }
+  // 宿主执行仅允许测试/受信本地夹具显式承认；生产未配置 isolation 时默认 Docker。
+  if (q.isolation === 'host' && project?.config_json?.quality?.host_isolation_acknowledged !== true) {
+    return { ok: false, commandFailed: true, issueClass: 'HOST_QUALITY_FORBIDDEN', reason: '质量检查拒绝在未显式授权的宿主 shell 中执行（fail-closed）；请使用 Docker 隔离', requirements: [], issues: [], stdout: '', stderr: '', exitCode: null };
+  }
   const home = fs.mkdtempSync(path.join(requireTmpDir(), 'wb-quality-home-'));
   const extraEnv = { WORKBENCH_PROJECT_ID: project.id, WORKBENCH_PROJECT_REPO: cwd, WORKBENCH_QUALITY_MODE: '1' };
   // 仅项目显式允许的环境变量可以进入质量检查；buildTestEnv 本身绝不做 process.env 全量继承。
@@ -92,6 +135,26 @@ export async function runQualityCommand({ config, project, signal = null }) {
   for (const key of q.envAllowlist) if (process.env[key] !== undefined) allowExtra[key] = process.env[key];
   const env = buildTestEnv({ config, project, homeDir: home, extraEnv: { ...allowExtra, ...extraEnv } });
   const started = Date.now();
+  // P0-3：默认 Docker 隔离，隔离不可用 fail-closed；不允许回退普通宿主 shell。
+  if (q.isolation !== 'host') {
+    try {
+      const containerEnv = { ...allowExtra, ...extraEnv };
+      const res = await runTestInContainer({
+        config, worktree: options.worktree || cwd, command: q.qualityCommand, env: containerEnv,
+        timeoutMs: q.timeoutMs, signal, mounts: q.mounts,
+        logPath: path.join(home, 'quality-container.log'),
+      });
+      const base = { stdout: res.stdout, stderr: res.stderr, exitCode: res.code, timedOut: !!res.timedOut, aborted: !!signal?.aborted, spawnError: false, durationMs: res.durationMs, isolation: res.isolation, sandbox: 'docker', sandboxFallback: '' };
+      if (signal?.aborted) return { ok: false, commandFailed: true, issueClass: 'ABORTED', reason: '质量命令已被取消', ...base, requirements: [], issues: [] };
+      if (res.timedOut) return { ok: false, commandFailed: true, issueClass: 'TIMEOUT', reason: `质量命令在容器内超时（${q.timeoutMs}ms），已终止容器`, ...base, requirements: [], issues: [{ id: 'quality-command-timeout', title: '质量命令容器执行超时', priority: 'P0', evidence: '容器超时', hypothesis: true, source: 'quality-command' }] };
+      if (res.code !== 0) return { ok: false, commandFailed: true, issueClass: 'NONZERO_EXIT', reason: `质量命令在容器内非零退出 exit=${res.code}；非零退出不得视为成功`, ...base, requirements: [], issues: [{ id: 'quality-command-nonzero', title: '质量命令容器内非零退出', priority: 'P0', evidence: redact((res.stderr || res.stdout || 'nonzero').slice(-4000), config), hypothesis: true, source: 'quality-command' }] };
+      const parsed = parseJsonOutput(res.stdout);
+      if (!parsed) return { ok: false, commandFailed: true, issueClass: 'INVALID_JSON', reason: '容器内质量命令 exit=0 但输出不是有效 JSON', ...base, requirements: [], issues: [{ id: 'quality-command-invalid-json', title: '质量命令输出无效 JSON', priority: 'P0', evidence: redact((res.stdout || '').slice(-4000), config), hypothesis: true, source: 'quality-command' }] };
+      return { ok: true, parsed, requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [], issues: Array.isArray(parsed.issues) ? parsed.issues : [], ...base, reason: '', commandFailed: false, command: q.qualityCommand, runId: options.runId || '', commit: options.commit || '' };
+    } catch (err) {
+      return { ok: false, commandFailed: true, issueClass: 'CONTAINER_UNAVAILABLE', reason: `质量检查必须使用 Docker 隔离，但隔离不可用（fail-closed）：${err?.message || err}`, requirements: [], issues: [], stdout: '', stderr: '', exitCode: null, isolation: { backend: 'docker' }, sandbox: 'docker-unavailable', sandboxFallback: '' };
+    }
+  }
   const sandboxMode = process.platform === 'darwin' && q.sandbox !== 'off' && q.denyNetwork && fs.existsSync('/usr/bin/sandbox-exec') ? 'macos' : 'env-only';
   let command = '/bin/sh';
   let args = ['-c', q.qualityCommand];
@@ -127,7 +190,8 @@ export async function runQualityCommand({ config, project, signal = null }) {
   }
   const stdout = String(res.stdout || '');
   const stderr = String(res.stderr || '');
-  const base = { stdout, stderr, exitCode: res.code, timedOut: !!res.timedOut, spawnError: !!res.spawnError, durationMs: Date.now() - started, sandbox: sandboxFallback ? 'env-only-fallback' : sandboxMode, sandboxFallback };
+  const base = { stdout, stderr, exitCode: res.code, timedOut: !!res.timedOut, aborted: !!signal?.aborted, spawnError: !!res.spawnError, durationMs: Date.now() - started, sandbox: sandboxFallback ? 'env-only-fallback' : sandboxMode, sandboxFallback };
+  if (signal?.aborted) return { ok: false, commandFailed: true, issueClass: 'ABORTED', reason: '质量命令已被取消', ...base, requirements: [], issues: [] };
   if (res.spawnError) {
     const reason = `质量命令无法启动：${stderr.slice(0, 600) || 'spawn error'}`;
     return { ok: false, commandFailed: true, reason, issueClass: 'SPAWN_ERROR', ...base, requirements: [], issues: [{ id: 'quality-command-spawn', title: reason, priority: 'P0', evidence: reason, requirementId: '', hypothesis: true, source: 'quality-command' }] };
@@ -145,7 +209,7 @@ export async function runQualityCommand({ config, project, signal = null }) {
     const reason = `质量命令 exit=0 但输出不是有效 JSON（损坏/截断），不能判定 PASS`;
     return { ok: false, commandFailed: true, reason, issueClass: 'INVALID_JSON', ...base, requirements: [], issues: [{ id: 'quality-command-invalid-json', title: reason, priority: 'P0', evidence: redact((stdout || stderr || reason).slice(-4000), config), requirementId: '', hypothesis: true, source: 'quality-command' }] };
   }
-  return { ok: true, parsed, requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [], issues: Array.isArray(parsed.issues) ? parsed.issues : [], ...base, reason: '' };
+  return { ok: true, parsed, requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [], issues: Array.isArray(parsed.issues) ? parsed.issues : [], ...base, reason: '', command: q.qualityCommand, runId: options.runId || '', commit: options.commit || '' };
 }
 
 function evidenceText(value) {
@@ -203,6 +267,21 @@ export function buildCoverageMatrix({ project, qualityRun, audits = [] }) {
     const raw = byId.get(req.id);
     const rawStatus = raw ? normStatus(raw.status || raw.coverage_status) : 'UNKNOWN';
     const rawEvidence = evidenceText(raw?.evidence || raw?.test_evidence || raw?.output);
+    // P1-1：验收条款级证据。同一 Requirement 的每个 acceptance 子条款必须分别有 PASS 证据；
+    // 缺条款证据时不得用 requirement 级 evidence 冒充全部通过。
+    const rawClausesRaw = raw?.criteria || raw?.clauses || raw?.acceptance_results || raw?.acceptance;
+    const rawClauses = Array.isArray(rawClausesRaw) ? rawClausesRaw : [];
+    const clauses = (req.acceptance || []).map((clauseText, index) => {
+      let item = null;
+      // 先按条款文本精确/包含匹配；只有无文本的旧格式才允许位置回退，不能让错位 criteria 冒充当条证据。
+      item = rawClauses.find((c) => String(c?.criterion || c?.clause || c?.acceptance || '').trim() === clauseText) || null;
+      if (!item) item = rawClauses.find((c) => clauseText && String(c?.criterion || c?.clause || c?.acceptance || '').trim().includes(clauseText)) || null;
+      if (!item && rawClauses.length === req.acceptance.length && !String(rawClauses[index]?.criterion || rawClauses[index]?.clause || rawClauses[index]?.acceptance || '').trim()) item = rawClauses[index];
+      const status = item ? normStatus(item.status || item.result || item.verdict) : 'UNKNOWN';
+      const evidence = evidenceText(item?.evidence || item?.output || item?.test_evidence);
+      return { id: `${req.id}.${index + 1}`, clause: clauseText, status, evidence, covered: !!item };
+    });
+    const clausesAllPass = clauses.length > 0 && clauses.every((c) => c.status === 'PASS' && evidenceIsConcrete(c.evidence));
     const auditEvidence = auditText.filter((a) => a.status === 'PASS' && (req.auditRefs || []).some((ref) => {
       const text = `${a.id} ${(a.criteria || []).map((c) => `${c.criterion} ${c.evidence}`).join(' ')}`;
       return ref && text.includes(String(ref));
@@ -211,6 +290,10 @@ export function buildCoverageMatrix({ project, qualityRun, audits = [] }) {
     let evidence = rawEvidence;
     // 质量命令明确 PASS 且带证据才 PASS；仅任务通过不算。
     if (status === 'PASS' && !evidenceIsConcrete(evidence) && !auditEvidence.length) status = 'UNKNOWN';
+    if (status === 'PASS' && q?.requireClauseEvidence && !clausesAllPass) {
+      status = 'UNKNOWN';
+      evidence = `验收条款证据不足：${clauses.filter((c) => c.status !== 'PASS' || !evidenceIsConcrete(c.evidence)).map((c) => c.id).join('、') || '未返回条款结果'}`;
+    }
     if (status === 'PASS' && auditEvidence.length && !evidenceIsConcrete(evidence)) evidence = `独立审计：${auditEvidence.map((a) => a.id).join(', ')}`;
     const reqIssues = [];
     for (const i of (raw?.issues || [])) { const n = normalizeIssue(i, req, 'quality-command'); if (n) reqIssues.push(n); }
@@ -231,6 +314,8 @@ export function buildCoverageMatrix({ project, qualityRun, audits = [] }) {
       priority: req.priority, required: req.required,
       acceptance: req.acceptance, codeRefs: req.codeRefs, testRefs: req.testRefs, auditRefs: req.auditRefs,
       status, evidence: evidence || '',
+      clauses,
+      binding: { command: qualityRun?.command || q?.qualityCommand || '', runId: qualityRun?.runId || '', commit: qualityRun?.commit || '', isolation: qualityRun?.sandbox || 'unknown', durationMs: qualityRun?.durationMs || 0 },
       auditEvidence: auditEvidence.map((a) => ({ id: a.id, score: a.score, status: a.status })),
       issues: reqIssues,
     });
@@ -254,6 +339,7 @@ export function buildCoverageMatrix({ project, qualityRun, audits = [] }) {
       fail: matrix.filter((m) => m.status === 'FAIL').length,
       unknown: matrix.filter((m) => m.status === 'UNKNOWN').length,
       blocked: matrix.filter((m) => m.status === 'BLOCKED').length,
+      clauses: { total: matrix.reduce((n, m) => n + (m.clauses?.length || 0), 0), pass: matrix.reduce((n, m) => n + (m.clauses || []).filter((c) => c.status === 'PASS').length, 0), unknown: matrix.reduce((n, m) => n + (m.clauses || []).filter((c) => c.status === 'UNKNOWN').length, 0), fail: matrix.reduce((n, m) => n + (m.clauses || []).filter((c) => c.status === 'FAIL').length, 0) },
     },
     p0p1,
     generatedAt: nowIso(),

@@ -159,6 +159,7 @@ export async function runTestInContainer({
   logPath = '',
   signal = null,
   image = '',
+  mounts = [],
 } = {}) {
   const cc = containerConfig(config);
   const bin = cc.dockerBin;
@@ -178,6 +179,7 @@ export async function runTestInContainer({
       cpus: cc.cpus,
       pidsLimit: cc.pidsLimit,
       envFile: tmp.file,
+      mounts: Array.isArray(mounts) ? mounts : [],
     });
   } catch (err) {
     cleanupEnvFile(tmp);
