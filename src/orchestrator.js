@@ -38,7 +38,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '2.7.0';
+const VERSION = '2.8.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
