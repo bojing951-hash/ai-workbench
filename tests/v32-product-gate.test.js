@@ -81,6 +81,9 @@ test('v3.2 P0-1：三阶段任务 A→B→C 正常完成，Planner no_task 后�
     const latestTaskId = h.store.listTasks({ runId: run.id }).at(-1)?.id;
     assert.ok(h.store.listAudits(latestTaskId).some((a) => a.evidence_hash === run.verified_sha && a.verification_status === 'PASS'), '产品验收审计必须绑定最终 SHA');
     assert.equal(h.store.getRun(run.id).status, 'awaiting_acceptance');
+    const accepted = h.orchestrator.acceptRun(run.id, { confirmLocalOnly: true });
+    assert.equal(accepted.status, 'accepted', '产品级 PASS 后 acceptRun 必须能完成最终验收');
+    assert.equal(h.store.getRun(run.id).status, 'accepted');
   } finally { await cleanup(h); }
 });
 

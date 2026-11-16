@@ -399,10 +399,15 @@ export class Store {
       this.db.exec("UPDATE attempts SET provider='glm' WHERE (provider IS NULL OR provider='') AND agent_kind='claude'");
       this.db.exec("UPDATE attempts SET provider='deepseek' WHERE (provider IS NULL OR provider='') AND agent_kind IN ('dsh','planning','deepseek')");
       this.db.exec("UPDATE attempts SET provider='unknown' WHERE provider IS NULL OR provider=''");
-      // 历史记录：旧版按 agentKind 推断 provider；标记 known=1 并保留来源，避免重复/回退费用口径
-      this.db.exec("UPDATE attempts SET provider_known=1, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek') AND provider_known=0 AND provider_source=''");
+      // 历史记录：旧版按 agentKind 推断 provider，只是推断，不能升级为已核实身份。
+      this.db.exec("UPDATE attempts SET provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek') AND provider_known=0 AND provider_source=''");
+      this.db.exec("UPDATE attempts SET provider_known=0, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek') AND provider_known=1 AND provider_source='legacy_inferred'");
       this.db.exec("UPDATE attempts SET provider='unknown', provider_known=0, provider_source='legacy_unknown' WHERE provider NOT IN ('glm','deepseek','openai','anthropic') AND provider_source=''");
-      this.db.exec("UPDATE audits SET provider_known=1, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek','openai','anthropic') AND provider_known=0 AND provider_source=''");
+      this.db.exec("UPDATE audits SET provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek','openai','anthropic') AND provider_known=0 AND provider_source=''");
+      this.db.exec("UPDATE audits SET provider_known=0, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek','openai','anthropic') AND provider_known=1 AND provider_source='legacy_inferred'");
+      // 已回填到统一账本的历史推断行同步降级，禁止历史推断被预算当作已确认 GLM。
+      this.db.exec("UPDATE llm_usage SET provider_known=0 WHERE source_id IN (SELECT 'attempt:'||id FROM attempts WHERE provider_source='legacy_inferred')");
+      this.db.exec("UPDATE llm_usage SET provider_known=0 WHERE source_id IN (SELECT 'audit:'||id FROM audits WHERE provider_source='legacy_inferred')");
     } catch {
       /* ignore */
     }
@@ -1150,24 +1155,27 @@ export class Store {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       let retryExisting = null;
+      let effectiveRequestKey = requestKey;
       if (requestKey) {
         const existing = this.db.prepare('SELECT * FROM model_reservations WHERE request_key=?').get(requestKey);
         if (existing) {
           if (existing.status === 'reserved' || existing.status === 'settled') { this.db.exec('COMMIT'); return { ok: true, existing: true, reservation: existing }; }
-          // released/expired/unknown 的同 key 重试必须重新执行完整预算检查，不能无检查重新占额。
+          // released/expired/unknown 是历史调用，不得覆盖；新付费重试必须独立预留 ID/requestKey。
           retryExisting = existing;
+          effectiveRequestKey = `${requestKey}#retry:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 6)}`;
         }
       }
       const exempt = new Set((exemptProviders || []).map((x) => String(x).toLowerCase()));
-      const rows = this.db.prepare("SELECT provider, provider_known, SUM(tokens_in) tin, SUM(tokens_out) tout, SUM(tokens_cache) tc, SUM(cost_cny) cost FROM llm_usage WHERE budget_scope<>'project_audit' GROUP BY provider").all();
+      const rows = this.db.prepare("SELECT provider, provider_known, SUM(tokens_in) tin, SUM(tokens_out) tout, SUM(tokens_cache) tc, SUM(cost_cny) cost FROM llm_usage WHERE budget_scope<>'project_audit' GROUP BY provider, provider_known").all();
       let usedTokens = 0; let usedCost = 0;
       for (const r of rows) {
         const name = String(r.provider || 'unknown').toLowerCase();
+        // 只豁免同一行 provider_known=1 的合法 GLM；unknown 行必须计入。
         if (exempt.has(name) && Number(r.provider_known) === 1) continue;
         usedTokens += Number(r.tin || 0) + Number(r.tout || 0) + Number(r.tc || 0) * Number(cacheTokenWeight || 0);
         usedCost += Number(r.cost || 0);
       }
-      const reserved = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status IN ('reserved','unknown') AND id<>?").get(retryExisting?.id || '');
+      const reserved = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status IN ('reserved','unknown')").get();
       const totalTokens = usedTokens + Number(reserved.t || 0) + Number(estimatedTokens || 0);
       const totalCost = usedCost + Number(reserved.c || 0) + Number(estimatedCostCny || 0);
       const remainingTokens = Number(maxTokens) - usedTokens - Number(reserved.t || 0);
@@ -1177,16 +1185,11 @@ export class Store {
         this.db.exec('ROLLBACK');
         return { ok: false, reason: 'budget-exceeded', usedTokens, usedCost, reservedTokens: Number(reserved.t || 0), reservedCostCny: Number(reserved.c || 0), estimatedTokens, estimatedCostCny };
       }
-      if (retryExisting) {
-        this.db.prepare("UPDATE model_reservations SET status='reserved', estimated_tokens=?, estimated_cost_cny=?, provider=?, model=?, created_at=?, expires_at=?, settled_at='', actual_tokens=0, actual_cost_cny=0, usage_known=0 WHERE id=?")
-          .run(Number(estimatedTokens || 0), Number(estimatedCostCny || 0), provider, model, now, expires, retryExisting.id);
-        this.db.exec('COMMIT');
-        return { ok: true, existing: true, reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(retryExisting.id) };
-      }
+      // retryExisting 仅用于排除旧行重复计入；新调用使用新 id/new requestKey，旧 UNKNOWN 保留。
       this.db.prepare('INSERT INTO model_reservations (id,request_key,provider,model,estimated_tokens,estimated_cost_cny,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(id, requestKey, provider, model, Number(estimatedTokens || 0), Number(estimatedCostCny || 0), 'reserved', now, expires);
+        .run(id, effectiveRequestKey, provider, model, Number(estimatedTokens || 0), Number(estimatedCostCny || 0), 'reserved', now, expires);
       this.db.exec('COMMIT');
-      return { ok: true, reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) };
+      return { ok: true, retryOf: retryExisting?.id || '', reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) };
     } catch (err) { try { this.db.exec('ROLLBACK'); } catch {} throw err; }
   }
 
@@ -1282,7 +1285,7 @@ export class Store {
 
   usageTotals() {
     // 单一事实源：llm_usage；旧 attempts/audits 已在迁移时回填，后续由触发器入账。
-    const rows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_in ELSE 0 END),0) tin, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_out ELSE 0 END),0) tout, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_cache ELSE 0 END),0) tc, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN cost_cny ELSE 0 END),0) cost FROM llm_usage GROUP BY provider`).all();
+    const rows = this.db.prepare(`SELECT provider, provider_known known, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_in ELSE 0 END),0) tin, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_out ELSE 0 END),0) tout, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_cache ELSE 0 END),0) tc, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN cost_cny ELSE 0 END),0) cost FROM llm_usage GROUP BY provider, provider_known`).all();
     const scoped = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM llm_usage WHERE budget_scope='project_audit' GROUP BY provider`).all();
     const byProvider = {};
     const ensure = (name) => {
@@ -1291,9 +1294,13 @@ export class Store {
       return byProvider[key];
     };
     for (const r of rows) {
-      const agg = ensure(r.provider || 'unknown');
+      const base = String(r.provider || 'unknown');
+      // unknown 用量使用独立 key，确保 GLM 的 known/unknown 不会被聚合后整体豁免。
+      const key = Number(r.known) === 1 ? base : `${base}@unknown`;
+      const agg = ensure(key);
       agg.tokensIn += Number(r.tin); agg.tokensOut += Number(r.tout); agg.tokensCache += Number(r.tc); agg.costCny += Number(r.cost);
-      agg.known = agg.known || Number(r.known) === 1;
+      agg.known = Number(r.known) === 1;
+      agg.baseProvider = base;
     }
     for (const agg of Object.values(byProvider)) agg.tokens = agg.tokensIn + agg.tokensOut + agg.tokensCache;
     const total = Object.values(byProvider).reduce((acc, a) => {
@@ -1311,10 +1318,10 @@ export class Store {
   }
 
   usageForProject(projectId) {
-    const rows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM llm_usage WHERE project_id=? GROUP BY provider`).all(projectId);
+    const rows = this.db.prepare(`SELECT provider, provider_known known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM llm_usage WHERE project_id=? GROUP BY provider, provider_known`).all(projectId);
     const byProvider = {};
     const ensure = (name) => { const k = name || 'unknown'; if (!byProvider[k]) byProvider[k] = { tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0,known:false }; return byProvider[k]; };
-    for (const r of rows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.tokensCache+=Number(r.tc); a.costCny+=Number(r.cost); a.known=a.known||Number(r.known)===1; }
+    for (const r of rows) { const base=String(r.provider||'unknown'); const key=Number(r.known)===1?base:`${base}@unknown`; const a=ensure(key); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.tokensCache+=Number(r.tc); a.costCny+=Number(r.cost); a.known=Number(r.known)===1; a.baseProvider=base; }
     for (const a of Object.values(byProvider)) a.tokens=a.tokensIn+a.tokensOut+a.tokensCache;
     const total = Object.values(byProvider).reduce((acc,a)=>{acc.tokensIn+=a.tokensIn;acc.tokensOut+=a.tokensOut;acc.tokensCache+=a.tokensCache;acc.tokens+=a.tokens;acc.costCny+=a.costCny;return acc;},{tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0});
     return { ...total, byProvider };

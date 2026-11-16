@@ -119,3 +119,77 @@ test('v3.1 P1-2：settled 同 key 不重复付费；过期预留转 unknown；DS
     assert.equal(afterDsh.ok, true, 'DSH project_audit 不应污染全局额度');
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('v3.2 P0-2：UNKNOWN 历史调用不被重试覆盖；新付费请求拥有独立预留 ID 且历史风险继续占额', () => {
+  const { root, store } = mk(20_000);
+  try {
+    const first = store.reserveModelBudget({ id: 'unknown-call-1', requestKey: 'paid-key', provider: 'deepseek', estimatedTokens: 4_000, maxTokens: 20_000, maxCostCny: 30 });
+    store.markModelReservationUnknown(first.reservation.id);
+    const beforeRows = store.listModelReservations().length;
+    const retry = store.reserveModelBudget({ id: 'unknown-call-2', requestKey: 'paid-key', provider: 'deepseek', estimatedTokens: 4_000, maxTokens: 20_000, maxCostCny: 30 });
+    assert.equal(retry.ok, true);
+    assert.notEqual(retry.reservation.id, first.reservation.id, '新付费调用必须有独立预留 ID');
+    assert.notEqual(retry.reservation.request_key, 'paid-key', '旧 requestKey 不能复用为免费调用');
+    assert.equal(store.listModelReservations().length, beforeRows + 1);
+    const old = store.listModelReservations().find((x) => x.id === first.reservation.id);
+    assert.equal(old.status, 'unknown', '旧 UNKNOWN 不得被覆盖或删除');
+    assert.equal(store.reservedBudgetTotals().tokens, 8_000, '旧 UNKNOWN 4k + 新预留 4k 都必须占额');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.2 P0-2：SIGKILL 后重新打开 DB，未结算预留仍占额；超时转 UNKNOWN 后新调用独立计费', () => {
+  const { root, config, store } = mk(10_000);
+  const dbPath = store.dbPath;
+  try {
+    store.reserveModelBudget({ id: 'crash-res', requestKey: 'crash-key', provider: 'deepseek', estimatedTokens: 3_000, maxTokens: 10_000, maxCostCny: 30 });
+  } finally { store.close(); }
+  const reopened = openStore(dbPath);
+  try {
+    assert.equal(reopened.listModelReservations().find((x) => x.id === 'crash-res').status, 'reserved');
+    assert.equal(reopened.reservedBudgetTotals().tokens, 3_000, '崩溃后未结算预留必须继续占额');
+    reopened.db.prepare("UPDATE model_reservations SET expires_at='2000-01-01T00:00:00.000Z' WHERE id='crash-res'").run();
+    const retry = reopened.reserveModelBudget({ id: 'after-timeout', requestKey: 'crash-key', provider: 'deepseek', estimatedTokens: 3_000, maxTokens: 10_000, maxCostCny: 30 });
+    assert.equal(retry.ok, true);
+    assert.notEqual(retry.reservation.id, 'crash-res');
+    assert.equal(reopened.listModelReservations().find((x) => x.id === 'crash-res').status, 'unknown');
+    assert.equal(reopened.reservedBudgetTotals().tokens, 6_000);
+  } finally { reopened.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.2 P0-1：同一 Provider 的 confirmed/unknown 混合用量逐调用计算，未知 GLM 不豁免', () => {
+  const { root, config, store } = mk(5_000);
+  const configG = { ...config, llm: { ...config.llm, glm: { apiKey: 'test-glm-key', baseUrl: 'https://glm.example/v1', model: 'glm-4' } } };
+  try {
+    // 已确认 GLM：豁免；未知 GLM：不得因同 Provider 有 confirmed 记录而豁免。
+    store.addLlmUsage({ source: 'test', sourceId: 'glm-known', provider: 'glm', providerKnown: true, tokensIn: 1_000, tokensOut: 500, tokensCache: 200, costCny: 0.01, budgetScope: 'global' });
+    store.addLlmUsage({ source: 'test', sourceId: 'glm-unknown', provider: 'glm', providerKnown: false, tokensIn: 300, tokensOut: 100, tokensCache: 100, costCny: 0.02, budgetScope: 'global' });
+    store.addLlmUsage({ source: 'test', sourceId: 'deepseek-unknown', provider: 'deepseek', providerKnown: false, tokensIn: 200, tokensOut: 100, tokensCache: 0, costCny: 0.03, budgetScope: 'global' });
+    store.addLlmUsage({ source: 'test', sourceId: 'dsh-project', provider: 'deepseek', providerKnown: true, tokensIn: 9_000, tokensOut: 1_000, tokensCache: 0, costCny: 1, budgetScope: 'project_audit' });
+    const raw = store.usageTotals();
+    assert.ok(raw.byProvider.glm, 'confirmed GLM 应存在独立已知身份桶');
+    assert.ok(raw.byProvider['glm@unknown'], 'unknown GLM 应存在独立未知身份桶');
+    assert.equal(raw.byProvider['glm@unknown'].known, false);
+    const snap = budgetSnapshot(store, configG);
+    // 非豁免：glm unknown 300+100+100*0.1=410；deepseek 200+100=300 => 710
+    assert.equal(snap.budgetTokens, 710);
+    assert.equal(snap.budgetCostCny, 0.05);
+    assert.equal(snap.usedTokens, 1_000 + 500 + 200 + 500 + 300 + 10_000);
+    assert.equal(snap.projectAudit.tokens, 10_000);
+    assert.equal(snap.remainingTokens, 5_000 - 710);
+    // 预留检查也使用同一逐调用口径，已确认 GLM 不占全局额度。
+    const r = store.reserveModelBudget({ id: 'glm-mixed-res', requestKey: 'glm-mixed', provider: 'deepseek', estimatedTokens: 4_000, estimatedCostCny: 0.01, maxTokens: 5_000, maxCostCny: 30, minReserveTokens: 0 });
+    assert.equal(r.ok, true);
+    const tooLarge = store.reserveModelBudget({ id: 'glm-mixed-res-2', requestKey: 'glm-mixed-2', provider: 'deepseek', estimatedTokens: 4_500, estimatedCostCny: 0.01, maxTokens: 5_000, maxCostCny: 30, minReserveTokens: 0 });
+    assert.equal(tooLarge.ok, false, 'unknown GLM/DeepSeek 已占 710，剩余不足以再预留 4500');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.2 P0-2：settled/reserved 的 assertModelBudget 不会再次发起付费调用', () => {
+  const { root, config, store } = mk(20_000);
+  try {
+    const first = assertModelBudget({ config, store, provider: 'deepseek', estimatedTokens: 1000, estimatedCostCny: 0.01, reserve: true, requestKey: 'dup-paid' });
+    store.settleModelReservation(first.reservation.id, { actualTokens: 10, usageKnown: true });
+    assert.throws(() => assertModelBudget({ config, store, provider: 'deepseek', estimatedTokens: 1000, estimatedCostCny: 0.01, reserve: true, requestKey: 'dup-paid' }), /MODEL_CALL_DUPLICATE|重复付费/);
+    assert.equal(store.listModelReservations().length, 1);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});

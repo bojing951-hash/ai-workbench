@@ -64,6 +64,11 @@ export function assertModelBudget({ config, store, provider, model = '', estimat
     if (!result.ok) {
       throw new PolicyError('BUDGET_CHAT_TOKENS_EXCEEDED', `${label}预算不足（预留失败）：可用额度不足以覆盖本次调用；请授权或降低用量`, result);
     }
+    if (result.existing) {
+      // settled 不能再次执行付费调用；reserved 并发重复也不能再发一次。
+      const status = result.reservation?.status || 'existing';
+      throw new PolicyError('MODEL_CALL_DUPLICATE', `${label} 的 requestKey 已存在（${status}），拒绝重复付费调用`, { reservation: result.reservation });
+    }
     return { identity, exempt: false, snapshot: budgetSnapshot(store, config), estimatedTokens: estimate, estimatedCostCny: estCost, reservation: result.reservation };
   }
   const reserveTokens = Number(config.budget.minReserveTokens || 0);
