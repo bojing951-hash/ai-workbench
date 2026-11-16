@@ -42,6 +42,13 @@
 - **关键可靠性根因修复**：任务 `verification_json` 指数膨胀（Invalid string length）、低预算 finalize 阻塞、GLM 身份/预算、容器执行保持。
 - 验收：5 个冻结任务 5/5 自主完成、10/10 测试、5/5 独立审计、2/2 故障恢复；**严格 24h 窗口未执行，24h 验收 FAIL/UNKNOWN**。详见 [v2.3 报告](docs/v2.3/REPORT.md)、[验收矩阵](docs/v2.3/ACCEPTANCE-MATRIX.md)。
 
+## 0.6 v2.6 新增（看见 AI）
+
+- **工作台如何工作**：11 步可点击流程，用大白话解释需求→规划→Claude/GLM 编码→测试→DSH 独立审计→修复→commit→下一任务→验收；技术细节可展开。
+- **研发实况**：真实项目/任务/Agent/阶段/时间/费用六卡 + 真实事件时间线；无活跃运行时如实显示空闲。
+- **历史回放**：从 SQLite、事件、attempts、audits、Git 和交付证据重建 Consumption Decision Lab 五幕过程，含失败、UNKNOWN、修复、commit diff、成本与总结；支持简单/技术讲解和移动端。
+- 只新增只读 API 与界面，不重跑产品、不改产品记录/A-B、不改预算；详见 [v2.6 报告](docs/v2.6/REPORT.md) 与 [操作说明](docs/v2.6/USER-GUIDE.md)。
+
 ## 0.5 v2.5 新增（真实产品交付）
 
 - **Consumption Decision Lab** 真实 Web 产品：Claude Code/GLM 编码，冻结测试/build/真实浏览器验收，DSH 只读独立审计 PASS 100；详见 [v2.5 报告](docs/v2.5/REPORT.md) 与产品源码 `projects/consumption-decision-lab`（release/v0.1.0）。

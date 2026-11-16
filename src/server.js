@@ -11,6 +11,7 @@ import { PolicyError } from './policy.js';
 import { detectIsolationCapabilities, isolationModeForProject } from './isolation.js';
 import { containerCapabilities } from './container.js';
 import { VERSION } from './orchestrator.js';
+import { buildLive, buildReplay, readProductCommit, HISTORY_PROJECT_NAME } from './replay.js';
 import { assertSafeWriteRequest, isAllowedHost, redactForResponse, resolveWithin, WriteRateLimiter } from './security.js';
 
 const MAX_BODY = 2 * 1024 * 1024;
@@ -190,6 +191,25 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       const data = await orchestrator.state();
       data.loops = loops ? loops.list() : [];
       return sendJson(res, 200, { ok: true, data });
+    }
+
+    // v2.6 只读观察层：研发实况 / 历史回放 / Git diff（不写入任何研发状态）
+    if (pathname === '/api/live' && method === 'GET') {
+      const projectId = url.searchParams.get('projectId') || '';
+      return sendJson(res, 200, { ok: true, data: buildLive(store, projectId) });
+    }
+
+    if (pathname === '/api/replay/consumption' && method === 'GET') {
+      const projectId = url.searchParams.get('projectId') || '';
+      return sendJson(res, 200, { ok: true, data: buildReplay(store, projectId) });
+    }
+
+    const replayCommitMatch = pathname.match(/^\/api\/replay\/consumption\/commits\/([0-9a-fA-F]{7,40})$/);
+    if (replayCommitMatch && method === 'GET') {
+      const replayProject = store.listProjects().find((p) => p.name === HISTORY_PROJECT_NAME);
+      const commit = replayProject ? readProductCommit(store, replayProject.id, replayCommitMatch[1]) : null;
+      if (!commit) throw new PolicyError('COMMIT_NOT_FOUND', '该 Commit 不在消费产品仓库历史中');
+      return sendJson(res, 200, { ok: true, data: commit });
     }
 
     if (pathname === '/api/config' && method === 'GET') {

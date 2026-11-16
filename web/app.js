@@ -251,6 +251,18 @@ const app = {
   booted: false,
   isolation: null,
   isolationError: null,
+  insightView: '',
+  liveData: null,
+  liveError: null,
+  liveProjectId: '',
+  liveLoading: false,
+  liveTimer: null,
+  replayData: null,
+  replayError: null,
+  replayLoading: false,
+  replayAct: 0,
+  replayMode: 'simple',
+  replayTimeline: false,
 };
 
 const dom = {};
@@ -1221,6 +1233,11 @@ const DOM_IDS = [
   'sseMiniLabel',
   'clearEventsBtn',
   'statusPanel',
+  'insightView',
+  'insightContent',
+  'insightGuideBtn',
+  'insightLiveBtn',
+  'insightReplayBtn',
   'toastRoot',
   'modalLayer',
   'modalBackdrop',
@@ -1256,6 +1273,9 @@ function setToneClass(node, tone, extraClass) {
 
 function bindStaticEvents() {
   dom.addProjectBtn.addEventListener('click', () => openAddProjectModal());
+  dom.insightGuideBtn?.addEventListener('click', () => openInsight('guide'));
+  dom.insightLiveBtn?.addEventListener('click', () => openInsight('live'));
+  dom.insightReplayBtn?.addEventListener('click', () => openInsight('replay'));
   dom.welcomeAddProjectBtn.addEventListener('click', () => openAddProjectModal());
   dom.helpBtn.addEventListener('click', () => openHelpModal());
   dom.welcomeHelpBtn.addEventListener('click', () => openHelpModal());
@@ -1322,6 +1342,8 @@ function bindStaticEvents() {
   window.addEventListener('hashchange', () => {
     if (!app.booted) return;
     const route = parseRoute();
+    if (route.insight) { applyRoute(); return; }
+    if (app.insightView) { applyRoute(); return; }
     if (route.runId && route.runId === app.selectedRunId) return;
     if (!route.runId && route.projectId && route.projectId === app.selectedProjectId && !app.selectedRunId) return;
     if (!route.runId && !route.projectId && !app.selectedProjectId) return;
@@ -2566,6 +2588,16 @@ function renderWelcomeStats() {
 
 function renderWorkspace() {
   if (!dom.welcomeView) return;
+  if (app.insightView) {
+    document.body.classList.add('insight-mode');
+    dom.welcomeView.hidden = true;
+    dom.projectView.hidden = true;
+    dom.insightView.hidden = false;
+    renderInsight();
+    return;
+  }
+  stopInsight();
+  dom.insightView.hidden = true;
   const project = currentProject();
   const showWelcome = !project;
   dom.welcomeView.hidden = !showWelcome;
@@ -4240,6 +4272,8 @@ function buildAuditCard(audit) {
 // ============================================================
 function parseRoute() {
   const raw = String(location.hash || '');
+  const insightMatch = raw.match(/^#\/(guide|live|replay)$/);
+  if (insightMatch) return { insight: insightMatch[1] };
   const match = raw.match(/^#\/([pr])\/([^/?#]+)$/);
   if (!match) return {};
   let id = match[2];
@@ -4272,6 +4306,7 @@ function selectProject(projectId, options = {}) {
     toast('项目不存在或已被移除', 'warn');
     return false;
   }
+  stopInsight();
   app.selectedProjectId = projectId;
   app.selectedRunId = null;
   app.runDetail = null;
@@ -4295,6 +4330,7 @@ function selectRun(runId, options = {}) {
   if (!runId) return false;
   const known = findRun(runId);
   const projectId = known?.projectId || (app.runDetail?.id === runId ? app.runDetail.project_id : app.selectedProjectId);
+  stopInsight();
   app.selectedRunId = runId;
   if (projectId) app.selectedProjectId = projectId;
   if (!app.runDetail || app.runDetail.id !== runId) {
@@ -4340,6 +4376,11 @@ function selectDefaultProject() {
 function applyRoute() {
   if (!app.state) return;
   const route = parseRoute();
+  if (route.insight) {
+    if (app.insightView !== route.insight) openInsight(route.insight, { updateHash: false });
+    return;
+  }
+  if (app.insightView) stopInsight();
   if (route.runId) {
     if (route.runId === app.selectedRunId && app.runDetail) return;
     selectRun(route.runId, { updateHash: false });
@@ -4350,6 +4391,9 @@ function applyRoute() {
     if (exists) {
       if (route.projectId !== app.selectedProjectId || app.selectedRunId) {
         selectProject(route.projectId, { updateHash: false });
+      } else {
+        // 从“看见 AI”返回项目页时，selectedProjectId 可能没变；仍必须重绘项目视图。
+        renderAll();
       }
       return;
     }
@@ -5190,6 +5234,791 @@ function renderStatusPanel() {
         : '策略：当前允许合并主分支，请谨慎使用。',
     }),
   );
+}
+
+// ============================================================
+// v2.6 看见 AI：解释 / 实况 / 历史回放
+// 所有实况与回放数据来自只读 API；缺失数据明确标注，不生成演示数据。
+// ============================================================
+const INSIGHT_META = {
+  guide: { title: '工作台如何工作', subtitle: '用大白话看懂一次自动开发从需求到验收的全过程', hash: '#/guide' },
+  live: { title: '研发实况', subtitle: '现在哪个项目、哪个任务、哪个 AI 在工作，以及下一步是什么', hash: '#/live' },
+  replay: { title: '历史回放', subtitle: '从真实事件、尝试、审计和 Git 记录重建 Consumption Decision Lab 的开发过程', hash: '#/replay' },
+};
+
+const INSIGHT_GUIDE_STEPS = [
+  {
+    title: '我提出需求',
+    simple: '我用普通语言写下想要的产品目标、边界和验收标准。',
+    question: '工作台收到什么？',
+    input: '项目路径、产品目标、验收标准、测试命令、哪些文件不能改。',
+    output: '一条可执行的研发运行请求。',
+    known: '工作台先检查预算、审计资源和安全边界，再决定是否开始。',
+    fail: '目标或验收标准为空、资源不足时不会开始，会保存检查点并说明原因。',
+    tech: 'POST /api/runs 或研发循环；Policy 层执行预算、保护路径、独立审计预检。',
+  },
+  {
+    title: '工作台理解目标',
+    simple: '工作台把目标、验收标准、测试命令和项目约束整理成每个任务的上下文。',
+    question: '它负责做什么？',
+    input: '产品目标、验收标准、项目配置、冻结测试。',
+    output: '任务上下文、冻结契约、测试命令、受保护文件清单。',
+    known: '上下文写进任务与提示词，并记录到事件和 artifacts。',
+    fail: '无法读取项目/测试或契约缺失时，任务会在编码前阻塞。',
+    tech: 'LoopManager / Planner / Orchestrator；Policy 校验 protectedPaths、testCommand。',
+  },
+  {
+    title: 'AI 制定开发任务',
+    simple: '工作台把目标拆成有顺序的任务；本轮真实历史中，任务队列由研发循环显式下发，不是模型自由发挥。',
+    question: '任务从哪里来？',
+    input: '目标、验收标准、任务队列或规划器生成的计划。',
+    output: '带 seq、验收标准、测试命令和 Agent 的任务列表。',
+    known: '任务写入 SQLite，按顺序进入 run；状态从 queued → coding。',
+    fail: '计划为空或无法执行时，运行不会假装开始。',
+    tech: 'Planner（单任务/计划模式）或显式 queue；tasks 表保存 acceptance_json、test_command、protectedPaths。',
+  },
+  {
+    title: 'Claude Code / GLM 编写代码',
+    simple: 'Claude Code 拿着当前任务去改代码。它只能改允许的文件，不能改冻结测试。',
+    question: '它负责做什么？',
+    input: '任务描述、验收标准、测试命令、冻结契约、当前代码副本。',
+    output: '代码修改、Agent 总结、真实工具调用记录（能看到什么就展示什么）。',
+    known: 'Agent 进程退出、事件记录完成、工作副本指纹变化；工作台随后自己跑测试。',
+    fail: '卡住/超时由看门狗终止；失败分类后换新会话或备选 Agent；不会把超时当成功。',
+    tech: 'Claude Code headless CLI（GLM 端点）；acceptEdits + 工具白名单；watchdog 同时看事件与 worktree 指纹。',
+  },
+  {
+    title: '自动测试',
+    simple: '工作台运行项目自己的测试命令，例如 npm test。测试是验收的一部分，不是走过场。',
+    question: '谁来跑测试？',
+    input: '项目测试命令、工作副本、测试超时配置。',
+    output: '退出码、stdout/stderr、测试产物、测试指纹。',
+    known: '退出码为 0 且测试前后工作树指纹一致，才进入审计。',
+    fail: '测试失败 → 把真实输出交回 Claude Code 修复；同一失败重复出现会停止无限重试。',
+    tech: 'runner.js；测试命令在隔离/受限环境运行；测试文件受保护，Agent 不能改。',
+  },
+  {
+    title: 'DeepSeek Harness 独立检查',
+    simple: '另一个 AI（DSH）只读检查代码，逐条核对验收标准，给出 PASS / FAIL / UNKNOWN 和具体证据。',
+    question: '它检查什么？',
+    input: '任务、验收标准、代码、diff、commit、测试结果。',
+    output: '逐条结论、分数、证据、修复建议；不只是最终一句话。',
+    known: '审计模型必须与编码模型族不同；审计结果和 commit 绑定；没有证据不能 PASS。',
+    fail: '审计不可用/证据不足/超时 → UNKNOWN 或阻塞，绝不自动改 PASS。',
+    tech: 'src/auditors/dsh.js；独立只读审计工作区；finalizeAuditVerdict 校验每条验收标准的证据。',
+  },
+  {
+    title: '发现问题 → 自动修改 → 重新测试、检查',
+    simple: '测试或审计不通过时，工作台把具体问题交回 Claude Code；它修完后重新测试、重新审计。',
+    question: '谁负责修复？',
+    input: '失败测试输出、审计 required_fixes、原任务上下文。',
+    output: '新的代码修改、新 commit、新的测试和审计记录。',
+    known: '每轮尝试写入 attempts；最多 maxAttempts 次，超过后阻塞并保留检查点。',
+    fail: '无法修复/连续失败会暂停，不会伪装通过；人可以查看证据后决定取消、恢复或调整任务。',
+    tech: 'attempts、failure_class、maxAttempts、审计 required_fixes；修复仍是 Coding Agent 的工作。',
+  },
+  {
+    title: '检查通过',
+    simple: '只有测试通过、审计逐条都有证据且不冲突，工作台才认为这个任务完成。',
+    question: '工作台如何判定通过？',
+    input: '测试结果 + 审计 criteria + commit 指纹。',
+    output: 'task_passed 事件、审计记录、verification_json。',
+    known: '状态变为 passed；Git commit 与被测试、被审计的版本一致。',
+    fail: '任一条验收标准未证实或审计 UNKNOWN，任务不会标记通过。',
+    tech: 'verification_json 绑定 testedHash、commit、auditId；任务状态机 passed 是严格条件。',
+  },
+  {
+    title: '保存代码',
+    simple: '通过后，代码被保存成一个真实的 Git commit，并记录对应的审计和测试。',
+    question: '代码存在哪里？',
+    input: '已验证的工作副本、提交信息、审计结果。',
+    output: 'Git commit、计划分支、可回看的 diff。',
+    known: 'commit SHA 写入任务与运行；验收时可以精确指回版本。',
+    fail: '提交内容与测试/审计版本不一致时拒绝提交。',
+    tech: 'git commitAll + tree 指纹校验；独立分支，不自动合并主分支。',
+  },
+  {
+    title: '自动开始下一个任务',
+    simple: '一个任务通过后，工作台把下一个任务交给 Claude Code，重复编码→测试→审计。',
+    question: '下一步谁决定？',
+    input: '研发循环队列、当前 run 状态、剩余任务。',
+    output: '下一个任务开始事件；或全部完成后的等待验收状态。',
+    known: 'loop_round_completed / loop_completed；每个任务都有独立证据。',
+    fail: '队列里没有可执行任务就正常结束；被阻塞/预算不足则暂停，不制造假任务。',
+    tech: 'LoopManager 顺序推进；run/loop 状态机；每个任务独立 commit/audit。',
+  },
+  {
+    title: '全部完成，等待用户验收',
+    simple: '全部任务完成后，工作台停在这里等你验收；不会自动合并主分支或部署。',
+    question: '最后交给我什么？',
+    input: '所有任务的测试、审计、commit、成本、失败记录。',
+    output: '可验收的运行、独立审计证据、PR（若授权）、真实的成本与限制。',
+    known: 'run.status=awaiting_acceptance；验收是人工决定。',
+    fail: '仍有阻塞/未解决项时不会显示全部完成；会明确标 UNKNOWN/FAIL/BLOCKED。',
+    tech: 'acceptance/CI 闸门；neverMerge；Draft PR；人工验收接口。',
+  },
+];
+
+function fmtBeijingTime(value, withDate = false) {
+  if (!value) return '未记录';
+  const d = new Date(value);
+  if (!Number.isFinite(d.getTime())) return '未记录';
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai', hour12: false,
+      ...(withDate ? { month: '2-digit', day: '2-digit' } : {}),
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).format(d);
+  } catch { return String(value); }
+}
+
+function fmtBeijingFull(value) {
+  if (!value) return '未记录';
+  const d = new Date(value);
+  if (!Number.isFinite(d.getTime())) return '未记录';
+  try {
+    return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(d);
+  } catch { return String(value); }
+}
+
+function fmtDurationCn(ms) {
+  const n = Number(ms || 0);
+  if (!n) return '0 分钟';
+  const mins = Math.floor(n / 60000);
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  if (hours > 0) return `${hours} 小时 ${rest} 分钟`;
+  return `${mins} 分钟`;
+}
+
+function fmtCny(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '未记录';
+  return `¥${n.toFixed(n < 1 ? 4 : 2)}`;
+}
+
+function insightPill(label, tone) { return el('span', { className: `insight-pill tone-${tone || 'gray'}`, text: label }); }
+
+function insightButton(label, onClick, cls = 'button button-ghost button-sm') {
+  return el('button', { className: cls, text: label, attrs: { type: 'button' }, on: { click: onClick } });
+}
+
+function insightSection(title, subtitle, children) {
+  return el('section', { className: 'insight-section' }, [
+    el('div', { className: 'insight-section-title' }, [
+      el('h2', { text: title }),
+      subtitle ? el('span', { text: subtitle }) : null,
+    ]),
+    ...children.filter(Boolean),
+  ]);
+}
+
+function insightHeader(view) {
+  const meta = INSIGHT_META[view];
+  return el('div', { className: 'insight-head' }, [
+    el('div', {}, [
+      el('span', { className: 'insight-eyebrow', text: 'SEE THE WORKBENCH' }),
+      el('h1', { text: meta.title }),
+      el('p', { text: meta.subtitle }),
+    ]),
+    insightButton('返回项目', () => exitInsight(), 'button button-ghost button-sm insight-back'),
+  ]);
+}
+
+function renderInsight() {
+  if (!dom.insightContent || !app.insightView) return;
+  document.body.classList.add('insight-mode');
+  document.querySelectorAll('.insight-nav-btn').forEach((btn) => btn.classList.toggle('is-active', btn.dataset.insight === app.insightView));
+  // 轮询刷新时保留用户展开的 <details> 与焦点，避免每 5 秒把阅读位置重置。
+  const oldDetails = [...dom.insightContent.querySelectorAll('details')];
+  const openStates = oldDetails.map((d) => d.open);
+  const activeEl = document.activeElement;
+  const activeDetail = activeEl && activeEl.closest ? activeEl.closest('#insightContent details') : null;
+  const activeDetailIndex = activeDetail ? oldDetails.indexOf(activeDetail) : -1;
+  const scrollY = window.scrollY;
+  clearNode(dom.insightContent);
+  dom.insightContent.append(insightHeader(app.insightView));
+  if (app.insightView === 'guide') dom.insightContent.append(buildGuide());
+  else if (app.insightView === 'live') {
+    if (app.liveError) dom.insightContent.append(el('div', { className: 'insight-error', text: `研发实况读取失败：${app.liveError}${app.liveData ? '（下面保留上一次成功读取的快照，已标注可能过期）' : ''}` }));
+    if (app.liveData) dom.insightContent.append(buildLive(app.liveData));
+    else if (!app.liveError) dom.insightContent.append(el('div', { className: 'insight-loading', text: '正在读取真实的研发实况…' }));
+  } else if (app.insightView === 'replay') {
+    if (app.replayError) dom.insightContent.append(el('div', { className: 'insight-error', text: `历史回放读取失败：${app.replayError}` }));
+    else if (app.replayData) dom.insightContent.append(buildReplay(app.replayData));
+    else dom.insightContent.append(el('div', { className: 'insight-loading', text: '正在从 SQLite / 事件 / 审计 / Git 重建历史…' }));
+  }
+  const newDetails = [...dom.insightContent.querySelectorAll('details')];
+  newDetails.forEach((d, i) => { if (openStates[i]) d.open = true; });
+  if (activeDetailIndex >= 0) {
+    const target = newDetails[activeDetailIndex]?.querySelector('summary');
+    if (target) target.focus({ preventScroll: true });
+  }
+  if (scrollY > 0) window.scrollTo(0, scrollY);
+}
+
+function buildGuide() {
+  const flow = el('div', { className: 'guide-flow' });
+  const main = [
+    INSIGHT_GUIDE_STEPS[0], INSIGHT_GUIDE_STEPS[1], INSIGHT_GUIDE_STEPS[2], INSIGHT_GUIDE_STEPS[3],
+    INSIGHT_GUIDE_STEPS[4], INSIGHT_GUIDE_STEPS[5], INSIGHT_GUIDE_STEPS[6], INSIGHT_GUIDE_STEPS[7],
+    INSIGHT_GUIDE_STEPS[8], INSIGHT_GUIDE_STEPS[9], INSIGHT_GUIDE_STEPS[10],
+  ];
+  main.forEach((step, index) => {
+    const details = el('details', { className: 'guide-step' });
+    if (index === 0) details.setAttribute('open', '');
+    details.append(el('summary', {}, [
+      el('span', { className: 'guide-step-num', text: String(index + 1).padStart(2, '0') }),
+      el('span', { className: 'guide-step-copy' }, [
+        el('strong', { text: step.title }),
+        el('small', { text: step.simple }),
+      ]),
+      el('span', { className: 'guide-step-chevron', text: '›' }),
+    ]));
+    const body = el('div', { className: 'guide-step-body' });
+    for (const [label, text] of [
+      ['它负责做什么？', step.simple], ['它会接收什么？', step.input], ['它产生什么结果？', step.output],
+      ['工作台怎么知道完成了？', step.known], ['失败之后谁负责处理？', step.fail],
+    ]) {
+      body.append(el('div', { className: 'guide-qa' }, [el('span', { text: label }), el('p', { text })]));
+    }
+    body.append(el('div', { className: 'guide-qa guide-tech' }, [el('span', { text: '技术细节（可跳过）' }), el('p', { text: step.tech })]));
+    details.append(body);
+    flow.append(details);
+    if (index === 6) flow.append(el('div', { className: 'guide-loop', text: '↻ 失败时回到编码；修复后重新测试、重新审计。这一步最多重复有限次数，不会无限重试或伪造通过。' }));
+  });
+  return el('div', { className: 'view' }, [
+    el('div', { className: 'insight-card insight-card-pad' }, [
+      el('p', { className: 'insight-muted', style: { margin: 0, fontSize: '12px', lineHeight: '1.8' }, text: '最简单的理解：工作台像一位项目经理。它把目标拆成任务，让 Claude Code 写代码，自己跑测试，再请另一位 AI 只读检查；任何一步失败都会回到修复，全部有证据后才保存代码、进入下一项。' }),
+    ]),
+    flow,
+    insightSection('两个关键原则', '为什么不能把“测试通过”直接当成功', [
+      el('div', { className: 'insight-card insight-card-pad' }, [
+        el('p', { className: 'insight-muted', style: { margin: 0, lineHeight: '1.9', fontSize: '12px' }, text: '1）写代码的 AI 和检查代码的 AI 必须是不同模型族，且检查只读；2）检查必须逐条回答冻结验收标准并给出证据，缺证据就是 UNKNOWN，不能自动变成 PASS。测试通过只是产品可工作的证据之一，不等于产品绝对没有缺陷。' }),
+      ]),
+    ]),
+  ]);
+}
+
+const LIVE_EVENT_META = {
+  project_created: { label: '项目建立', tone: 'blue' }, loop_created: { label: '循环创建', tone: 'blue' },
+  loop_round_started: { label: '新一轮开始', tone: 'blue' }, run_created: { label: '运行创建', tone: 'gray' },
+  run_started: { label: '运行开始', tone: 'blue' }, task_started: { label: '任务开始', tone: 'blue' },
+  pipeline_resource_checked: { label: '资源预检', tone: 'cyan' }, pipeline_resource_blocked: { label: '资源阻塞', tone: 'amber' },
+  worktree_ready: { label: '工作副本', tone: 'gray' }, agent_started: { label: 'AI 开始工作', tone: 'blue' },
+  agent_progress: { label: 'AI 进度', tone: 'blue' }, agent_finished: { label: 'AI 完成本轮', tone: 'green' },
+  agent_failed: { label: 'AI 失败', tone: 'red' }, agent_fallback: { label: '换新会话/备选', tone: 'amber' },
+  test_started: { label: '测试开始', tone: 'purple' }, test_passed: { label: '测试通过', tone: 'green' }, test_failed: { label: '测试失败', tone: 'red' },
+  audit_started: { label: '审计开始', tone: 'purple' }, audit_passed: { label: '审计通过', tone: 'green' },
+  audit_unknown: { label: '审计未证实', tone: 'amber' }, audit_error: { label: '审计错误', tone: 'red' },
+  repair_requested: { label: '要求修复', tone: 'amber' }, audit_commit_created: { label: '创建审计 commit', tone: 'gray' },
+  task_passed: { label: '任务通过', tone: 'green' }, task_failed: { label: '任务失败', tone: 'red' }, task_error: { label: '任务异常', tone: 'red' },
+  run_paused: { label: '运行暂停', tone: 'amber' }, run_resumed: { label: '运行恢复', tone: 'blue' },
+  run_interrupted: { label: '运行中断', tone: 'amber' }, run_cancelled: { label: '运行取消', tone: 'gray' },
+  loop_completed: { label: '循环完成', tone: 'green' }, loop_round_completed: { label: '一轮完成', tone: 'green' },
+  loop_paused: { label: '循环暂停', tone: 'amber' }, loop_cancelled: { label: '循环取消', tone: 'gray' },
+  run_awaiting_acceptance: { label: '等待验收', tone: 'cyan' }, publish_blocked: { label: '发布阻塞', tone: 'amber' },
+  verification_retry_started: { label: '仅重试验证', tone: 'cyan' }, run_reconciled: { label: '恢复对账', tone: 'cyan' },
+};
+
+function liveEventTitle(evt) {
+  const meta = LIVE_EVENT_META[evt.type] || { label: evt.type || '事件', tone: EVENT_LEVEL[evt.level]?.tone || 'gray' };
+  const msg = String(evt.message || '').split('\n')[0];
+  return { meta, text: msg || meta.label };
+}
+
+function buildLive(data) {
+  const wrap = el('div', { className: 'view' });
+  const projects = Array.isArray(data.projects) ? data.projects : [];
+  const select = el('select', { className: 'live-project-select', attrs: { 'aria-label': '选择要观察的项目' } });
+  for (const p of projects) {
+    const opt = el('option', { text: p.name, attrs: { value: p.id } });
+    if (data.project?.id === p.id) opt.selected = true;
+    select.append(opt);
+  }
+  select.addEventListener('change', () => loadLive(select.value, { force: true }));
+  wrap.append(el('div', { className: 'live-top' }, [
+    el('div', {}, [el('h2', { style: { margin: '0 0 4px', fontSize: '16px' }, text: data.project?.name || '项目' }), el('p', { className: 'insight-note', style: { margin: 0 }, text: `数据快照：${fmtBeijingFull(data.generatedAt)}（北京时间）${data.active ? ' · 实时刷新中' : ' · 当前没有活跃运行'}${app.liveError ? ' · 当前显示的是上一次成功快照' : ''}` })]),
+    select,
+  ]));
+  if (!data.project) {
+    wrap.append(el('div', { className: 'live-empty' }, [el('strong', { text: '还没有可观察的项目' }), el('p', { text: data.reason || '添加并启动一个项目后，这里会显示真实的任务、Agent 和事件。' })]));
+    return wrap;
+  }
+  const run = data.run;
+  const task = data.task;
+  const stageLabel = { coding: '编码中', testing: '测试中', auditing: '独立审计中', repairing: '修复中', committing: '保存代码中', preparing: '准备中', running: '运行中', passed: '已完成', failed: '失败', blocked: '阻塞', queued: '排队中', awaiting_acceptance: '等待验收', paused: '已暂停', interrupted: '已中断', cancelled: '已取消' }[data.stage] || data.stage || '未记录';
+  const liveAgentLabel = data.active ? (agentLabelOrKind(data.agent) || data.agent || '未记录') : '没有 AI 正在工作';
+  const progress = data.progress || { total: 0, passed: 0 };
+  const metrics = [
+    ['项目状态', run ? (RUN_STATUS[run.status]?.label || run.status) : '没有运行记录', run?.id ? shortId(run.id, 16) : '未记录'],
+    ['已完成任务', `${progress.passed} / ${progress.total}`, progress.total ? '当前运行/最近一轮' : '没有任务记录'],
+    ['当前 Agent', liveAgentLabel, data.active ? '机器上的真实执行者' : '如实显示：空闲'],
+    ['当前阶段', stageLabel, data.task?.title || '未记录当前任务'],
+    ['已运行时间', run ? fmtDurationCn(data.elapsedMs) : '未记录', run?.started_at ? `开始 ${fmtBeijingTime(run.started_at)}` : '无开始时间'],
+    ['模型费用', run ? fmtCny(data.costCny) : '未记录', run ? `${fmtTokens(data.tokens)} tokens` : '无费用记录'],
+  ];
+  wrap.append(el('div', { className: 'live-summary' }, metrics.map(([label, value, sub], i) => el('div', { className: `live-metric${i < 3 ? ' is-current' : ''}` }, [el('span', { text: label }), el('strong', { text: value }), el('small', { text: sub })]))));
+  const nowText = data.active
+    ? (task ? `${liveAgentLabel} 正在${stageLabel}` : '运行中，等待任务状态更新')
+    : (run ? (run.status === 'interrupted' ? '现在没有 AI 在工作：最近一次运行已中断，检查点已保留。' : run.status === 'paused' ? '现在没有 AI 在工作：最近一次运行已暂停，检查点已保留。' : '现在没有 AI 在工作。下面是上一次真实运行的状态。') : '这个项目还没有运行记录。');
+  wrap.append(el('div', { className: 'live-now' }, [
+    el('div', { className: 'live-now-icon', text: data.active ? '▶' : '—' }),
+    el('div', { className: 'live-now-copy' }, [
+      el('strong', { text: nowText }),
+      el('p', { text: task ? `当前任务：${task.title}` : (run?.goal || '暂无任务记录') }),
+      task && task.blocked_reason ? el('p', { style: { color: 'var(--amber)' }, text: `阻塞原因：${task.blocked_reason}` }) : null,
+    ]),
+  ]));
+  wrap.append(el('div', { className: 'live-next', text: `下一步：${data.nextStep || '无可用计划'}` }));
+  const timeline = el('ol', { className: 'live-timeline' });
+  for (const evt of (data.events || []).slice().reverse()) {
+    const { meta, text } = liveEventTitle(evt);
+    const details = el('details', { className: 'live-event-body' });
+    details.append(el('summary', {}, [el('div', { className: 'live-event-title' }, [el('strong', { text }), insightPill(meta.label, meta.tone)])]));
+    const detail = el('div', { className: 'live-event-detail' }, [
+      el('div', { text: `类型：${evt.type || '未记录'} · 时间：${fmtBeijingFull(evt.created_at)}（北京时间）` }),
+      el('div', { className: 'insight-note', style: { marginTop: '4px' }, text: evt.run_id ? `运行：${evt.run_id}${evt.task_id ? ` · 任务：${evt.task_id}` : ''}` : '项目级事件' }),
+    ]);
+    if (evt.data && Object.keys(evt.data).length) detail.append(el('pre', { text: JSON.stringify(evt.data, null, 2).slice(0, 5000) }));
+    if (evt.run_id) detail.append(insightButton('打开这次运行', () => { exitInsight({ silent: true }); selectRun(evt.run_id, { scroll: true }); }, 'replay-evidence-link'));
+    details.append(detail);
+    const line = el('span', { className: 'live-event-line' });
+    line.append(el('span', { className: `live-event-dot tone-${meta.tone || 'gray'}` }));
+    timeline.append(el('li', { className: 'live-event' }, [
+      el('span', { className: 'live-event-time', text: fmtBeijingTime(evt.created_at) }),
+      line,
+      details,
+    ]));
+  }
+  if (!timeline.children.length) {
+    timeline.append(el('li', { className: 'live-empty' }, [el('strong', { text: '没有可显示的事件' }), el('p', { text: data.reason || '该项目尚未运行，因此没有真实时间线。' })]));
+  }
+  wrap.append(insightSection('AI 工作时间线', '按真实事件时间倒序（最新在上；最多最近 60 条）；点击每条可展开原始记录', [el('div', { className: 'insight-card insight-card-pad' }, [timeline])]));
+  wrap.append(el('p', { className: 'insight-note', text: '只展示工作台实际记录的事件、工具调用、测试、审计和输出；不展示或编造模型内部思考。没有记录的字段会显示“未记录”。' }));
+  return wrap;
+}
+
+function agentLabelOrKind(kind) {
+  if (!kind) return '';
+  const key = String(kind).toLowerCase();
+  if (key.includes('claude')) return 'Claude Code / GLM';
+  if (key.includes('dsh')) return 'DeepSeek Harness';
+  if (key.includes('deepseek')) return 'DeepSeek';
+  return kind;
+}
+
+function replayStatusPill(status) {
+  const toneMap = { passed: 'green', completed: 'green', failed: 'red', blocked: 'amber', cancelled: 'gray', coding: 'blue', testing: 'purple', auditing: 'purple', repairing: 'amber', awaiting_acceptance: 'cyan', paused: 'amber', interrupted: 'amber', queued: 'gray' };
+  const labelMap = { passed: '已通过', completed: '已完成', failed: '失败', blocked: '已阻塞', cancelled: '已取消', coding: '编码中', testing: '测试中', auditing: '审计中', repairing: '修复中', awaiting_acceptance: '等待验收', paused: '已暂停', interrupted: '已中断', queued: '排队中' };
+  return insightPill(labelMap[status] || status || '未记录', toneMap[status] || 'gray');
+}
+
+function renderSimpleMode() { return app.replayMode !== 'tech'; }
+
+function buildReplay(data) {
+  const wrap = el('div', { className: 'view' });
+  if (!data.available) {
+    wrap.append(el('div', { className: 'live-empty' }, [el('strong', { text: data.reason || '没有可回放的真实历史' }), el('p', { text: '历史回放只展示 SQLite、事件、attempts、audits、Git 和证据文件中的真实记录；不会用演示数据填充。' })]));
+    return wrap;
+  }
+  const meta = el('div', { className: 'replay-bar' }, [
+    el('div', { className: 'insight-note', text: `回放项目：${data.project.name} · 时间统一为北京时间（${data.timezone}） · 数据生成于 ${fmtBeijingFull(data.generatedAt)}` }),
+    el('div', { className: 'replay-toggle', attrs: { role: 'group', 'aria-label': '讲解模式' } }, [
+      el('button', { className: app.replayMode !== 'tech' ? 'is-active' : '', text: '简单讲解', attrs: { type: 'button' }, on: { click: () => { app.replayMode = 'simple'; renderInsight(); } } }),
+      el('button', { className: app.replayMode === 'tech' ? 'is-active' : '', text: '技术详情', attrs: { type: 'button' }, on: { click: () => { app.replayMode = 'tech'; renderInsight(); } } }),
+    ]),
+  ]);
+  wrap.append(meta);
+  const actNames = [
+    ['我提出了什么需求', '原始目标与冻结契约'],
+    ['工作台制定了什么任务', '计划与实际任务记录'],
+    ['Claude Code 实际怎么开发', '编码尝试、失败与恢复'],
+    ['DeepSeek Harness 怎么审计', '逐条检查与修复要求'],
+    ['最终交付了什么', '产品、测试、commit 与成本'],
+  ];
+  const acts = el('div', { className: 'replay-acts', attrs: { role: 'tablist', 'aria-label': '回放五幕' } });
+  actNames.forEach(([name, sub], i) => {
+    const active = (app.replayAct || 0) === i;
+    acts.append(el('button', { className: `replay-act-btn${active ? ' is-active' : ''}`, attrs: { type: 'button', role: 'tab', 'aria-selected': String(active) }, on: { click: () => { app.replayAct = i; app.replayTimeline = false; renderInsight(); } } }, [
+      el('span', { text: `第${'一二三四五'[i]}幕 · ${name}` }), el('small', { text: sub }),
+    ]));
+  });
+  acts.append(el('button', { className: `replay-act-btn${app.replayTimeline ? ' is-active' : ''}`, attrs: { type: 'button', role: 'tab', 'aria-selected': String(!!app.replayTimeline) }, on: { click: () => { app.replayTimeline = true; renderInsight(); } } }, [el('span', { text: '按时间线看全部事件' }), el('small', { text: '原始事件顺序' })]));
+  wrap.append(acts);
+  const stage = el('div', { className: 'replay-stage' });
+  if (app.replayTimeline) {
+    stage.append(buildReplayTimeline(data));
+  } else {
+    const act = Number(app.replayAct || 0);
+    stage.append(...buildReplayAct(data, act));
+    const nav = el('div', { className: 'replay-nav', style: { marginTop: '18px' } }, [
+      insightButton('← 上一步', () => { app.replayAct = Math.max(0, act - 1); renderInsight(); }, 'button button-ghost button-sm'),
+      el('div', { className: 'replay-dots' }, actNames.map((_, i) => el('span', { className: `replay-dot${i === act ? ' is-active' : ''}` }))),
+      insightButton('下一步 →', () => { app.replayAct = Math.min(actNames.length - 1, act + 1); renderInsight(); }, 'button button-primary button-sm'),
+    ]);
+    stage.append(nav);
+  }
+  wrap.append(stage);
+  if (!app.replayTimeline && (app.replayAct || 0) === 4) wrap.append(buildSummary(data));
+  return wrap;
+}
+
+function buildReplayAct(data, act) {
+  if (act === 0) return buildActRequirement(data);
+  if (act === 1) return [buildActTasks(data)];
+  if (act === 2) return [buildActCoding(data)];
+  if (act === 3) return [buildActAudits(data)];
+  return [buildActDelivery(data)];
+}
+
+function buildActRequirement(data) {
+  const origin = data.origin || {};
+  const contract = String(origin.contractText || '').split('\n').slice(0, 24).join('\n');
+  return [
+    el('h2', { text: '第一幕：我提出了什么需求？' }),
+    el('p', { className: 'replay-stage-sub', text: '以下是冻结记录中的原始目标、研发循环目标与契约原文。原始聊天消息没有写入数据库，因此不做“凭记忆补录”。' }),
+    el('div', { className: 'replay-requirement' }, [
+      el('div', { className: 'replay-quote' }, [
+        el('div', { text: origin.projectDescription || '项目描述未记录' }),
+        ...((origin.loopGoals || []).slice(0, 3).map((g) => el('div', { style: { marginTop: '10px' }, text: `研发目标：${g.goal}` }))),
+        el('small', { text: origin.note || '原始聊天记录未入库；以上来自项目与 loop 记录。' }),
+      ]),
+      el('div', { className: 'replay-source-list' }, [
+        el('div', { className: 'replay-source' }, [el('strong', { text: '冻结契约文件' }), el('br'), el('code', { text: origin.contractPath || '未记录' }), el('div', { style: { marginTop: '5px', whiteSpace: 'pre-wrap', maxHeight: '260px', overflow: 'auto' }, text: contract || '未记录契约原文' })]),
+        el('div', { className: 'replay-source' }, [el('strong', { text: '项目创建时间' }), el('br'), el('span', { text: fmtBeijingFull(data.project.created_at) })]),
+        el('div', { className: 'replay-source' }, [el('strong', { text: '验收物料' }), el('br'), el('span', { text: `冻结测试 9 项、浏览器流程、可追溯证据库；产品契约与测试在开发前冻结。` })]),
+      ]),
+    ]),
+    el('p', { className: 'insight-note', style: { marginTop: '12px' }, text: '说明：源码作者归属为 UNKNOWN（没有逐行人工修改审计）；数据库中的 coding attempts 均记录为 Claude Code/GLM。测试/契约由验收方预先冻结，AI 负责编码和修复。' }),
+  ];
+}
+
+function replayTaskCard(t) {
+  const taskDetails = el('details', { className: 'replay-task', style: { display: 'block', padding: '10px 12px' } });
+  taskDetails.append(el('summary', { style: { cursor: 'pointer' } }, [el('div', { className: 'replay-task-main', style: { display: 'inline-block', marginLeft: '6px' } }, [el('strong', { text: `#${t.seq || '?'} ${t.title}` }), el('p', { text: `状态：${t.status} · 运行：${t.run_id || '未记录'}${t.head_commit ? ` · commit ${shortHash(t.head_commit)}` : ' · 没有 commit'}` })])]));
+  const body = el('div', { style: { marginTop: '8px', color: 'var(--text-2)', fontSize: '11.5px', lineHeight: '1.7' } }, [
+    el('p', { style: { margin: '0 0 4px' }, text: t.description || '描述未记录' }),
+    el('p', { style: { margin: '0 0 4px' }, text: `验收：${(t.acceptance || []).join('；') || '未记录'}` }),
+    t.blocked_reason ? el('p', { style: { margin: 0, color: 'var(--amber)' }, text: `阻塞原因：${t.blocked_reason}` }) : null,
+  ]);
+  if (!renderSimpleMode()) body.append(el('pre', { text: JSON.stringify({ id: t.id, run_id: t.run_id, base_commit: t.base_commit, head_commit: t.head_commit, verification: t.verification }, null, 2).slice(0, 5000) }));
+  taskDetails.append(body);
+  return taskDetails;
+}
+
+function buildActTasks(data) {
+  const loops = data.loops || [];
+  const shownTaskIds = new Set();
+  const children = [
+    el('h2', { text: '第二幕：工作台制定了什么开发任务？' }),
+    el('p', { className: 'replay-stage-sub', text: '任务来自研发循环的显式队列，而不是模型自由编造。任务失败后，工作台会用新的任务重新验证，但保留旧任务和失败记录。' }),
+  ];
+  for (const loop of loops) {
+    const queue = Array.isArray(loop.queue) ? loop.queue : [];
+    const loopRunIds = new Set([
+      loop.current_run_id, loop.last_run_id,
+      ...(Array.isArray(loop.history) ? loop.history.map((h) => h.runId) : []),
+    ].filter(Boolean));
+    const loopTasks = (data.tasks || []).filter((t) => loopRunIds.has(t.run_id));
+    const card = el('details', { className: 'replay-source', style: { marginBottom: '8px' }, attrs: { open: '' } });
+    card.append(el('summary', { style: { cursor: 'pointer' } }, [
+      el('strong', { text: loop.goal || '目标未记录' }),
+      el('div', { className: 'insight-note', style: { marginTop: '3px' }, text: `loop ${loop.id} · ${loop.status} · ${fmtBeijingFull(loop.created_at)} · 实际任务记录 ${loopTasks.length} 条` }),
+    ]));
+    if (queue.length) {
+      card.append(el('div', { style: { marginTop: '8px' }, text: '计划任务：' }));
+      for (const q of queue) card.append(el('div', { className: 'replay-source', style: { marginTop: '5px' } }, [el('strong', { text: q.title || '未命名任务' }), el('p', { style: { margin: '3px 0 0' }, text: q.description || '' })]));
+    }
+    card.append(el('div', { style: { marginTop: '8px' }, text: '实际任务记录：' }));
+    for (const t of loopTasks) {
+      shownTaskIds.add(t.id);
+      card.append(replayTaskCard(t));
+    }
+    if (!loopTasks.length) card.append(el('p', { className: 'insight-note', text: '该循环没有实际任务记录。' }));
+    children.push(card);
+  }
+  const remainingTasks = (data.tasks || []).filter((t) => !shownTaskIds.has(t.id));
+  if (remainingTasks.length) {
+    const other = el('details', { className: 'replay-source', style: { marginBottom: '8px' }, attrs: { open: '' } });
+    other.append(el('summary', { style: { cursor: 'pointer' } }, [el('strong', { text: '其他真实任务记录（失败 / 阻塞 / 被替换）' }), el('div', { className: 'insight-note', style: { marginTop: '3px' }, text: '这些任务没有关联到带 history 的循环，但 SQLite 中有真实记录，不能省略。' })]));
+    for (const t of remainingTasks) other.append(replayTaskCard(t));
+    children.push(other);
+  }
+  children.push(el('p', { className: 'insight-note', text: `平台共留下 ${data.stats?.projectTaskRecords ?? 0} 条任务记录；最终交付运行只包含最后通过的那一项。记录数不是“产品功能数”，中间失败/替换任务都保留。` }));
+  return el('div', { className: 'replay-task-list' }, children);
+}
+
+function attemptStatusTone(status) {
+  if (status === 'completed') return 'green';
+  if (status === 'failed') return 'red';
+  if (status === 'interrupted') return 'amber';
+  return 'blue';
+}
+
+function buildActCoding(data) {
+  const attempts = (data.attempts || []).slice().sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)));
+  const tasks = new Map((data.tasks || []).map((t) => [t.id, t]));
+  const children = [
+    el('h2', { text: '第三幕：Claude Code 实际怎么开发？' }),
+    el('p', { className: 'replay-stage-sub', text: '下面按真实时间列出每一次编码尝试、失败原因、耗时和 token；点击展开可看到当时的任务提示词与日志位置。没有记录的字段显示未记录。' }),
+  ];
+  if (!attempts.length) children.push(el('p', { className: 'insight-note', text: '没有 attempt 记录，无法重建编码过程。' }));
+  const list = el('div', { className: 'replay-attempt-list' });
+  for (const a of attempts) {
+    const task = tasks.get(a.task_id);
+    const det = el('details', { className: 'replay-attempt' });
+    det.append(el('summary', {}, [
+      el('strong', { text: `${fmtBeijingFull(a.started_at)} · ${task?.title || a.task_id}` }),
+      replayStatusPill(a.status),
+      insightPill(agentLabelOrKind(a.agent_kind) || 'Agent 未记录', 'blue'),
+      a.failure_class ? insightPill(a.failure_class, 'amber') : null,
+    ]));
+    const body = el('div', { className: 'replay-attempt-body' }, [
+      el('div', { text: `尝试 #${a.attempt_no ?? '未记录'} · 状态：${a.status || '未记录'} · 耗时：${a.duration_ms ? fmtDurationCn(a.duration_ms) : '未记录'} · tokens：${fmtTokens((a.tokens_in || 0) + (a.tokens_out || 0))} · 费用：${fmtCny(a.cost_cny)}（${a.cost_source || '来源未记录'}）` }),
+      a.error ? el('p', { style: { color: 'var(--red)', margin: '5px 0' }, text: `错误：${a.error}` }) : null,
+      task ? el('p', { style: { margin: '5px 0' }, text: `任务目标：${task.description || task.title}` }) : null,
+      renderSimpleMode() ? null : el('p', { className: 'insight-note', text: `attempt id: ${a.id} · provider: ${a.provider || '未记录'} · model: ${a.model || '未记录'} · log: ${a.log_path || '未记录'}` }),
+    ]);
+    const prompt = el('details', { className: 'replay-attempt replay-attempt-prompt', style: { marginTop: '7px' } });
+    prompt.append(el('summary', { style: { cursor: 'pointer', padding: '8px 0' }, text: '查看当时给 AI 的任务提示词（原始记录）' }));
+    prompt.append(el('pre', { text: a.prompt || '未记录提示词' }));
+    body.append(prompt);
+    det.append(body);
+    list.append(det);
+  }
+  children.push(list);
+  // 成功后代码/commit 文件变化
+  const commits = data.commits || [];
+  if (commits.length) {
+    children.push(el('div', { className: 'insight-section-title', style: { marginTop: '16px' } }, [el('h2', { text: '实际保存的代码变化' }), el('span', { text: '来自 Git commit（只读）' })]));
+    const commitList = el('div', { className: 'replay-task-list' });
+    for (const c of commits) {
+      const d = el('details', { className: 'replay-commit' });
+      d.append(el('summary', {}, [el('strong', { text: c.subject || '提交未命名' }), insightPill(c.short || shortHash(c.sha), 'gray')]));
+      const body = el('div', { className: 'replay-commit-body' }, [
+        el('div', { className: 'replay-commit-code', text: `${fmtBeijingFull(c.date)} · ${c.sha}` }),
+        el('div', { className: 'insight-note', style: { marginTop: '5px' }, text: (c.files || []).map((f) => `${f.status || '?'} ${f.path || ''}`).join('\n') || '文件列表未记录' }),
+      ]);
+      const cbtn = insightButton('读取这个 commit 的 diff', async () => {
+        const pre = el('pre', { text: '正在读取真实 Git diff…' });
+        body.append(pre); cbtn.disabled = true;
+        try { const res = await apiRequest('GET', `/api/replay/consumption/commits/${encodeURIComponent(c.sha)}`); pre.textContent = `${res.stat || ''}\n\n${res.patch || ''}`.slice(0, 80000); }
+        catch (err) { pre.textContent = `读取失败：${err.message}`; }
+      }, 'replay-evidence-link');
+      body.append(cbtn);
+      d.append(body);
+      commitList.append(d);
+    }
+    children.push(commitList);
+    children.push(el('p', { className: 'insight-note', text: '这些 commit 来自独立 Git 历史，不是根据总结生成的。' }));
+  } else {
+    children.push(el('p', { className: 'insight-note', text: 'Git commit 记录未找到；无法确认代码变化。' }));
+  }
+  return el('div', {}, children);
+}
+
+function buildActAudits(data) {
+  const audits = (data.audits || []).slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  const children = [
+    el('h2', { text: '第四幕：DeepSeek Harness 是怎么审计的？' }),
+    el('p', { className: 'replay-stage-sub', text: 'DSH 只读检查代码，逐条核对冻结验收标准。下面展示所有真实审计，包括 PASS、UNKNOWN 和修复要求；不能只展示最后的 PASS 100。' }),
+  ];
+  if (!audits.length) children.push(el('p', { className: 'insight-note', text: '没有审计记录，无法确认独立检查发生过。' }));
+  const list = el('div', { className: 'replay-audit-list' });
+  for (const a of audits) {
+    const tone = a.verification_status === 'PASS' ? 'green' : a.verification_status === 'UNKNOWN' ? 'amber' : 'red';
+    const det = el('details', { className: 'replay-audit', attrs: { open: '' } });
+    det.append(el('summary', {}, [el('strong', { text: `${fmtBeijingFull(a.created_at)} · ${a.provider_source === 'dsh-cli' ? 'DSH 只读审计' : (a.provider || '审计')}` }), insightPill(`${a.verification_status || a.verdict || '未记录'} ${a.score ?? ''}`, tone), insightPill(a.commit ? `commit ${shortHash(a.commit)}` : 'commit 未记录', 'gray')]));
+    const body = el('div', { className: 'replay-audit-body' }, [
+      el('p', { style: { margin: '0 0 6px' }, text: a.summary || '审计总结未记录' }),
+      el('div', { className: 'replay-criteria' }, (a.criteria || []).map((c) => {
+        const ctone = c.status === 'pass' ? 'green' : c.status === 'fail' ? 'red' : 'amber';
+        return el('div', { className: 'replay-criterion' }, [el('span', { className: 'replay-criterion-icon', style: { color: `var(--${ctone})` }, text: c.status === 'pass' ? '✓' : c.status === 'fail' ? '✕' : '?' }), el('div', {}, [el('p', { text: c.criterion || '未记录标准' }), el('small', { text: `证据：${c.evidence || '未提供'}；结论：${c.status || '未记录'}` })])]);
+      })),
+    ]);
+    if ((a.requiredFixes || []).length) {
+      body.append(el('div', { style: { color: 'var(--amber)', marginTop: '8px' }, text: '这次审计要求修复 / 未证实：' }));
+      body.append(el('ul', { className: 'replay-fixlist' }, a.requiredFixes.map((f) => el('li', { text: f }))));
+    }
+    if (!renderSimpleMode()) {
+      body.append(el('div', { className: 'insight-note', style: { marginTop: '8px' }, text: `audit id: ${a.id} · run: ${a.run_id} · task: ${a.task_id} · model: ${a.model || '未记录'} · tokens: ${fmtTokens(a.tokens)} · 费用：${fmtCny(a.cost_cny)}` }));
+    }
+    det.append(body);
+    list.append(det);
+  }
+  children.push(list);
+  children.push(el('div', { className: 'live-next', text: '审计结论是依据，不是装饰：PASS 必须绑定具体 commit 和逐条证据；UNKNOWN / FAIL 必须保留，不能改写成 PASS。' }));
+  return el('div', {}, children);
+}
+
+function buildActDelivery(data) {
+  const stats = data.stats || {};
+  const final = data.final || {};
+  const screenshots = data.media?.screenshots || [];
+  const commits = data.commits || [];
+  const finalCommit = commits.find((c) => c.sha === final.commit) || commits[commits.length - 1] || (data.tasks || []).find((t) => t.status === 'passed' && t.head_commit);
+  const children = [
+    el('h2', { text: '第五幕：最终交付了什么？' }),
+    el('p', { className: 'replay-stage-sub', text: '产品真实界面来自当时的交付截图；测试、审计、commit 和成本来自原始记录。所有金额单位人民币，费用来源见下。' }),
+  ];
+  const gallery = el('div', { className: 'replay-gallery' });
+  for (const shot of screenshots) gallery.append(el('a', { className: 'replay-shot', attrs: { href: shot.path, target: '_blank', rel: 'noopener noreferrer' } }, [el('img', { attrs: { src: shot.path, alt: shot.label, loading: 'lazy' } }), el('span', { text: shot.label })]));
+  children.push(gallery);
+  children.push(el('div', { className: 'replay-costgrid' }, [
+    el('div', { className: 'live-metric' }, [el('span', { text: '最终代码 commit' }), el('strong', { text: finalCommit?.short || shortHash(final.commit || '') || '未记录' }), el('small', { text: final.commit || finalCommit?.sha || '未记录' })]),
+    el('div', { className: 'live-metric' }, [el('span', { text: '产品源码位置' }), el('strong', { style: { fontSize: '11px' }, text: data.project.local_path || '未记录' }), el('small', { text: '独立 Git 仓库；无远端推送授权' })]),
+    el('div', { className: 'live-metric' }, [el('span', { text: '测试结果' }), el('strong', { text: final.testPassedAt ? '测试通过事件已记录' : '未记录' }), el('small', { text: final.testEvidence ? `审计证据摘要：${final.testEvidence.slice(0, 100)}` : '无测试证据记录' })]),
+    el('div', { className: 'live-metric' }, [el('span', { text: '审计结果' }), el('strong', { text: final.auditStatus ? `${final.auditStatus}${final.auditScore != null ? ` · ${final.auditScore}` : ''}` : '未记录' }), el('small', { text: final.auditCriteriaTotal ? `${final.auditCriteriaPassed}/${final.auditCriteriaTotal} 条验收标准通过（最终审计）` : '无审计证据记录' })]),
+    el('div', { className: 'live-metric' }, [el('span', { text: '实际模型成本' }), el('strong', { text: fmtCny(stats.modelCost?.totalCny) }), el('small', { text: `编码 ${fmtCny(stats.modelCost?.codingCny)} + 审计 ${fmtCny(stats.modelCost?.auditCny)}` })]),
+    el('div', { className: 'live-metric' }, [el('span', { text: '开发耗时' }), el('strong', { text: fmtDurationCn(stats.durationMs) }), el('small', { text: `${fmtBeijingFull(stats.start)} → ${fmtBeijingFull(stats.end)}` })]),
+  ]));
+  const commitBox = el('div', { style: { marginTop: '12px' } }, [el('div', { className: 'insight-section-title' }, [el('h2', { text: 'Git 提交链' }), el('span', { text: '点击查看真实 diff' })])]);
+  for (const c of commits) {
+    const det = el('details', { className: 'replay-commit' });
+    det.append(el('summary', {}, [el('strong', { text: c.subject || '未命名' }), insightPill(c.short || shortHash(c.sha), 'gray')]));
+    const body = el('div', { className: 'replay-commit-body' }, [el('div', { className: 'replay-commit-code', text: `${fmtBeijingFull(c.date)} · ${c.sha}` }), el('div', { className: 'insight-note', style: { marginTop: '4px' }, text: (c.files || []).map((f) => `${f.status || '?'} ${f.path || ''}`).join('\n') || '文件列表未记录' })]);
+    const btn = insightButton('读取这个 commit 的 diff', async () => {
+      const pre = el('pre', { text: '正在读取真实 Git diff…' });
+      body.append(pre);
+      btn.disabled = true;
+      try {
+        const res = await apiRequest('GET', `/api/replay/consumption/commits/${encodeURIComponent(c.sha)}`);
+        pre.textContent = `${res.stat || ''}\n\n${res.patch || ''}`.slice(0, 80000);
+      } catch (err) { pre.textContent = `读取失败：${err.message}`; }
+    }, 'replay-evidence-link');
+    body.append(btn);
+    det.append(body);
+    commitBox.append(det);
+  }
+  children.push(commitBox);
+  children.push(el('p', { className: 'insight-note', text: '交付口径：通过测试与独立审计说明产品达到冻结验收标准，不等于产品绝对没有缺陷；本回放仍保留失败、重试和 UNKNOWN 记录。' }));
+  return el('div', {}, children);
+}
+
+function buildReplayTimeline(data) {
+  const events = (data.events || []).slice().sort((a, b) => a.id - b.id);
+  const wrap = el('div', {});
+  wrap.append(el('h2', { text: '按时间顺序看全部真实事件' }));
+  wrap.append(el('p', { className: 'replay-stage-sub', text: `共 ${events.length} 条事件；时间已统一为北京时间。点击每条可看原始类型与数据。` }));
+  if (!events.length) { wrap.append(el('div', { className: 'replay-empty', text: '没有事件记录，无法按时间线回放。' })); return wrap; }
+  const list = el('div', { className: 'replay-timeline' });
+  for (const evt of events) {
+    const { meta, text } = liveEventTitle(evt);
+    const d = el('details', { style: { borderBottom: '1px solid var(--border)' } });
+    d.append(el('summary', { style: { cursor: 'pointer', padding: '6px 0', listStyle: 'none' } }, [el('div', { className: 'replay-event', style: { border: 0, padding: 0 } }, [el('time', { text: fmtBeijingTime(evt.created_at) }), el('div', {}, [el('p', {}, [el('strong', { text: `${meta.label}：` }), text]), el('small', { text: `${fmtBeijingFull(evt.created_at)} · ${evt.type || '未记录'} · ${evt.run_id || '项目级'}` })])])]));
+    const body = el('div', { style: { padding: '6px 0 10px 62px', color: 'var(--text-2)', fontSize: '11px', lineHeight: '1.7' } }, [el('div', { text: `原始消息：${evt.message || '未记录'}` })]);
+    if (evt.data && Object.keys(evt.data).length) body.append(el('pre', { text: JSON.stringify(evt.data, null, 2).slice(0, 4000) }));
+    if (evt.run_id) body.append(insightButton('打开运行详情', () => { exitInsight({ silent: true }); selectRun(evt.run_id, { scroll: true }); }, 'replay-evidence-link'));
+    d.append(body);
+    list.append(d);
+  }
+  wrap.append(list);
+  return wrap;
+}
+
+function buildSummary(data) {
+  const stats = data.stats || {};
+  const fixes = stats.requiredFixes || [];
+  const categories = [
+    ['AI 自主完成', `${stats.passedTasks || 0} 条任务记录通过；编码 attempts 记录为 Claude Code/GLM，但源码作者归属：${stats.provenanceStatus || 'UNKNOWN'}`, 'green'],
+    ['Workbench 自动恢复后完成', `${stats.agentFailedEvents || 0} 次 Agent 失败事件；${stats.stalledAttempts || 0} 次 stalled/timeout/aborted 被看门狗处理；后续任务最终通过`, 'cyan'],
+    ['外部人工介入完成', `已知操作记录：测试环境修正（Playwright 完整 Chromium，非产品源码）；产品代码人工修改：${stats.humanProductCodeEdits === 'UNKNOWN' ? 'UNKNOWN（无逐行审计记录）' : stats.humanProductCodeEdits}`, 'amber'],
+    ['尚未完成 / 未解决', `${(stats.unresolved || []).length ? stats.unresolved.join('；') : '产品验收标准已通过'}；Workbench 的 Fencing Token、24h 连续验收仍是既有未完成项`, 'gray'],
+    ['数据不足无法确认', '原始聊天消息未入库；部分尝试没有 diff/commit；UNKNOWN 审计的 provenance 结论没有被后续证明', 'gray'],
+  ];
+  const summary = el('div', { className: 'replay-summary' }, [
+    el('h3', { text: '这次开发，AI 帮我完成了什么？' }),
+    el('p', { text: '任务、尝试、审计、失败、耗时与费用来自 SQLite / 事件 / 审计 / Git 记录；“源码作者归属”没有逐行审计证据，按 UNKNOWN 显示，不把记录推断当确定事实。' }),
+    el('div', { className: 'replay-stats' }, [
+      ['任务记录', `${stats.projectTaskRecords || 0} 条`, `通过 ${stats.passedTasks ?? 0} / 失败 ${stats.failedTasks ?? 0} / 阻塞 ${stats.blockedTasks ?? 0}`],
+      ['Claude Code 调用', `${stats.attemptCalls || 0} 次`, `包含失败/超时/取消的真实尝试`],
+      ['DSH 审计', `${stats.auditCalls || 0} 次`, `PASS ${stats.auditPassed || 0}；UNKNOWN/FAIL ${stats.auditUnknown || 0}`],
+      ['发现的问题', `${stats.issuesFound || 0} 项`, '审计 findings / 必须修复项；最终 UNKNOWN 仍在下方保留'],
+      ['自动修复确认', 'UNKNOWN', '没有对每条审计建议做二次确认；最终审计 4/4 PASS 不等于每条建议都已修复'],
+      ['卡死/重试', `${stats.agentFailedEvents || 0} 次`, 'agent_failed 事件；失败分类见下'],
+      ['外部人工介入', '已知 1 次（测试环境）', '产品代码人工修改：UNKNOWN（无逐行审计记录），不能证明为零'],
+      ['模型成本', fmtCny(stats.modelCost?.totalCny), `编码 ${fmtCny(stats.modelCost?.codingCny)} + 审计 ${fmtCny(stats.modelCost?.auditCny)}`],
+      ['从开始到结束', fmtDurationCn(stats.durationMs), `${fmtBeijingFull(stats.start)} → ${fmtBeijingFull(stats.end)}`],
+    ].map(([label, value, sub]) => el('div', { className: 'replay-stat' }, [el('span', { text: label }), el('strong', { text: value }), el('small', { className: 'insight-note', text: sub })]))),
+    el('div', { style: { marginTop: '12px' } }, categories.map(([label, text, tone]) => el('div', { className: 'replay-source', style: { marginTop: '6px', borderLeft: `2px solid var(--${tone})` } }, [el('strong', { text: label }), el('span', { text: `：${text}` })]))),
+    el('p', { className: 'replay-disclaimer', text: `失败分类（来自 attempts.failure_class）：${Object.entries(stats.failureClasses || {}).map(([k, v]) => `${k} ${v} 次`).join('；') || '未记录'}。` }),
+    el('p', { className: 'replay-disclaimer', text: `未解决/无法确认：${fixes.filter((f) => /provenance|来源|生成者/.test(f)).length ? '源码作者归属这一条无法由 DSH 内部证明，已记录为 UNKNOWN；' : ''}原始聊天消息、部分修复细节未入库；测试通过不等于产品绝对无缺陷。` }),
+  ]);
+  return summary;
+}
+
+async function loadLive(projectId = '', options = {}) {
+  if (!app.insightView || app.insightView !== 'live') return;
+  if (app.liveLoading && !options.force) return;
+  app.liveLoading = true;
+  try {
+    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    const data = await apiRequest('GET', `/api/live${qs}`);
+    app.liveData = data;
+    app.liveError = null;
+    app.liveProjectId = data.project?.id || projectId || '';
+    renderInsight();
+  } catch (error) {
+    app.liveError = error.message;
+    // 不把读取失败伪装成“没有项目”；保留上次成功数据并显示错误。
+    renderInsight();
+  } finally { app.liveLoading = false; }
+}
+
+async function loadReplay(options = {}) {
+  if (!app.insightView || app.insightView !== 'replay') return;
+  if (app.replayLoading && !options.force) return;
+  app.replayLoading = true;
+  app.replayError = null;
+  renderInsight();
+  try {
+    const data = await apiRequest('GET', '/api/replay/consumption');
+    app.replayData = data;
+  } catch (error) { app.replayError = error.message; }
+  finally { app.replayLoading = false; renderInsight(); }
+}
+
+function startInsightPolling() {
+  if (app.liveTimer) { window.clearInterval(app.liveTimer); app.liveTimer = null; }
+  if (app.insightView === 'live') {
+    app.liveTimer = window.setInterval(() => { if (!document.hidden && app.insightView === 'live') loadLive(app.liveProjectId, { force: true }); }, 5000);
+  }
+}
+
+function stopInsight() {
+  app.insightView = '';
+  app.liveData = null;
+  app.replayData = null;
+  app.replayError = null;
+  app.liveError = null;
+  app.liveTimer && window.clearInterval(app.liveTimer);
+  app.liveTimer = null;
+  document.body.classList.remove('insight-mode');
+  document.querySelectorAll('.insight-nav-btn').forEach((btn) => btn.classList.remove('is-active'));
+  if (dom.insightView) dom.insightView.hidden = true;
+}
+
+function openInsight(view, options = {}) {
+  if (!INSIGHT_META[view]) return;
+  app.insightView = view;
+  if (view === 'replay') { app.replayAct = 0; app.replayMode = app.replayMode || 'simple'; app.replayTimeline = false; }
+  if (view === 'live') { app.liveProjectId = app.liveProjectId || ''; app.liveData = null; }
+  app.selectedRunId = null;
+  app.runDetail = null;
+  renderAll();
+  if (view === 'live') loadLive(app.liveProjectId);
+  else if (view === 'replay') loadReplay();
+  startInsightPolling();
+  if (options.updateHash !== false) setHash(INSIGHT_META[view].hash);
+}
+
+function exitInsight(options = {}) {
+  stopInsight();
+  const project = currentProject() || (app.state?.projects || [])[0];
+  if (options.silent) { renderAll(); return; }
+  if (project) selectProject(project.id, { replace: true, scroll: false });
+  else { renderAll(); setHash('#/', true); }
 }
 
 // ============================================================

@@ -203,3 +203,14 @@ GitHub 真实结果（API 复核）：
 - DSH 独立审计最终 **PASS 100 / commit 1ad754d1**；项目级审计预算 4 次、235,225 tokens、估算 ¥0.9014 / ¥30。
 - 真实失败与恢复：Agent 无进展/超时、UI 测试失败、DSH UNKNOWN、预算误报、Playwright headless-shell 缺陷；均已记录并修正，未伪造 PASS。
 - 未完成：Fencing Token（FAIL/NOT_IMPLEMENTED）、24h 连续验收（NOT VERIFIED）。
+
+
+---
+
+# v2.6.0 看见 AI 追加（2026-11-16）
+
+- `npm test`：**212/212**（原 206 全保留；新增 6 项只读实况/回放测试）。
+- 新增只读接口与前端三入口；真实浏览器测试（Playwright + Chromium）覆盖桌面 1440×1000 与手机 390×844：无页面错误、移动横向溢出 0；空状态、真实历史、UNKNOWN、commit diff 均验证。
+- 真实数据：7 loops / 8 tasks / 17 attempts / 4 audits / 207 events / 5 commits；时间北京时间；成本 ¥17.49。
+- 独立只读质量审查：见 `demo/evidence/v2.6-independent-audit.md`（由独立审查 agent 执行，不是 DSH 审计；本 UI 任务未获得 DSH 审计预算）。
+- 未改产品 Consumption Decision Lab 源码/原始记录，未重跑产品，未碰 A/B，未合并/部署。

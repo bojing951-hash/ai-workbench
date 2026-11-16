@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#07080b" />
-    <meta name="description" content="AI 全自动软件开发工作台：添加项目、输入目标与验收标准，自动规划、编码、测试、独立审计并创建待验收 PR。" />
+    <meta name="description" content="AI 全自动软件开发工作台：添加项目、输入目标与验收标准，自动规划、编码、测试、独立审计并创建待验收 PR；新增“看见 AI”实况与历史回放。" />
     <title>AI 开发工作台</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
@@ -116,6 +116,32 @@
             <p class="sidebar-hint" id="sidebarHint">添加项目后，即可输入目标并启动自动开发。</p>
           </section>
 
+          <section class="panel insight-panel" id="insightPanel" aria-label="观察 AI 研发">
+            <div class="panel-head">
+              <div class="panel-heading">
+                <h2 class="panel-title">看见 AI</h2>
+                <span class="panel-sub">解释 · 实况 · 回放</span>
+              </div>
+            </div>
+            <div class="insight-nav" id="insightNav">
+              <button type="button" class="insight-nav-btn" id="insightGuideBtn" data-insight="guide">
+                <span class="insight-nav-index">01</span>
+                <span class="insight-nav-copy"><strong>工作台如何工作</strong><small>两分钟看懂自动开发流程</small></span>
+                <span class="insight-nav-arrow" aria-hidden="true">›</span>
+              </button>
+              <button type="button" class="insight-nav-btn" id="insightLiveBtn" data-insight="live">
+                <span class="insight-nav-index">02</span>
+                <span class="insight-nav-copy"><strong>研发实况</strong><small>现在谁在做什么</small></span>
+                <span class="insight-nav-arrow" aria-hidden="true">›</span>
+              </button>
+              <button type="button" class="insight-nav-btn" id="insightReplayBtn" data-insight="replay">
+                <span class="insight-nav-index">03</span>
+                <span class="insight-nav-copy"><strong>历史回放</strong><small>回看消费产品怎么被开发</small></span>
+                <span class="insight-nav-arrow" aria-hidden="true">›</span>
+              </button>
+            </div>
+          </section>
+
           <section class="panel mini-panel" id="miniPanel">
             <div class="mini-row"><span class="mini-label">活跃运行</span><span class="mini-value" id="miniActiveRuns">—</span></div>
             <div class="mini-row"><span class="mini-label">Agent 槽位</span><span class="mini-value" id="miniAgentSlots">—</span></div>
@@ -126,6 +152,10 @@
         </aside>
 
         <main class="main" id="main" tabindex="-1">
+          <section class="view insight-view" id="insightView" hidden>
+            <div id="insightContent"></div>
+          </section>
+
           <section class="view welcome-view" id="welcomeView" hidden>
             <div class="welcome-hero panel">
               <div class="welcome-copy">
