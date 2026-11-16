@@ -31,3 +31,21 @@
 - 测试：266/266（本地全量）。
 - 截图：真实欢迎/对话/真实项目完成/真实预算阻塞/项目页/设置/移动端/高级。
 - **未捕获实时“自动修复中”**：新一键项目在 Coding 前被预算阻断，没有授权的 active repair run；没有伪造截图。
+
+## 复审（第二遍，只读）
+
+**结论：无剩余确认 P0/P1。**
+
+复审确认：
+- 手工 seed 对话已从 DB 删除；依赖截图已移除；完成截图现在来自真实 DeepSeek 对话 + 真实 DB run（runContext=project_latest，UI 会标注“项目最近一次运行”，不冒充本对话启动）。
+- 伪进度截图已删除；step rank 基于真实 task/events；04-blocked 正确显示规划完成/编码未执行。
+- 我的项目导航已切主面板并重新截图。
+- Chat 启动嵌套独立 Git，project 关联先持久化，失败重试复用；新增 Loop 创建失败后复用/接管测试。
+- plan 模式恢复任务可消费，已加测试。
+- paused/failed polling 停止、重复最新消息、canned fallback、run id 回退等已修复。
+
+剩余 P2（未阻塞）：
+- 质量完成卡对没有 quality config 的聊天项目仍可能显示质量步骤 ✓；真实新项目 E2E 被预算阻塞，未实现交付。
+- chat start 崩溃窗口仍非完全事务化（项目创建与 commit 之间）；
+- 自动修复中实时截图缺失（无授权 active run）；
+- 全部写路径 fencing、24h、真实新 E2E 仍 UNKNOWN/BLOCKED。
