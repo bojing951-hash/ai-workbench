@@ -2368,6 +2368,9 @@ export class Orchestrator {
     if (!run || !project) throw new PolicyError('RUN_NOT_FOUND', '运行或项目不存在');
     if (!this._verificationLocks) this._verificationLocks = new Set();
     if (this._verificationLocks.has(task.id)) throw new PolicyError('VERIFICATION_IN_PROGRESS', '该任务已有验证重试在进行中，拒绝并发重复验证（防止审计/提交竞态）');
+    // 原 Run 仍在本进程执行时不得启动“仅验证重试”：否则会覆盖 processRun 的 controller/running，
+    // 暂停等待的可能是新 controller 而非真正的 Agent/test/audit 执行者。
+    if (this.running.has(run.id) || this.controllers.has(run.id)) throw new PolicyError('RUN_ACTIVE', `运行 ${run.id} 正在执行中，不能并发启动验证重试；请先暂停/等待当前执行结束`);
     const isolationMode = isolationModeForProject(this.config, project);
     let isolationWarning = '';
     if (isolationMode !== 'restricted') {
