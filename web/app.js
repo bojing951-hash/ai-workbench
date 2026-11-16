@@ -263,6 +263,8 @@ const app = {
   replayAct: 0,
   replayMode: 'simple',
   replayTimeline: false,
+  replayProjectId: '',
+  replayLoadingOlder: false,
 };
 
 const dom = {};
@@ -5243,7 +5245,7 @@ function renderStatusPanel() {
 const INSIGHT_META = {
   guide: { title: '工作台如何工作', subtitle: '用大白话看懂一次自动开发从需求到验收的全过程', hash: '#/guide' },
   live: { title: '研发实况', subtitle: '现在哪个项目、哪个任务、哪个 AI 在工作，以及下一步是什么', hash: '#/live' },
-  replay: { title: '历史回放', subtitle: '从真实事件、尝试、审计和 Git 记录重建 Consumption Decision Lab 的开发过程', hash: '#/replay' },
+  replay: { title: '历史回放', subtitle: '从真实事件、尝试、审计和 Git 记录重建任意已授权项目的开发过程', hash: '#/replay' },
 };
 
 const INSIGHT_GUIDE_STEPS = [
@@ -5622,8 +5624,19 @@ function buildReplay(data) {
     wrap.append(el('div', { className: 'live-empty' }, [el('strong', { text: data.reason || '没有可回放的真实历史' }), el('p', { text: '历史回放只展示 SQLite、事件、attempts、audits、Git 和证据文件中的真实记录；不会用演示数据填充。' })]));
     return wrap;
   }
+  const replayProjects = Array.isArray(data.projects) ? data.projects : [];
+  const projectSelect = el('select', { className: 'live-project-select', attrs: { 'aria-label': '选择回放项目' } });
+  for (const p of replayProjects) {
+    const opt = el('option', { text: p.name, attrs: { value: p.id } });
+    if (p.id === data.project.id) opt.selected = true;
+    projectSelect.append(opt);
+  }
+  projectSelect.addEventListener('change', () => loadReplay(projectSelect.value));
   const meta = el('div', { className: 'replay-bar' }, [
-    el('div', { className: 'insight-note', text: `回放项目：${data.project.name} · 时间统一为北京时间（${data.timezone}） · 数据生成于 ${fmtBeijingFull(data.generatedAt)}` }),
+    el('div', {}, [
+      el('div', { className: 'insight-note', text: `回放项目：${data.project.name} · 时间统一为北京时间（${data.timezone}） · 数据生成于 ${fmtBeijingFull(data.generatedAt)}` }),
+      replayProjects.length > 1 ? projectSelect : null,
+    ]),
     el('div', { className: 'replay-toggle', attrs: { role: 'group', 'aria-label': '讲解模式' } }, [
       el('button', { className: app.replayMode !== 'tech' ? 'is-active' : '', text: '简单讲解', attrs: { type: 'button' }, on: { click: () => { app.replayMode = 'simple'; renderInsight(); } } }),
       el('button', { className: app.replayMode === 'tech' ? 'is-active' : '', text: '技术详情', attrs: { type: 'button' }, on: { click: () => { app.replayMode = 'tech'; renderInsight(); } } }),
@@ -5646,6 +5659,12 @@ function buildReplay(data) {
   });
   acts.append(el('button', { className: `replay-act-btn${app.replayTimeline ? ' is-active' : ''}`, attrs: { type: 'button', role: 'tab', 'aria-selected': String(!!app.replayTimeline) }, on: { click: () => { app.replayTimeline = true; renderInsight(); } } }, [el('span', { text: '按时间线看全部事件' }), el('small', { text: '原始事件顺序' })]));
   wrap.append(acts);
+  if (data.eventPagination?.hasOlder) {
+    wrap.append(el('div', { className: 'replay-bar', style: { marginTop: '-6px' } }, [
+      el('span', { className: 'insight-note', text: `当前显示最近 ${data.eventPagination.count} 条事件；更早历史尚可分页读取。` }),
+      insightButton('加载更早事件', () => loadOlderReplayEvents(), 'button button-ghost button-sm'),
+    ]));
+  }
   const stage = el('div', { className: 'replay-stage' });
   if (app.replayTimeline) {
     stage.append(buildReplayTimeline(data));
@@ -5803,7 +5822,7 @@ function buildActCoding(data) {
       const cbtn = insightButton('读取这个 commit 的 diff', async () => {
         const pre = el('pre', { text: '正在读取真实 Git diff…' });
         body.append(pre); cbtn.disabled = true;
-        try { const res = await apiRequest('GET', `/api/replay/consumption/commits/${encodeURIComponent(c.sha)}`); pre.textContent = `${res.stat || ''}\n\n${res.patch || ''}`.slice(0, 80000); }
+        try { const res = await apiRequest('GET', `/api/replay/commits/${encodeURIComponent(c.sha)}?projectId=${encodeURIComponent(data.project.id)}`); pre.textContent = `${res.stat || ''}\n\n${res.patch || ''}`.slice(0, 80000); }
         catch (err) { pre.textContent = `读取失败：${err.message}`; }
       }, 'replay-evidence-link');
       body.append(cbtn);
@@ -5863,6 +5882,7 @@ function buildActDelivery(data) {
     el('p', { className: 'replay-stage-sub', text: '产品真实界面来自当时的交付截图；测试、审计、commit 和成本来自原始记录。所有金额单位人民币，费用来源见下。' }),
   ];
   const gallery = el('div', { className: 'replay-gallery' });
+  if (!screenshots.length) children.push(el('p', { className: 'insight-note', text: '该项目未配置回放截图素材；不填充其他项目的截图。' }));
   for (const shot of screenshots) gallery.append(el('a', { className: 'replay-shot', attrs: { href: shot.path, target: '_blank', rel: 'noopener noreferrer' } }, [el('img', { attrs: { src: shot.path, alt: shot.label, loading: 'lazy' } }), el('span', { text: shot.label })]));
   children.push(gallery);
   children.push(el('div', { className: 'replay-costgrid' }, [
@@ -5883,7 +5903,7 @@ function buildActDelivery(data) {
       body.append(pre);
       btn.disabled = true;
       try {
-        const res = await apiRequest('GET', `/api/replay/consumption/commits/${encodeURIComponent(c.sha)}`);
+        const res = await apiRequest('GET', `/api/replay/commits/${encodeURIComponent(c.sha)}?projectId=${encodeURIComponent(data.project.id)}`);
         pre.textContent = `${res.stat || ''}\n\n${res.patch || ''}`.slice(0, 80000);
       } catch (err) { pre.textContent = `读取失败：${err.message}`; }
     }, 'replay-evidence-link');
@@ -5948,6 +5968,27 @@ function buildSummary(data) {
   return summary;
 }
 
+async function loadOlderReplayEvents() {
+  if (!app.replayData?.project || !app.replayData.eventPagination?.hasOlder || app.replayLoadingOlder) return;
+  app.replayLoadingOlder = true;
+  try {
+    const before = app.replayData.eventPagination.before || app.replayData.events[0]?.id || 0;
+    const data = await apiRequest('GET', `/api/replay?projectId=${encodeURIComponent(app.replayData.project.id)}&eventLimit=1000&eventBefore=${encodeURIComponent(before)}`);
+    if (data?.available) {
+      app.replayData = {
+        ...app.replayData,
+        events: [...(data.events || []), ...(app.replayData.events || [])],
+        eventPagination: data.eventPagination,
+      };
+    }
+  } catch (error) {
+    toast(`加载更早历史失败：${error.message}`, 'warn');
+  } finally {
+    app.replayLoadingOlder = false;
+    renderInsight();
+  }
+}
+
 async function loadLive(projectId = '', options = {}) {
   if (!app.insightView || app.insightView !== 'live') return;
   if (app.liveLoading && !options.force) return;
@@ -5966,15 +6007,18 @@ async function loadLive(projectId = '', options = {}) {
   } finally { app.liveLoading = false; }
 }
 
-async function loadReplay(options = {}) {
+async function loadReplay(projectId = app.replayProjectId || '', options = {}) {
   if (!app.insightView || app.insightView !== 'replay') return;
   if (app.replayLoading && !options.force) return;
   app.replayLoading = true;
   app.replayError = null;
+  if (projectId) app.replayProjectId = projectId;
   renderInsight();
   try {
-    const data = await apiRequest('GET', '/api/replay/consumption');
+    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    const data = await apiRequest('GET', `/api/replay${qs}`);
     app.replayData = data;
+    if (data.project?.id) app.replayProjectId = data.project.id;
   } catch (error) { app.replayError = error.message; }
   finally { app.replayLoading = false; renderInsight(); }
 }
@@ -6002,13 +6046,13 @@ function stopInsight() {
 function openInsight(view, options = {}) {
   if (!INSIGHT_META[view]) return;
   app.insightView = view;
-  if (view === 'replay') { app.replayAct = 0; app.replayMode = app.replayMode || 'simple'; app.replayTimeline = false; }
+  if (view === 'replay') { app.replayAct = 0; app.replayMode = app.replayMode || 'simple'; app.replayTimeline = false; app.replayProjectId = app.replayProjectId || app.selectedProjectId || ''; }
   if (view === 'live') { app.liveProjectId = app.liveProjectId || ''; app.liveData = null; }
   app.selectedRunId = null;
   app.runDetail = null;
   renderAll();
   if (view === 'live') loadLive(app.liveProjectId);
-  else if (view === 'replay') loadReplay();
+  else if (view === 'replay') loadReplay(app.replayProjectId);
   startInsightPolling();
   if (options.updateHash !== false) setHash(INSIGHT_META[view].hash);
 }

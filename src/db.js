@@ -248,6 +248,7 @@ export class Store {
         ['remote_push_authorized', 'INTEGER DEFAULT 0'],
         ['write_owner', "TEXT DEFAULT ''"],
         ['lease_expires_at', "TEXT DEFAULT ''"],
+        ['lease_fence', 'INTEGER DEFAULT 0'],
       ],
       runs: [
         ['verification_status', "TEXT DEFAULT 'LOCAL_VERIFIED'"],
@@ -259,6 +260,7 @@ export class Store {
         ['parent_run_id', "TEXT DEFAULT ''"],
         ['lease_owner', "TEXT DEFAULT ''"],
         ['lease_expires_at', "TEXT DEFAULT ''"],
+        ['lease_fence', 'INTEGER DEFAULT 0'],
         ['reconciliation_json', "TEXT DEFAULT '{}'"],
       ],
       tasks: [
@@ -1076,16 +1078,53 @@ export class Store {
     return this.getLoop(id);
   }
 
-  acquireProjectLease(projectId, owner, ttlMs = 90_000) {
+  /**
+   * 原子获取项目写租约并返回单调递增的 fencing token。
+   * 过期租约不会“被视为仍然有效”；新执行者获取时 fence 自增，旧执行者的 token 永久失效。
+   */
+  acquireProjectLeaseFenced(projectId, owner, ttlMs = 90_000) {
     const now = nowIso();
     const expires = new Date(Date.now() + ttlMs).toISOString();
-    const res = this.db.prepare("UPDATE projects SET write_owner=?, lease_expires_at=?, updated_at=? WHERE id=? AND (write_owner='' OR lease_expires_at='' OR lease_expires_at<?)").run(owner, expires, now, projectId, now);
-    return res.changes > 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT write_owner, lease_expires_at, lease_fence FROM projects WHERE id=?').get(projectId);
+      if (!row) { this.db.exec('ROLLBACK'); return { ok: false, fence: 0, reason: 'project-not-found' }; }
+      const held = row.write_owner && row.write_owner !== owner && row.lease_expires_at && row.lease_expires_at > now;
+      if (held) { this.db.exec('ROLLBACK'); return { ok: false, fence: Number(row.lease_fence || 0), reason: 'lease-held-by-other' }; }
+      const nextFence = Number(row.lease_fence || 0) + 1;
+      this.db.prepare('UPDATE projects SET write_owner=?, lease_expires_at=?, lease_fence=?, updated_at=? WHERE id=?').run(owner, expires, nextFence, now, projectId);
+      this.db.exec('COMMIT');
+      return { ok: true, fence: nextFence, expiresAt: expires };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    }
+  }
+
+  /** 兼容旧调用：成功返回 true；新代码应使用带 fence 的版本。 */
+  acquireProjectLease(projectId, owner, ttlMs = 90_000) {
+    return this.acquireProjectLeaseFenced(projectId, owner, ttlMs).ok;
+  }
+
+  getProjectLease(projectId) {
+    return this.db.prepare('SELECT write_owner, lease_expires_at, lease_fence FROM projects WHERE id=?').get(projectId) || null;
+  }
+
+  /** 只有 owner + fence + 未过期同时匹配才续租；任何一项失败都视为失去写权。 */
+  renewProjectLeaseFenced(projectId, owner, fence, ttlMs = 90_000) {
+    const now = nowIso();
+    const expires = new Date(Date.now() + ttlMs).toISOString();
+    return this.db.prepare("UPDATE projects SET lease_expires_at=?, updated_at=? WHERE id=? AND write_owner=? AND lease_fence=? AND lease_expires_at>?").run(expires, now, projectId, owner, Number(fence), now).changes > 0;
   }
 
   renewProjectLease(projectId, owner, ttlMs = 90_000) {
-    const expires = new Date(Date.now() + ttlMs).toISOString();
-    return this.db.prepare("UPDATE projects SET lease_expires_at=?, updated_at=? WHERE id=? AND write_owner=?").run(expires, nowIso(), projectId, owner).changes > 0;
+    const row = this.getProjectLease(projectId);
+    if (!row || row.write_owner !== owner) return false;
+    return this.renewProjectLeaseFenced(projectId, owner, row.lease_fence, ttlMs);
+  }
+
+  releaseProjectLeaseFenced(projectId, owner, fence) {
+    return this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='', updated_at=? WHERE id=? AND write_owner=? AND lease_fence=?").run(nowIso(), projectId, owner, Number(fence)).changes > 0;
   }
 
   releaseProjectLease(projectId, owner) {
@@ -1094,17 +1133,44 @@ export class Store {
 
   clearExpiredLeases() {
     const now = nowIso();
+    // fence 不重置；新 owner 通过自增 fence 获得更高写权，旧 token 无法再写。
     return { projects: this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='' WHERE lease_expires_at<>'' AND lease_expires_at<?").run(now).changes,
       runs: this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE lease_expires_at<>'' AND lease_expires_at<?").run(now).changes };
   }
 
-  setRunLease(runId, owner, ttlMs = 90_000) {
+  /** run 租约不能覆盖其他有效执行者；fence 只能前进，不能回退。 */
+  setRunLeaseFenced(runId, owner, fence, ttlMs = 90_000) {
+    const now = nowIso();
     const expires = new Date(Date.now() + ttlMs).toISOString();
-    this.db.prepare('UPDATE runs SET lease_owner=?, lease_expires_at=? WHERE id=?').run(owner, expires, runId);
+    let result;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare('SELECT lease_owner, lease_expires_at, lease_fence FROM runs WHERE id=?').get(runId);
+      if (!row) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'run-not-found' }; }
+      const held = row.lease_owner && row.lease_owner !== owner && row.lease_expires_at && row.lease_expires_at > now;
+      if (held || Number(row.lease_fence || 0) > Number(fence)) {
+        this.db.exec('ROLLBACK');
+        return { ok: false, reason: held ? 'run-lease-held' : 'stale-fence', fence: Number(row.lease_fence || 0) };
+      }
+      result = this.db.prepare('UPDATE runs SET lease_owner=?, lease_expires_at=?, lease_fence=? WHERE id=? AND (lease_owner=? OR lease_owner=? OR lease_expires_at=?)').run(owner, expires, Number(fence), runId, '', owner, now);
+      this.db.exec('COMMIT');
+      return { ok: result.changes > 0, fence: Number(fence) };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    }
+  }
+
+  setRunLease(runId, owner, ttlMs = 90_000, fence = 0) {
+    return this.setRunLeaseFenced(runId, owner, fence, ttlMs);
+  }
+
+  clearRunLeaseFenced(runId, owner, fence) {
+    return this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE id=? AND lease_owner=? AND lease_fence=?").run(runId, owner, Number(fence)).changes > 0;
   }
 
   clearRunLease(runId) {
-    this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE id=?").run(runId);
+    return this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE id=?").run(runId);
   }
 
   setMeta(key, value) {

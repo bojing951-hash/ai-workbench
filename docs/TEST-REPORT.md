@@ -214,3 +214,15 @@ GitHub 真实结果（API 复核）：
 - 真实数据：7 loops / 8 tasks / 17 attempts / 4 audits / 207 events / 5 commits；时间北京时间；成本 ¥17.49。
 - 独立只读质量审查：见 `demo/evidence/v2.6-independent-audit.md`（由独立审查 agent 执行，不是 DSH 审计；本 UI 任务未获得 DSH 审计预算）。
 - 未改产品 Consumption Decision Lab 源码/原始记录，未重跑产品，未碰 A/B，未合并/部署。
+
+
+---
+
+# v2.7.0 质量闭环/Fencing/通用回放追加（2026-11-16）
+
+- `npm test`：**221/221**（原 212 全保留；新增 quality 4、quality-loop 1、fencing 2、fencing-workbench 1、replay 分页 1）。
+- Fencing：真实两个独立 Node 进程竞争 SQLite 项目；两个 Orchestrator 实例并发 startRun 仅一个成功；旧 token/旧 Run 租约不能覆盖。
+- Quality Loop：真实临时 Git 仓库 + 外部质量命令，FAIL → 自动修复任务 → 第二轮 PASS → 循环完成；无证据问题只记 hypothesis。
+- 独立验收项目 Reading Queue Planner：审计预算预检 BLOCKED（编码前），未写产品代码；缺陷发现率/自动修复率 UNKNOWN。
+- 24h：未启动墙钟窗口，标记 `24H_NOT_VERIFIED / BLOCKED`。
+- 通用回放：去 CDL 硬编码，项目选择器 + 事件分页；浏览器 1440/390 验证。

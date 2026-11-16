@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { nowIso, newId } from './util.js';
 import { PolicyError, redact } from './policy.js';
 import { planNextTask } from './planner.js';
+import { buildCoverageMatrix, qualityConfig, repairTasksFromQuality, runQualityCommand } from './quality.js';
 
 export class LoopManager {
   constructor({ config, store, bus, orchestrator }) {
@@ -45,12 +46,14 @@ export class LoopManager {
     if (!goal || !String(goal).trim()) throw new PolicyError('GOAL_REQUIRED', '循环目标不能为空');
     const active = this.store.listLoops({ projectId, status: 'running' })[0] || this.store.listLoops({ projectId, status: 'paused' })[0];
     if (active) throw new PolicyError('LOOP_ACTIVE', `项目已有活动循环（${active.id}，${active.status}），请先恢复或取消`);
+    const quality = qualityConfig(project);
+    const requestedRounds = Math.max(1, Math.min(20, Number(maxRounds) || 3));
     const loop = this.store.createLoop({
       id: newId('loop'),
       projectId,
       goal: String(goal).trim(),
       mode: mode === 'queue' ? 'queue' : 'plan',
-      maxRounds: Math.max(1, Math.min(20, Number(maxRounds) || 3)),
+      maxRounds: quality ? Math.max(requestedRounds, quality.maxCycles + 1) : requestedRounds,
       queue: Array.isArray(queue) ? queue : [],
       contractFiles: Array.isArray(contractFiles) ? contractFiles : [],
       status: 'running',
@@ -154,7 +157,7 @@ export class LoopManager {
           return;
         }
         if (run.status === 'awaiting_acceptance' || run.status === 'accepted') {
-          this.completeRound(loop, project, run);
+          await this.completeRound(loop, project, run);
           this.schedule(id, 1200);
           return;
         }
@@ -250,7 +253,7 @@ export class LoopManager {
     }
   }
 
-  completeRound(loop, project, run) {
+  async completeRound(loop, project, run) {
     const tasks = this.store.listTasks({ runId: run.id });
     const task = tasks[0] || {};
     const history = Array.isArray(loop.history_json) ? [...loop.history_json] : [];
@@ -305,6 +308,58 @@ export class LoopManager {
       audit: this.store.listAudits(task.id).map((a) => ({ id: a.id, provider: a.provider, verdict: a.verdict, score: a.score, status: a.verification_status })),
       finishedAt: nowIso(),
     });
+    // ---- v2.7 Product Quality Loop：在宣布循环完成之前检查原始需求覆盖，而不是只看任务通过 ----
+    const qcfg = qualityConfig(project);
+    let quality = null;
+    if (qcfg) {
+      try {
+        const qualityRun = runQualityCommand({ config: this.config, project });
+        const audits = this.store.listTasks({ projectId: project.id }).flatMap((t) => this.store.listAudits(t.id));
+        quality = buildCoverageMatrix({ project, qualityRun, audits });
+        history[history.length - 1].quality = quality;
+        this.emit(loop, 'quality_evaluated', `质量评估：需求覆盖 ${quality.coverage.pass}/${quality.coverage.total} PASS，${quality.p0p1.length} 个有证据 P0/P1 问题`, quality.allPass ? 'info' : 'warn', { quality });
+        if (!quality.allPass) {
+          const cycles = history.filter((h) => h.quality).length;
+          const repairTasks = repairTasksFromQuality(quality, { maxIssues: qcfg.maxIssuesPerCycle });
+          if (quality.p0p1.length && !repairTasks.length) {
+            const reason = `质量闭环存在 P0/P1 问题但没有可复现证据（只能记为假设）：${quality.p0p1.map((i) => i.title).join('；')}`;
+            this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
+            this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
+            return;
+          }
+          if (!quality.p0p1.length) {
+            const reason = `质量闭环未通过（无 P0/P1 可修复项，存在 UNKNOWN/FAIL/BLOCKED）：${quality.requirements.filter((r) => r.status !== 'PASS').map((r) => `${r.id}:${r.status}`).join('；') || '质量证据不足'}`;
+            this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
+            this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
+            return;
+          }
+          if (cycles <= qcfg.maxCycles && loop.mode === 'queue') {
+            const queue = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
+            const existingKeys = new Set(queue.map((t) => t.queueKey).filter(Boolean));
+            const fresh = repairTasks.filter((t) => !existingKeys.has(t.queueKey));
+            if (fresh.length) {
+              this.store.updateLoop(loop.id, {
+                round: loop.round + 1, current_run_id: '', history_json: history,
+                queue_json: [...queue, ...fresh], status: 'running',
+                stop_reason: `质量闭环：已生成 ${fresh.length} 个有证据修复任务，等待下一轮`,
+              });
+              this.emit(loop, 'quality_repair_queued', `质量闭环发现 ${fresh.length} 个问题，已生成修复任务并继续循环（第 ${cycles}/${qcfg.maxCycles} 次修复循环）`, 'warn', { quality, tasks: fresh.map((t) => ({ title: t.title, issueId: t.qualityIssueId })) });
+              return;
+            }
+          }
+          const reason = `质量闭环达到上限/无法继续：${quality.coverage.pass}/${quality.coverage.total} 需求 PASS；P0/P1 有证据问题 ${quality.p0p1.length} 个；已达到 maxCycles=${qcfg.maxCycles} 或不可自动修复；保留检查点等待人工/授权`;
+          this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
+          this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
+          return;
+        }
+        this.emit(loop, 'quality_passed', `质量闭环通过：${quality.coverage.pass}/${quality.coverage.total} 条原始需求都有证据 PASS`, 'info', { quality });
+      } catch (err) {
+        const reason = `质量评估异常（UNKNOWN，不宣布完成）：${err?.message || err}`;
+        this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
+        this.emit(loop, 'quality_error', reason, 'error');
+        return;
+      }
+    }
     const nextRound = loop.round + 1;
     const nextStatus = nextRound >= loop.max_rounds ? 'completed' : 'running';
     this.store.updateLoop(loop.id, {
@@ -312,10 +367,10 @@ export class LoopManager {
       current_run_id: '',
       history_json: history,
       status: nextStatus,
-      stop_reason: nextStatus === 'completed' ? `已完成 ${nextRound} 轮` : '',
+      stop_reason: nextStatus === 'completed' ? `已完成 ${nextRound} 轮${quality ? '，质量闭环通过' : ''}` : '',
     });
     this.emit(loop, 'loop_round_completed', `第 ${nextRound}/${loop.max_rounds} 轮通过：${task.title || run.id}（${verification}，commit ${String(commit).slice(0, 8)}）`, 'info', { runId: run.id, commit, verification });
-    if (nextStatus === 'completed') this.emit(loop, 'loop_completed', `研发循环完成：${nextRound} 轮`);
+    if (nextStatus === 'completed') this.emit(loop, 'loop_completed', `研发循环完成：${nextRound} 轮${quality ? '，原始需求覆盖矩阵全部 PASS' : ''}`);
   }
 }
 

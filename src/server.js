@@ -11,7 +11,8 @@ import { PolicyError } from './policy.js';
 import { detectIsolationCapabilities, isolationModeForProject } from './isolation.js';
 import { containerCapabilities } from './container.js';
 import { VERSION } from './orchestrator.js';
-import { buildLive, buildReplay, readProductCommit, HISTORY_PROJECT_NAME } from './replay.js';
+import { buildLive, buildReplay, readProjectCommit } from './replay.js';
+import { latestMatrixFromHistory, qualityConfig } from './quality.js';
 import { assertSafeWriteRequest, isAllowedHost, redactForResponse, resolveWithin, WriteRateLimiter } from './security.js';
 
 const MAX_BODY = 2 * 1024 * 1024;
@@ -199,16 +200,29 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       return sendJson(res, 200, { ok: true, data: buildLive(store, projectId) });
     }
 
-    if (pathname === '/api/replay/consumption' && method === 'GET') {
+    if (pathname === '/api/replay' && method === 'GET') {
       const projectId = url.searchParams.get('projectId') || '';
-      return sendJson(res, 200, { ok: true, data: buildReplay(store, projectId) });
+      const eventLimit = Number(url.searchParams.get('eventLimit') || 1000);
+      const eventBefore = Number(url.searchParams.get('eventBefore') || 0);
+      return sendJson(res, 200, { ok: true, data: buildReplay(store, projectId, { eventLimit, eventBefore }) });
     }
 
-    const replayCommitMatch = pathname.match(/^\/api\/replay\/consumption\/commits\/([0-9a-fA-F]{7,40})$/);
+    // v2.6 兼容别名：行为与 /api/replay 相同，但不再硬编码消费产品名称。
+    if (pathname === '/api/replay/consumption' && method === 'GET') {
+      const projectId = url.searchParams.get('projectId') || '';
+      const eventLimit = Number(url.searchParams.get('eventLimit') || 1000);
+      const eventBefore = Number(url.searchParams.get('eventBefore') || 0);
+      return sendJson(res, 200, { ok: true, data: buildReplay(store, projectId, { eventLimit, eventBefore }) });
+    }
+
+    const replayCommitMatch = pathname.match(/^\/api\/replay\/(?:consumption\/)?commits\/([0-9a-fA-F]{7,40})$/);
     if (replayCommitMatch && method === 'GET') {
-      const replayProject = store.listProjects().find((p) => p.name === HISTORY_PROJECT_NAME);
-      const commit = replayProject ? readProductCommit(store, replayProject.id, replayCommitMatch[1]) : null;
-      if (!commit) throw new PolicyError('COMMIT_NOT_FOUND', '该 Commit 不在消费产品仓库历史中');
+      const projectId = url.searchParams.get('projectId') || '';
+      const projects = store.listProjects().filter((p) => p.id !== '');
+      let replayProject = projectId ? projects.find((p) => p.id === projectId) : null;
+      if (!replayProject) replayProject = projects.find((p) => !/(Global Opportunity Engine|Investment Agent)/i.test(p.name)) || null;
+      const commit = replayProject ? readProjectCommit(store, replayProject.id, replayCommitMatch[1]) : null;
+      if (!commit) throw new PolicyError('COMMIT_NOT_FOUND', '该 Commit 不在已授权项目仓库历史中');
       return sendJson(res, 200, { ok: true, data: commit });
     }
 
@@ -260,6 +274,19 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         const project = orchestrator.updateProject(projectId, body);
         return sendJson(res, 200, { ok: true, data: project });
       }
+    }
+
+    const projectQualityMatch = pathname.match(/^\/api\/projects\/([^/]+)\/quality$/);
+    if (projectQualityMatch && method === 'GET') {
+      const project = store.getProject(projectQualityMatch[1]);
+      if (!project) throw new PolicyError('PROJECT_NOT_FOUND', '项目不存在');
+      const loops = store.listLoops({ projectId: project.id });
+      let matrix = null;
+      for (const loop of loops) {
+        const found = latestMatrixFromHistory(loop);
+        if (found) matrix = found;
+      }
+      return sendJson(res, 200, { ok: true, data: { configured: !!qualityConfig(project), matrix } });
     }
 
     const projectRunsMatch = pathname.match(/^\/api\/projects\/([^/]+)\/runs$/);

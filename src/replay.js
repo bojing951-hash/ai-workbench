@@ -11,7 +11,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-export const HISTORY_PROJECT_NAME = 'Consumption Decision Lab';
 const A_B_NAME_RE = /(Global Opportunity Engine|Investment Agent)/i;
 const TZ = 'Asia/Shanghai';
 
@@ -41,7 +40,7 @@ function projectByKey(store, key = '') {
     const found = projects.find((p) => p.id === key || p.name === key);
     if (found && !isExcludedProject(found)) return found;
   }
-  return projects.find((p) => p.name === HISTORY_PROJECT_NAME) || eligibleProjects(store)[0] || null;
+  return eligibleProjects(store)[0] || null;
 }
 
 function tasksForRun(store, runId) {
@@ -96,24 +95,23 @@ function readContract(project) {
   return { path: '', text: '' };
 }
 
-function productCommits(project) {
+function commitsForProject(project, tasks = []) {
   const repo = project.local_path || '';
   if (!repo || !fs.existsSync(repo)) return [];
-  // 发布链：0f6428e（冻结）→ 1ad754d（被验收代码）；git 只读查询
-  const range = '1ad754d1d113c3c6a23da618fba92103b936e836';
-  const base = '0f6428e';
-  const log = git(repo, ['log', '--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s', range, '--not', base]);
-  if (!log) return [];
-  return log.split('\n').filter(Boolean).map((line) => {
-    const [sha, short, author, date, subject] = line.split('\x1f');
-    const nameStatus = git(repo, ['show', '--format=', '--name-status', sha]);
+  // 通用：从真实任务 head_commit 出发，读取每个 commit 的文件变化；不依赖任何产品名/固定 SHA。
+  const shas = [...new Set(tasks.map((t) => t.head_commit || t.verification?.commit || '').filter(Boolean))];
+  return shas.map((sha) => {
+    const full = git(repo, ['rev-parse', '--verify', `${sha}^{commit}`]);
+    if (!full) return null;
+    const header = git(repo, ['show', '--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s', '--no-patch', full]).split('\x1f');
+    const nameStatus = git(repo, ['show', '--format=', '--name-status', full]);
     const files = nameStatus.split('\n').filter(Boolean).map((row) => {
       const [status, ...rest] = row.split('\t');
       return { status, path: rest.join('\t') };
     });
-    const stat = git(repo, ['show', '--format=', '--stat', sha]);
-    return { sha, short, author, date, subject, files, stat: stat.slice(0, 8000), diffAvailable: true };
-  }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const stat = git(repo, ['show', '--format=', '--stat', full]);
+    return { sha: full, short: header[1] || '', author: header[2] || '', date: header[3] || '', subject: header[4] || '', files, stat: stat.slice(0, 8000), diffAvailable: true };
+  }).filter(Boolean).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 function summarize(store, project, tasks, attempts, audits, events) {
@@ -163,12 +161,12 @@ function summarize(store, project, tasks, attempts, audits, events) {
 }
 
 /** 真实历史回放：只读查询，不修改任何记录。 */
-export function buildReplay(store, projectKey = '') {
-  const projects = store.listProjects();
+export function buildReplay(store, projectKey = '', options = {}) {
+  const projects = eligibleProjects(store);
   const project = projectKey
-    ? projects.find((p) => (p.id === projectKey || p.name === projectKey) && p.name === HISTORY_PROJECT_NAME && !isExcludedProject(p))
-    : projects.find((p) => p.name === HISTORY_PROJECT_NAME && !isExcludedProject(p));
-  if (!project) return { available: false, project: null, reason: '没有可回放的消费产品项目记录' };
+    ? projects.find((p) => p.id === projectKey || p.name === projectKey)
+    : projects.slice().sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)))[0];
+  if (!project) return { available: false, projects: [], project: null, reason: '没有可回放的项目记录' };
   const loops = loopsForProject(store, project.id);
   const runs = store.db.prepare('SELECT * FROM runs WHERE project_id=? ORDER BY created_at').all(project.id).map((r) => ({ ...r, result: parseJson(r.result_json, {}), spent: parseJson(r.spent_json, {}) }));
   const tasks = store.db.prepare('SELECT * FROM tasks WHERE project_id=? ORDER BY created_at').all(project.id).map((t) => ({ ...t, acceptance: parseJson(t.acceptance_json, []), verification: parseJson(t.verification_json, {}) }));
@@ -177,10 +175,17 @@ export function buildReplay(store, projectKey = '') {
   const audits = store.db.prepare('SELECT a.* FROM audits a JOIN runs r ON r.id=a.run_id WHERE r.project_id=? ORDER BY a.created_at').all(project.id).map((a) => ({
     ...a, criteria: parseJson(a.criteria_json, []), findings: parseJson(a.findings_json, []), requiredFixes: parseJson(a.required_fixes_json, []), independence: parseJson(a.independence, {}), commit: taskCommits.get(a.task_id) || '',
   }));
-  const events = eventsForProject(store, project.id);
+  const eventLimit = Math.max(1, Math.min(5000, Number(options.eventLimit || 1000)));
+  const eventBefore = Number(options.eventBefore || 0);
+  const eventsAll = (eventBefore > 0
+    ? store.db.prepare('SELECT * FROM events WHERE project_id=? AND id<? ORDER BY id DESC LIMIT ?').all(project.id, eventBefore, eventLimit + 1)
+    : store.db.prepare('SELECT * FROM events WHERE project_id=? ORDER BY id DESC LIMIT ?').all(project.id, eventLimit + 1)
+  ).map((e) => ({ ...e, data: parseJson(e.data_json, {}) }));
+  const hasOlder = eventsAll.length > eventLimit;
+  const events = eventsAll.slice(0, eventLimit).reverse();
   const artifacts = artifactsForProject(store, project.id);
   const contract = readContract(project);
-  const commits = productCommits(project);
+  const commits = commitsForProject(project, tasks);
   const stats = summarize(store, project, tasks, attempts, audits, events);
   stats.auditBudget = store.auditBudgetUsage(project.id);
   stats.modelCost = {
@@ -231,14 +236,11 @@ export function buildReplay(store, projectKey = '') {
     commits,
     final,
     stats,
+    projects: projects.map((p) => ({ id: p.id, name: p.name, local_path: p.local_path })),
     media: {
-      screenshots: [
-        { path: '/replay-assets/cdl-home.png', label: '产品首页' },
-        { path: '/replay-assets/cdl-profile.png', label: '消费画像' },
-        { path: '/replay-assets/cdl-purchase.png', label: '单笔消费分析' },
-        { path: '/replay-assets/cdl-mobile.png', label: '手机布局' },
-      ],
+      screenshots: (Array.isArray(parseJson(project.config_json?.replay_assets, [])) ? parseJson(project.config_json.replay_assets, []) : []).map((item) => typeof item === 'string' ? { path: item, label: item.split('/').pop() } : item).filter((item) => item && item.path),
     },
+    eventPagination: { limit: eventLimit, count: events.length, hasOlder, before: events[0]?.id || 0 },
   };
 }
 
@@ -274,8 +276,8 @@ export function buildLive(store, projectKey = '') {
   let selected;
   if (projectKey) selected = projectByKey(store, projectKey);
   else {
-    // 默认优先展示真正 running 的项目；没有时才回退到 Consumption Decision Lab。
-    selected = eligible.find((p) => store.db.prepare("SELECT 1 FROM runs WHERE project_id=? AND status='running' LIMIT 1").get(p.id)) || projects.find((p) => p.name === HISTORY_PROJECT_NAME) || eligible[0] || null;
+    // 默认优先展示真正 running 的项目；没有 running 时展示最近更新的已授权项目。
+    selected = eligible.find((p) => store.db.prepare("SELECT 1 FROM runs WHERE project_id=? AND status='running' LIMIT 1").get(p.id)) || eligible[0] || null;
     if (selected && !selected.config_json) selected = eligible.find((p) => p.id === selected.id) || selected;
   }
   if (!selected) return { projects, project: null, active: false, reason: '没有可展示的项目', generatedAt: new Date().toISOString(), timezone: TZ };
@@ -328,8 +330,8 @@ export function buildLive(store, projectKey = '') {
   };
 }
 
-/** 只读 commit 详情（限制在产品仓库范围内的 SHA）。 */
-export function readProductCommit(store, projectId, sha) {
+/** 只读 commit 详情（任意已授权项目，SHA 正则 + 仓库范围校验）。 */
+export function readProjectCommit(store, projectId, sha) {
   const project = store.getProject(projectId);
   if (!project || isExcludedProject(project) || !/^[0-9a-f]{7,40}$/i.test(String(sha))) return null;
   const repo = project.local_path || '';

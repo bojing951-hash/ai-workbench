@@ -42,6 +42,15 @@
 - **关键可靠性根因修复**：任务 `verification_json` 指数膨胀（Invalid string length）、低预算 finalize 阻塞、GLM 身份/预算、容器执行保持。
 - 验收：5 个冻结任务 5/5 自主完成、10/10 测试、5/5 独立审计、2/2 故障恢复；**严格 24h 窗口未执行，24h 验收 FAIL/UNKNOWN**。详见 [v2.3 报告](docs/v2.3/REPORT.md)、[验收矩阵](docs/v2.3/ACCEPTANCE-MATRIX.md)。
 
+## 0.7 v2.7 新增（自主产品质量闭环与可靠性）
+
+- **Product Quality Loop**：Requirements Coverage Matrix（PASS/FAIL/UNKNOWN/BLOCKED）、有证据的 P0/P1 问题、自动修复任务、重新测试/审计、有上限的自主停止；不再把“任务列表完成”当作产品完成。
+- **Fencing Token**：原子租约、单调递增 fence、续租/释放/run 租约防覆盖；真实多进程竞争与两个编排器并发测试。
+- **通用历史回放**：去掉 Consumption Decision Lab 专用名称/SHA/截图/固定数字；任意已授权项目可回放，事件支持分页。
+- **独立验收项目**：Reading Queue Planner（冻结契约/可见测试/项目外隐藏质量检查）已创建；因独立审计预算 BLOCKED，任务在编码前安全暂停。
+- **24h**：`24H_NOT_VERIFIED / BLOCKED`（无独立审计资源），未伪造长期结果。
+- 详见 [v2.7 报告](docs/v2.7/REPORT.md)、[验收矩阵](docs/v2.7/ACCEPTANCE-MATRIX.md)、[24h 记录](docs/v2.7/24H-ACCEPTANCE.md)。
+
 ## 0.6 v2.6 新增（看见 AI）
 
 - **工作台如何工作**：11 步可点击流程，用大白话解释需求→规划→Claude/GLM 编码→测试→DSH 独立审计→修复→commit→下一任务→验收；技术细节可展开。

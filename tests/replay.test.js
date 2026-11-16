@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
-import { buildLive, buildReplay, eligibleProjects, readProductCommit, isExcludedProject } from '../src/replay.js';
+import { buildLive, buildReplay, eligibleProjects, readProjectCommit, isExcludedProject } from '../src/replay.js';
 
 function mk() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-replay-'));
@@ -86,7 +86,7 @@ test('v2.6 历史回放：从任务/attempt/audit/事件重建，缺失字段保
     assert.ok(replay.stats.requiredFixes.length === 0);
     assert.match(replay.origin.note, /原始聊天消息未写入/);
     assert.equal(replay.commits.length, 0);
-    assert.equal(readProductCommit(store, project.id, 'not-a-sha'), null);
+    assert.equal(readProjectCommit(store, project.id, 'not-a-sha'), null);
   } finally { store.close(); }
 });
 
@@ -103,7 +103,9 @@ test('v2.6 空事件不崩溃，且不会跨项目回放 CDL 素材', () => {
     assert.equal(replay.stats.durationMs, 0); // no events: 不抛 RangeError
     store.createProject({ id: 'w1', name: 'AI Workbench（W）', localPath: path.join(config.root, 'w'), testCommand: 'true' });
     const other = buildReplay(store, 'w1');
-    assert.equal(other.available, false); // 只允许 CDL 历史，不能混用截图/commit
+    assert.equal(other.available, true);
+    assert.equal(other.project.id, 'w1');
+    assert.deepEqual(other.media.screenshots, []); // 通用回放不混用其他项目素材
   } finally { store.close(); }
 });
 
@@ -131,5 +133,22 @@ test('v2.6 研发实况：读取最近 60 条事件而不是最旧 60 条', () =
     assert.equal(live.events.length, 60);
     assert.equal(live.events.at(-1).message, 'e69');
     assert.notEqual(live.events[0].message, 'e0');
+  } finally { store.close(); }
+});
+
+test('v2.7 通用回放：事件分页支持 eventBefore，不遗漏早期历史', () => {
+  const { config, store } = mk();
+  try {
+    const project = store.createProject({ id: 'p1', name: 'Generic Project', localPath: path.join(config.root, 'repo'), testCommand: 'true' });
+    const run = store.createRun({ id: 'run1', projectId: project.id, planId: 'plan1', goal: 'g', status: 'running' });
+    for (let i = 0; i < 5; i += 1) store.appendEvent({ runId: run.id, projectId: project.id, type: 'agent_progress', message: `event-${i}` });
+    const page1 = buildReplay(store, project.id, { eventLimit: 2 });
+    assert.equal(page1.available, true);
+    assert.equal(page1.events.length, 2);
+    assert.equal(page1.eventPagination.hasOlder, true);
+    assert.equal(page1.events.at(-1).message, 'event-4');
+    const page2 = buildReplay(store, project.id, { eventLimit: 10, eventBefore: page1.eventPagination.before });
+    assert.ok(page2.events.every((e) => e.message !== 'event-4'));
+    assert.ok(page2.events.some((e) => e.message === 'event-0'));
   } finally { store.close(); }
 });

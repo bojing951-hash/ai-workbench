@@ -1,0 +1,12 @@
+{
+  "max_cycles": 2,
+  "max_issues_per_cycle": 6,
+  "timeout_ms": 180000,
+  "quality_command": "node /Users/cast/Downloads/开发工作台/projects/v2.7/quality-hidden/check.mjs",
+  "requirements": [
+    { "id": "R1", "title": "书籍管理与校验", "priority": "P0", "acceptance": ["addBook/listBooks/searchBooks 行为符合契约", "重复与非法输入拒绝"], "tests": ["tests/library.test.js"] },
+    { "id": "R2", "title": "阅读计划边界", "priority": "P0", "acceptance": ["按优先级/页数/每天分钟生成计划", "不重复、不含完成/不可用，未安排项有原因"], "tests": ["tests/planner.test.js"] },
+    { "id": "R3", "title": "本地持久化", "priority": "P1", "acceptance": ["JSON 往返保持", "损坏文件抛出错误"], "tests": ["tests/store-cli.test.js"] },
+    { "id": "R4", "title": "CLI 用户流程", "priority": "P1", "acceptance": ["plan 输出稳定 JSON", "错误参数 exit=1"], "tests": ["tests/cli.test.js"] }
+  ]
+}
