@@ -1,0 +1,5 @@
+version v2.7.0 selector 17
+new project replay 回放项目：Reading Queue Planner（v2.7 独立验收） · 时间统一为北京时间（Asia/Shanghai） · 数据生成于 2026/11/16 12:06:44
+audits 0
+summary generic? true no cdl hardcode? true no 4/4? true
+page errors none

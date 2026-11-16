@@ -1,0 +1,76 @@
+{
+  "version": "2.9.0",
+  "baseline": "v2.8.0 / PR #10",
+  "ui": {
+    "chatFirst": true,
+    "advancedPreserved": "/advanced",
+    "files": [
+      "web/index.html",
+      "web/chat.html",
+      "web/chat.js",
+      "web/chat.css",
+      "web/advanced.html"
+    ],
+    "screenshots": "docs/v2.9/screenshots/",
+    "realModelChat": true,
+    "persistedConversations": true
+  },
+  "chat": {
+    "conversations": [
+      "conv_mwj83dcqnh4rm",
+      "conv_mwj8svpyiywpu",
+      "conv_mwj8t1ax04qj2"
+    ],
+    "model": "deepseek-chat",
+    "costCny": 0.0037009728,
+    "fakePresetReplies": false
+  },
+  "oneClick": {
+    "status": "BLOCKED",
+    "conversationId": "conv_mwj83dcqnh4rm",
+    "projectId": "proj_mwj87qxufc93073b",
+    "loopId": "loop_mwj87r46593f9b15",
+    "runId": "run_mwj87v1a35b91f38",
+    "reason": "预计消耗 10000 tokens 超过剩余预算 8654.200000000186",
+    "agentAttempts": 0,
+    "dshAudits": 0
+  },
+  "tests": {
+    "total": 268,
+    "pass": 268,
+    "log": "demo/evidence/v2.9/tests.log"
+  },
+  "reliability": {
+    "maxRoundsQualityGate": "PASS tests/loop-quality-gate.test.js",
+    "halfCreatedRunRecovery": "PASS tests/loop-recovery.test.js",
+    "crashInjection": "PASS tests/crash-injection.test.js",
+    "qualityCommitWorktree": "fail-closed (no fallback)",
+    "requirementConflict": "PASS tests/quality.test.js",
+    "autoRepairTerminalRun": "PASS tests/auto-repair.test.js"
+  },
+  "screenshots": {
+    "welcomeLight": "01-welcome-light.png",
+    "welcomeDark": "02-welcome-dark.png",
+    "conversation": "03-conversation.png",
+    "blocked": "04-blocked.png",
+    "completed": "05-completed.png",
+    "projects": "05-projects.png",
+    "settings": "06-settings.png",
+    "mobileWelcome": "07-mobile-welcome.png",
+    "mobileSidebar": "08-mobile-sidebar.png",
+    "advanced": "09-advanced.png",
+    "mobileConversation": "10-mobile-conversation.png",
+    "autoRepairLive": "NOT_CAPTURED"
+  },
+  "realE2E": "BLOCKED: budget + new-project DSH authorization unavailable",
+  "24h": "NOT_VERIFIED",
+  "merged": false,
+  "deployed": false,
+  "otherProductsModified": false,
+  "finalCommit": "2a0b0ba",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/11",
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43868275993"
+  }
+}

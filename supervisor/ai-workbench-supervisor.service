@@ -1,0 +1,15 @@
+[Unit]
+Description=AI Workbench independent supervisor
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+ExecStart=/usr/bin/node __ROOT__/supervisor/workbench-supervisor.mjs --root __ROOT__ --port 4477 --max-restarts 6
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:__ROOT__/data/supervisor/supervisor.log
+StandardError=append:__ROOT__/data/supervisor/supervisor.error.log
+
+[Install]
+WantedBy=multi-user.target

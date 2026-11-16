@@ -1,0 +1,149 @@
+{
+  "type": "v2.4-final",
+  "at": "2026-11-15T16:08:48.928683+00:00",
+  "version": "2.4.0",
+  "tests": {
+    "total": 206,
+    "pass": 206
+  },
+  "supervisor": {
+    "pid": 49602,
+    "childPid": 54760,
+    "crashes": [
+      {
+        "at": "2026-11-15T16:05:42.546Z",
+        "code": null,
+        "signal": "SIGKILL",
+        "pid": 49604
+      },
+      {
+        "at": "2026-11-15T16:08:01.648Z",
+        "code": null,
+        "signal": "SIGKILL",
+        "pid": 49776
+      }
+    ],
+    "restarts": [
+      {
+        "at": "2026-11-15T16:05:42.539Z",
+        "reason": "health-unresponsive",
+        "attempt": 1,
+        "delayMs": 5000
+      },
+      {
+        "at": "2026-11-15T16:08:01.653Z",
+        "reason": "process-exit",
+        "attempt": 2,
+        "delayMs": 10000
+      }
+    ],
+    "recoveries": [
+      {
+        "at": "2026-11-15T16:05:21.201Z",
+        "ok": true,
+        "result": {
+          "recoveredRuns": [],
+          "recoveredLoops": [],
+          "at": "2026-11-15T16:05:21.198Z"
+        }
+      },
+      {
+        "at": "2026-11-15T16:05:54.144Z",
+        "ok": true,
+        "result": {
+          "recoveredRuns": [],
+          "recoveredLoops": [],
+          "at": "2026-11-15T16:05:54.142Z"
+        }
+      },
+      {
+        "at": "2026-11-15T16:08:18.178Z",
+        "ok": true,
+        "result": {
+          "recoveredRuns": [],
+          "recoveredLoops": [],
+          "at": "2026-11-15T16:08:18.177Z"
+        }
+      }
+    ]
+  },
+  "acceptance24h": {
+    "projectId": "proj_mwi146ob721765e6",
+    "loopId": "loop_mwi146ofabcdd6a2",
+    "loopStatus": "paused",
+    "round": 0,
+    "maxRounds": 5,
+    "currentRunId": "run_mwi147lzeaa1faaa",
+    "runStatus": "paused",
+    "stopReason": "流水线资源阻塞（编码前检查点）：独立审计资源预算不足：Provider=deepseek，剩余预算折算 9869，审计预估 8000 + 保留 2000；任务在编码前阻塞并保存检查点",
+    "taskStatus": [
+      {
+        "title": "[24H-A1] events.js",
+        "status": "blocked",
+        "blocked_reason": "流水线资源阻塞（编码前检查点）：独立审计资源预算不足：Provider=deepseek，剩余预算折算 9869，审计预估 8000 + 保留 2000；任务在编码前阻塞并保存检查点"
+      }
+    ],
+    "status": "24H_AUTONOMY_NOT_VERIFIED",
+    "blocker": "AUDIT_RESOURCE_BUDGET: DeepSeek remaining 9869 < estimate 8000 + reserve 2000; no independent audit authorized; did not execute 24h"
+  },
+  "notes": [
+    "独立 Supervisor 真实 SIGKILL/健康无响应恢复已验证",
+    "24h 项目已冻结并尝试启动；Provider-aware 预检在编码前安全阻塞并保存检查点",
+    "未人工修改任务 src；未访问 A/B"
+  ],
+  "candidate": {
+    "type": "self-upgrade-candidate-validation",
+    "at": "2026-11-15T16:09:46.200Z",
+    "candidateId": "cand_mwi14g4s_kg2i",
+    "candidateDir": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwi14g4s_kg2i",
+    "sourceRoot": "/Users/cast/Downloads/开发工作台",
+    "tests": {
+      "ok": true,
+      "code": 0,
+      "durationMs": 10691,
+      "logPath": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwi14g4s_kg2i/candidate-tests.log"
+    },
+    "smoke": {
+      "ok": true,
+      "httpStatus": 200,
+      "version": "2.4.0",
+      "projects": 0,
+      "agents": [
+        "dsh",
+        "claude",
+        "custom"
+      ],
+      "dataDir": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwi14g4s_kg2i/candidate-data",
+      "port": 58936
+    },
+    "realE2E": {
+      "runId": "run_mwi14p31ff010ce4",
+      "status": "awaiting_acceptance",
+      "verificationStatus": "LOCAL_VERIFIED",
+      "tasks": [
+        {
+          "seq": 1,
+          "status": "passed",
+          "attempts": 1,
+          "audits": [
+            "pass"
+          ]
+        }
+      ],
+      "stopReason": "部分发布动作待授权：项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR"
+    },
+    "passed": true,
+    "stableInstanceUnaffected": true,
+    "note": "候选版本验证通过后才允许创建升级 PR；当前脚本不自动替换运行实例、不合并主分支。"
+  },
+  "budget": {
+    "usedTokens": 22752494,
+    "usedBudgetTokens": 2990131,
+    "totalCostCny": 30.1014,
+    "budgetCostCny": 6.3375,
+    "glmTokens": 3615355,
+    "glmCostCny": 23.76385584,
+    "remainingTokens": 9869,
+    "remainingCostCny": 23.6624776032
+  }
+}

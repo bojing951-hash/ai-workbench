@@ -1,0 +1,467 @@
+From 8f0888a49c16d18f02cce5cccde0159c431546a2 Mon Sep 17 00:00:00 2001
+From: AI Workbench <workbench@localhost>
+Date: Sun, 15 Nov 2026 23:17:29 +0800
+Subject: [PATCH 1/5] =?UTF-8?q?feat(task-1):=20[A1]=20=E5=AE=9E=E7=8E=B0?=
+ =?UTF-8?q?=E4=BA=8B=E4=BB=B6=E5=AD=98=E5=82=A8=20events.js?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 验收：tests/task1.test.js 全部通过
+- 验收：appendEvent 分配递增 seq 并返回不可变副本
+- 验收：非法事件类型/缺失字段被拒绝
+- 验收：readEvents 支持 taskId 过滤
+
+审计：deepseek/deepseek-chat PASS（得分 88）
+测试：node --test tests/task1.test.js 通过（指纹 52bd42ca676f）
+生成：AI 开发工作台 v2.0
+---
+ src/events.js | 49 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+ create mode 100644 src/events.js
+
+diff --git a/src/events.js b/src/events.js
+new file mode 100644
+index 0000000..a19eabf
+--- /dev/null
++++ b/src/events.js
+@@ -0,0 +1,49 @@
++// 追加式事件存储（append-only event store）。
++// 约定：事件类型固定为 task.created / task.started / task.completed / task.blocked；
++// appendEvent 负责分配递增 seq；对外返回浅拷贝，内部保存冻结副本。
++
++const EVENT_TYPES = ['task.created', 'task.started', 'task.completed', 'task.blocked'];
++
++function validateEvent(event) {
++  if (event === null || typeof event !== 'object' || Array.isArray(event)) {
++    throw new TypeError('event must be a non-null object');
++  }
++  if (typeof event.type !== 'string' || event.type.length === 0) {
++    throw new TypeError('event.type must be a non-empty string');
++  }
++  if (!EVENT_TYPES.includes(event.type)) {
++    throw new TypeError(`unknown event type: ${event.type}`);
++  }
++  if (typeof event.taskId !== 'string' || event.taskId.length === 0) {
++    throw new TypeError('event.taskId must be a non-empty string');
++  }
++  if (event.type === 'task.created') {
++    const title = event.payload && event.payload.title;
++    if (typeof title !== 'string' || title.length === 0) {
++      throw new TypeError('task.created requires a non-empty payload.title');
++    }
++  }
++  if (event.type === 'task.blocked') {
++    const reason = event.payload && event.payload.reason;
++    if (typeof reason !== 'string' || reason.length === 0) {
++      throw new TypeError('task.blocked requires a non-empty payload.reason');
++    }
++  }
++}
++
++export function createStore() {
++  return { events: [] };
++}
++
++export function appendEvent(store, event) {
++  validateEvent(event);
++  const stored = Object.freeze({ ...event, seq: store.events.length + 1 });
++  store.events.push(stored);
++  return { ...stored };
++}
++
++export function readEvents(store, { taskId } = {}) {
++  return store.events
++    .filter((e) => taskId === undefined || e.taskId === taskId)
++    .map((e) => ({ ...e }));
++}
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 7d4fc364540295864aa8bc7498231cd135a5dcf8 Mon Sep 17 00:00:00 2001
+From: AI Workbench <workbench@localhost>
+Date: Sun, 15 Nov 2026 23:25:11 +0800
+Subject: [PATCH 2/5] =?UTF-8?q?feat(task-1):=20[A2]=20=E5=AE=9E=E7=8E=B0?=
+ =?UTF-8?q?=E7=8A=B6=E6=80=81=E5=BD=92=E7=BA=A6=20state.js?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 验收：tests/task2.test.js 全部通过
+- 验收：任务状态/计数正确
+- 验收：后到 started 不覆盖 done
+
+审计：deepseek/deepseek-chat PASS（得分 92）
+测试：node --test tests/task2.test.js 通过（指纹 12540e48651c）
+生成：AI 开发工作台 v2.0
+---
+ src/state.js | 49 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+ create mode 100644 src/state.js
+
+diff --git a/src/state.js b/src/state.js
+new file mode 100644
+index 0000000..1746533
+--- /dev/null
++++ b/src/state.js
+@@ -0,0 +1,49 @@
++// 状态归约（state reduction）：把事件流（由 events.js 产生）折叠为当前任务状态与统计计数。
++// 约定：任务初始为 pending；done 为终态，迟到/乱序的 started、blocked 或重复事件都不会把 done 降级；
++// 归约前先按 seq 稳定排序，保证乱序输入也能得到确定结果。
++
++function ensureTask(tasks, taskId) {
++  if (!tasks[taskId]) {
++    tasks[taskId] = { title: undefined, status: 'pending' };
++  }
++  return tasks[taskId];
++}
++
++function applyEvent(task, event) {
++  if (event.type === 'task.created') {
++    const title = event.payload && event.payload.title;
++    if (title !== undefined) {
++      task.title = title;
++    }
++  } else if (event.type === 'task.started') {
++    if (task.status !== 'done') {
++      task.status = 'running';
++    }
++  } else if (event.type === 'task.completed') {
++    task.status = 'done';
++  } else if (event.type === 'task.blocked') {
++    if (task.status !== 'done') {
++      task.status = 'blocked';
++    }
++  }
++}
++
++function countByStatus(tasks) {
++  const counts = { pending: 0, running: 0, done: 0, blocked: 0 };
++  for (const taskId of Object.keys(tasks)) {
++    const { status } = tasks[taskId];
++    if (Object.prototype.hasOwnProperty.call(counts, status)) {
++      counts[status] += 1;
++    }
++  }
++  return counts;
++}
++
++export function reduceState(events) {
++  const tasks = {};
++  const ordered = [...events].sort((a, b) => (a.seq || 0) - (b.seq || 0));
++  for (const event of ordered) {
++    applyEvent(ensureTask(tasks, event.taskId), event);
++  }
++  return { tasks, counts: countByStatus(tasks) };
++}
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 8e87a521b40e1409dbf7576ecb186533cd26e7bc Mon Sep 17 00:00:00 2001
+From: AI Workbench <workbench@localhost>
+Date: Sun, 15 Nov 2026 23:32:56 +0800
+Subject: [PATCH 3/5] =?UTF-8?q?feat(task-1):=20[A3]=20=E5=AE=9E=E7=8E=B0?=
+ =?UTF-8?q?=E8=B4=A6=E6=9C=AC=20ledger.js?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 验收：tests/task3.test.js 全部通过
+- 验收：非法流转抛错且不写事件
+
+审计：deepseek/deepseek-chat PASS（得分 92）
+测试：node --test tests/task3.test.js 通过（指纹 73f6c0654102）
+生成：AI 开发工作台 v2.0
+---
+ src/ledger.js | 59 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 59 insertions(+)
+ create mode 100644 src/ledger.js
+
+diff --git a/src/ledger.js b/src/ledger.js
+new file mode 100644
+index 0000000..2b2d766
+--- /dev/null
++++ b/src/ledger.js
+@@ -0,0 +1,59 @@
++// 账本（ledger）：在事件存储之上封装任务命令（create/start/complete/block）。
++// 约定：先按当前归约状态校验流转合法性，非法流转抛错且不写入任何事件；
++// done 为终态；start 仅允许 pending/blocked；complete 仅允许 running；
++// block 需给出 reason，pending/running/blocked 均可 block，done 不可。
++
++import { appendEvent, readEvents } from './events.js';
++import { reduceState } from './state.js';
++
++function requireTask(state, taskId, action) {
++  const task = state.tasks[taskId];
++  if (!task) {
++    throw new Error(`cannot ${action} unknown task: ${taskId}`);
++  }
++  return task;
++}
++
++function requireStatus(task, allowed, taskId, action) {
++  if (!allowed.includes(task.status)) {
++    throw new Error(`cannot ${action} task ${taskId} in status ${task.status}`);
++  }
++}
++
++export function createLedger(store) {
++  return {
++    createTask(taskId, title) {
++      const state = reduceState(readEvents(store));
++      if (state.tasks[taskId]) {
++        throw new Error(`task already exists: ${taskId}`);
++      }
++      return appendEvent(store, { type: 'task.created', taskId, payload: { title } });
++    },
++
++    startTask(taskId) {
++      const task = requireTask(reduceState(readEvents(store)), taskId, 'start');
++      requireStatus(task, ['pending', 'blocked'], taskId, 'start');
++      return appendEvent(store, { type: 'task.started', taskId });
++    },
++
++    completeTask(taskId) {
++      const task = requireTask(reduceState(readEvents(store)), taskId, 'complete');
++      requireStatus(task, ['running'], taskId, 'complete');
++      return appendEvent(store, { type: 'task.completed', taskId });
++    },
++
++    blockTask(taskId, reason) {
++      const task = requireTask(reduceState(readEvents(store)), taskId, 'block');
++      requireStatus(task, ['pending', 'running', 'blocked'], taskId, 'block');
++      return appendEvent(store, { type: 'task.blocked', taskId, payload: { reason } });
++    },
++
++    getState() {
++      return reduceState(readEvents(store));
++    },
++
++    getEvents(query = {}) {
++      return readEvents(store, query);
++    },
++  };
++}
+-- 
+2.50.1 (Apple Git-155)
+
+
+From d9aabca50a5dc60634935fd811c4deca78ca3080 Mon Sep 17 00:00:00 2001
+From: AI Workbench <workbench@localhost>
+Date: Sun, 15 Nov 2026 23:35:30 +0800
+Subject: [PATCH 4/5] =?UTF-8?q?feat(task-1):=20[A4]=20=E5=AE=9E=E7=8E=B0?=
+ =?UTF-8?q?=E6=8A=A5=E5=91=8A=20report.js?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 验收：tests/task4.test.js 全部通过
+- 验收：完成率/空状态处理正确
+
+审计：deepseek/deepseek-chat PASS（得分 92）
+测试：node --test tests/task4.test.js 通过（指纹 7db582bced36）
+生成：AI 开发工作台 v2.0
+---
+ src/report.js | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+ create mode 100644 src/report.js
+
+diff --git a/src/report.js b/src/report.js
+new file mode 100644
+index 0000000..73aa331
+--- /dev/null
++++ b/src/report.js
+@@ -0,0 +1,31 @@
++// 报告（report）：把归约状态（state.js 输出）汇总为统计报告，供 CLI（cli.js）展示。
++// 约定：byStatus 一律从 tasks 重新推导，不信任调用方传入的 counts，两者不一致时以 tasks 为准；
++// completionRate 为完成百分比（0-100 的整数，四舍五入）；空状态（无任务）安全返回全 0。
++
++function countByStatus(tasks) {
++  const byStatus = { pending: 0, running: 0, done: 0, blocked: 0 };
++  for (const taskId of Object.keys(tasks)) {
++    const { status } = tasks[taskId];
++    if (Object.prototype.hasOwnProperty.call(byStatus, status)) {
++      byStatus[status] += 1;
++    }
++  }
++  return byStatus;
++}
++
++export function buildReport(state) {
++  const tasks = state.tasks || {};
++  const byStatus = countByStatus(tasks);
++  const total = Object.keys(tasks).length;
++  const completed = byStatus.done;
++  const completionRate = total === 0 ? 0 : Math.round((completed / total) * 100);
++  return {
++    total,
++    completed,
++    blocked: byStatus.blocked,
++    running: byStatus.running,
++    pending: byStatus.pending,
++    completionRate,
++    byStatus,
++  };
++}
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 86bd2f28db6a442e39a62d2cbe50e1bc6c3b5c83 Mon Sep 17 00:00:00 2001
+From: AI Workbench <workbench@localhost>
+Date: Sun, 15 Nov 2026 23:38:40 +0800
+Subject: [PATCH 5/5] =?UTF-8?q?feat(task-1):=20[A5]=20=E5=AE=9E=E7=8E=B0?=
+ =?UTF-8?q?=20CLI=20cli.js?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 验收：tests/task5.test.js 全部通过
+- 验收：CLI 通过文件持久化并输出 JSON 汇总
+
+审计：deepseek/deepseek-chat PASS（得分 92）
+测试：node --test tests/task5.test.js 通过（指纹 04e8fc88a16f）
+生成：AI 开发工作台 v2.0
+---
+ src/cli.js | 127 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 127 insertions(+)
+ create mode 100644 src/cli.js
+
+diff --git a/src/cli.js b/src/cli.js
+new file mode 100644
+index 0000000..b747886
+--- /dev/null
++++ b/src/cli.js
+@@ -0,0 +1,127 @@
++#!/usr/bin/env node
++// 命令行入口（CLI）：把 ledger.js 的任务命令接到文件持久化的事件存储上。
++// 约定：--file <path> 指定事件文件（JSON 数组）；每次启动加载全部事件重建 store
++// （逐条走 appendEvent 重新校验并重排 seq），变更命令成功后才整体写回文件，失败不写回；
++// create/start/complete 成功时打印追加的事件，list 打印 report.js 汇总加 tasks 明细；
++// 任何错误统一输出到 stderr 并以退出码 1 结束。
++
++import fs from 'node:fs';
++import path from 'node:path';
++import { parseArgs } from 'node:util';
++
++import { appendEvent, createStore } from './events.js';
++import { createLedger } from './ledger.js';
++import { buildReport } from './report.js';
++
++const USAGE = `usage: cli.js --file <events.json> <command> [options]
++commands:
++  create --id <id> --title <title>
++  start --id <id>
++  complete --id <id>
++  list`;
++
++const COMMANDS = {
++  create: { options: { id: { type: 'string' }, title: { type: 'string' } }, mutates: true },
++  start: { options: { id: { type: 'string' } }, mutates: true },
++  complete: { options: { id: { type: 'string' } }, mutates: true },
++  list: { options: {}, mutates: false },
++};
++
++// 从 argv 中摘出全局选项 --file（支持 --file <path> 与 --file=<path>），其余留给子命令。
++function extractFileArg(argv) {
++  const rest = [];
++  let file;
++  for (let i = 0; i < argv.length; i += 1) {
++    const arg = argv[i];
++    if (arg === '--file') {
++      if (i + 1 >= argv.length) {
++        throw new Error('--file requires a path');
++      }
++      file = argv[i + 1];
++      i += 1;
++    } else if (arg.startsWith('--file=')) {
++      file = arg.slice('--file='.length);
++    } else {
++      rest.push(arg);
++    }
++  }
++  return { file, rest };
++}
++
++function loadStore(file) {
++  const store = createStore();
++  if (!fs.existsSync(file)) {
++    return store;
++  }
++  const records = JSON.parse(fs.readFileSync(file, 'utf8'));
++  if (!Array.isArray(records)) {
++    throw new Error(`event file must contain a JSON array: ${file}`);
++  }
++  for (const record of records) {
++    appendEvent(store, record);
++  }
++  return store;
++}
++
++function saveStore(file, store) {
++  fs.mkdirSync(path.dirname(file), { recursive: true });
++  fs.writeFileSync(file, `${JSON.stringify(store.events, null, 2)}\n`);
++}
++
++function requireOption(values, name) {
++  if (values[name] === undefined) {
++    throw new Error(`missing required option --${name}`);
++  }
++  return values[name];
++}
++
++function execute(ledger, command, argv) {
++  const { options } = COMMANDS[command];
++  const { values } = parseArgs({ args: argv, options });
++  switch (command) {
++    case 'create': {
++      const event = ledger.createTask(requireOption(values, 'id'), requireOption(values, 'title'));
++      console.log(JSON.stringify(event));
++      break;
++    }
++    case 'start': {
++      const event = ledger.startTask(requireOption(values, 'id'));
++      console.log(JSON.stringify(event));
++      break;
++    }
++    case 'complete': {
++      const event = ledger.completeTask(requireOption(values, 'id'));
++      console.log(JSON.stringify(event));
++      break;
++    }
++    case 'list': {
++      const state = ledger.getState();
++      console.log(JSON.stringify({ ...buildReport(state), tasks: state.tasks }, null, 2));
++      break;
++    }
++  }
++}
++
++function main() {
++  const { file, rest } = extractFileArg(process.argv.slice(2));
++  if (!file) {
++    throw new Error(`--file <path> is required\n${USAGE}`);
++  }
++  const [command, ...commandArgs] = rest;
++  if (!command || !Object.hasOwn(COMMANDS, command)) {
++    throw new Error(`unknown or missing command\n${USAGE}`);
++  }
++  const store = loadStore(file);
++  const ledger = createLedger(store);
++  execute(ledger, command, commandArgs);
++  if (COMMANDS[command].mutates) {
++    saveStore(file, store);
++  }
++}
++
++try {
++  main();
++} catch (err) {
++  console.error(`error: ${err.message}`);
++  process.exitCode = 1;
++}
+-- 
+2.50.1 (Apple Git-155)
+

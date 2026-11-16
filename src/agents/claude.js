@@ -8,7 +8,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { commandExists, execCapture } from '../runner.js';
 import { ensureDir } from '../util.js';
+import { buildAgentEnv, resolveAgentPermission } from '../security.js';
 import { estimateCostCny, usdToCny } from '../pricing.js';
+import { resolveAgentIdentity } from '../model-identity.js';
+import { runAgentInContainer } from '../container.js';
 
 export const meta = {
   id: 'claude',
@@ -50,40 +53,74 @@ function parseResultJson(stdout) {
 }
 
 export async function run(ctx) {
-  const { config, prompt, cwd, sessionId = '', timeoutMs, maxTokens = 0, signal = null, onEvent = null, logPath = '' } = ctx;
+  const { config, project = null, prompt, cwd, sessionId = '', timeoutMs, maxTokens = 0, signal = null, onEvent = null, logPath = '' } = ctx;
   const cc = config.agents.claude;
   if (!commandExists(cc.bin)) {
     return { ok: false, error: `Claude Code CLI 不可用：${cc.bin}`, agentKind: 'claude', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, durationMs: 0, logPath };
   }
   ensureDir(cc.home);
+  let permission;
+  try {
+    permission = resolveAgentPermission(config, 'claude', project);
+  } catch (err) {
+    return { ok: false, error: err.message, agentKind: 'claude', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, durationMs: 0, logPath, permissionBlocked: true };
+  }
 
-  const args = ['-p', '--output-format', 'json', '--dangerously-skip-permissions', '--max-turns', '30'];
+  // P0-1：隔离配置目录首次运行时，Claude 会因“自定义 API Key 未批准/未完成 onboarding”等待交互而挂起。
+  // 在隔离目录中写入最小 onboarding 状态与该 Key 的批准记录（仅本地），避免使用 bypass 权限。
+  try {
+    const stateFile = path.join(cc.home, '.claude.json');
+    let state = {};
+    try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { state = {}; }
+    const key = cc.apiKey || '';
+    const suffix = key.length > 20 ? key.slice(-20) : key;
+    const approved = new Set([...(state.customApiKeyResponses?.approved || [])]);
+    if (suffix) approved.add(suffix);
+    state.hasCompletedOnboarding = true;
+    state.customApiKeyResponses = { approved: [...approved], rejected: state.customApiKeyResponses?.rejected || [] };
+    fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), { mode: 0o600 });
+  } catch {
+    /* 状态写入失败时继续，让 CLI 自己报错 */
+  }
+
+  const args = ['-p', '--output-format', 'json', '--max-turns', '30'];
+  if (permission.mode) args.push('--permission-mode', permission.mode);
+  if (permission.allowedTools) args.push('--allowedTools', permission.allowedTools);
+  if (permission.disallowedTools) args.push('--disallowedTools', permission.disallowedTools);
   if (cc.model) args.push('--model', cc.model);
   if (sessionId) args.push('--resume', sessionId);
 
-  const env = {
-    ...process.env,
-    CLAUDE_CONFIG_DIR: cc.home,
+  const identity = resolveAgentIdentity({ config, agentId: 'claude', project });
+  const env = buildAgentEnv({ config, agentId: 'claude', homeDir: ctx.agentHome });
+  const containerEnv = {
+    ANTHROPIC_BASE_URL: cc.baseUrl || '',
+    ANTHROPIC_API_KEY: cc.apiKey || '',
+    ANTHROPIC_MODEL: cc.model || '',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-    NO_COLOR: '1',
-    CI: '1',
+    CLAUDE_CODE_DISABLE_THINKING: '1',
   };
-  if (cc.baseUrl) env.ANTHROPIC_BASE_URL = cc.baseUrl;
-  if (cc.apiKey) env.ANTHROPIC_API_KEY = cc.apiKey;
-  if (cc.model) env.ANTHROPIC_MODEL = cc.model;
 
   const startedAt = Date.now();
-  const res = await execCapture(cc.bin, args, {
-    cwd,
-    env,
-    timeoutMs: timeoutMs || cc.timeoutMs,
-    stdin: prompt,
-    logPath,
-    signal,
-    onStderr: (chunk) => {
-      if (onEvent && chunk.trim()) onEvent({ kind: 'stderr', summary: chunk.slice(0, 200) });
-    },
-  });
+  let res;
+  if (ctx.container) {
+    res = await runAgentInContainer({
+      config, worktree: cwd, agentHome: cc.home, cliArgs: args, env: containerEnv,
+      timeoutMs: timeoutMs || cc.timeoutMs, stdin: prompt, logPath, signal,
+      network: ctx.container.network || '',
+    });
+  } else {
+    res = await execCapture(cc.bin, args, {
+      cwd,
+      env,
+      timeoutMs: timeoutMs || cc.timeoutMs,
+      stdin: prompt,
+      logPath,
+      signal,
+      onStderr: (chunk) => {
+        if (onEvent && chunk.trim()) onEvent({ kind: 'stderr', summary: chunk.slice(0, 200) });
+      },
+    });
+  }
   const durationMs = Date.now() - startedAt;
   const data = parseResultJson(res.stdout);
   if (!data) {
@@ -111,9 +148,9 @@ export async function run(ctx) {
     cacheWrite: Number(u.cache_creation_input_tokens || 0),
   };
   const tokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-  const costCny = Number.isFinite(Number(data.total_cost_usd))
-    ? usdToCny(Number(data.total_cost_usd))
-    : estimateCostCny('anthropic', cc.model || 'claude', usage);
+  const costReported = Number.isFinite(Number(data.total_cost_usd));
+  const costProvider = identity.known ? identity.provider : 'unknown';
+  const costCny = costReported ? usdToCny(Number(data.total_cost_usd)) : estimateCostCny(costProvider, cc.model || identity.model || 'unknown', usage);
 
   let error = '';
   if (res.timedOut) error = 'Claude Code 执行超时';
@@ -131,6 +168,15 @@ export async function run(ctx) {
     text: String(data.result || ''),
     error,
     agentKind: 'claude',
+    provider: identity.known ? identity.provider : 'unknown',
+    providerKnown: identity.known,
+    providerSource: identity.source,
+    providerNote: identity.note,
+    model: cc.model || identity.model || '',
+    exempt: identity.exempt,
+    canRunShell: false,
+    costReported,
+    costSource: costReported ? 'vendor' : 'estimated',
     sessionId: data.session_id || sessionId,
     exitCode: res.code,
     timedOut: res.timedOut,
@@ -140,6 +186,7 @@ export async function run(ctx) {
     tokens,
     costCny,
     logPath,
+    container: ctx.container ? res.isolation : null,
     numTurns: data.num_turns,
     reportedCostUsd: data.total_cost_usd,
   };
