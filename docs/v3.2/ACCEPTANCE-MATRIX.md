@@ -40,7 +40,7 @@
 
 ## 回归
 
-- 串行全量：**296 tests / 292 pass / 4 skipped / 0 fail**
+- 串行全量：**299 tests / 295 pass / 4 skipped / 0 fail**
   - skip：最终环境 Docker/symlink 能力不可用；Docker 可用时同套件曾 289/289（v3.1）。
 - Playwright：15/15，page errors 0。
 - 真实 E2E：**BLOCKED**。

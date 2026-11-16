@@ -17,7 +17,8 @@ const TEST_COMMAND = `"${NODE}" -e "process.exit(0)"`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(fn, timeoutMs = 60_000, label = 'condition') { const s = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - s > timeoutMs) throw new Error(`timeout ${label}`); await sleep(25); } }
 function git(cwd, args) { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr || r.stdout); return r.stdout; }
-function setup({ acceptance = ['A 功能完成', 'B 功能完成', 'C 功能完成'], queue, mutateAOnB = false, planNextTask = null }) {
+function setup({ acceptance = ['A 功能完成', 'B 功能完成', 'C 功能完成'], queue, mutateAOnB = false, planNextTask = null, slowProductAuditMs = 0 }) {
+  let productAuditStartedResolve; const productAuditStarted = new Promise((r) => { productAuditStartedResolve = r; });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v32-product-'));
   const repo = path.join(root, 'repo');
   fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
@@ -40,7 +41,9 @@ function setup({ acceptance = ['A 功能完成', 'B 功能完成', 'C 功能完�
       return { ok: true, text: 'done', agentKind: 'dsh', sessionId: `s-${letter}`, exitCode: 0, usage: { input: 5, output: 2 }, costCny: 0, durationMs: 1, logPath: '' };
     },
     runAudit: async ({ task, project, diff }) => {
-      const criteria = task.title === 'Product acceptance'
+      const isProduct = task.title === 'Product acceptance';
+      if (isProduct) { productAuditStartedResolve(); if (slowProductAuditMs) await new Promise((r) => setTimeout(r, slowProductAuditMs)); }
+      const criteria = isProduct
         ? acceptance.map((c, i) => { const files = ['feature-a.txt', 'feature-b.txt', 'feature-c.txt']; const abs = path.join(project.local_path, 'src', files[i]); const good = fs.existsSync(abs) && fs.readFileSync(abs, 'utf8') === `feature ${['A','B','C'][i]}\n`; return { criterion: c, status: good ? 'pass' : 'fail', evidence: good ? `final commit feature ${['A','B','C'][i]} verified; diff ${diff.length} bytes` : 'missing or modified feature file' }; })
         : (task.acceptance_json || []).map((c) => ({ criterion: c, status: 'pass', evidence: `task ${task.title} implementation verified by test` }));
       const status = criteria.every((c) => c.status === 'pass') ? 'PASS' : 'FAIL';
@@ -49,7 +52,7 @@ function setup({ acceptance = ['A 功能完成', 'B 功能完成', 'C 功能完�
   };
   const orchestrator = new Orchestrator({ config, store, bus: new EventBus(), deps });
   const manager = new LoopManager({ config, store, bus: new EventBus(), orchestrator, deps: planNextTask ? { planNextTask } : {} });
-  return { root, repo, store, orchestrator, manager, config };
+  return { root, repo, store, orchestrator, manager, config, productAuditStarted };
 }
 async function cleanup(h) { for (const t of h.manager.timers.values()) clearTimeout(t); h.manager.timers.clear(); for (const runId of [...h.orchestrator.running]) { try { h.orchestrator.controllers.get(runId)?.abort(); } catch {} } await new Promise((r) => setTimeout(r, 200)); h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
 async function createProject(h, acceptance) {
@@ -75,7 +78,8 @@ test('v3.2 P0-1：三阶段任务 A→B→C 正常完成，Planner no_task 后�
     assert.equal(run.result_json.productAcceptance, 'PASS');
     assert.equal(finalLoop.history_json.length >= 3, true);
     assert.equal(finalLoop.round >= 3, true);
-    assert.ok(h.store.listAudits(run.tasks?.[0]?.id || h.store.listTasks({ runId: run.id })[0]?.id).length >= 0);
+    const latestTaskId = h.store.listTasks({ runId: run.id }).at(-1)?.id;
+    assert.ok(h.store.listAudits(latestTaskId).some((a) => a.evidence_hash === run.verified_sha && a.verification_status === 'PASS'), '产品验收审计必须绑定最终 SHA');
     assert.equal(h.store.getRun(run.id).status, 'awaiting_acceptance');
   } finally { await cleanup(h); }
 });
@@ -134,5 +138,45 @@ test('v3.2 P0-1：真实 Planner no_task 触发产品级验收，而不是无条
     const lastRun = h.store.getRun(final.last_run_id);
     assert.equal(lastRun.result_json.productAcceptance, 'PASS');
     assert.equal(lastRun.status, 'awaiting_acceptance');
+  } finally { await cleanup(h); }
+});
+
+test('v3.2 P0-1：无冻结验收的 Loop 末轮 Run 标记 NOT_CONFIGURED 并可验收', { timeout: 120_000 }, async () => {
+  const h = setup({ queue: queueTasks });
+  try {
+    const project = await createProject(h, []);
+    const loop = await h.manager.create({ projectId: project.id, goal: '实现 A', mode: 'queue', maxRounds: 4, queue: [queueTasks[0]] });
+    const final = await waitFor(() => { const l = h.store.getLoop(loop.id); return l && ['completed', 'blocked', 'paused'].includes(l.status) ? l : null; }, 90_000, 'no contract final');
+    assert.equal(final.status, 'completed', final.stop_reason);
+    const run = h.store.getRun(final.last_run_id);
+    assert.equal(run.result_json.productAcceptance, 'NOT_CONFIGURED');
+    const accepted = h.orchestrator.acceptRun(run.id, { confirmLocalOnly: true });
+    assert.equal(accepted.status, 'accepted');
+  } finally { await cleanup(h); }
+});
+
+test('v3.2 P0-1：max_rounds 耗尽且产品验收未通过 => BLOCKED，不产生永不执行的修复任务', { timeout: 120_000 }, async () => {
+  const h = setup({ queue: queueTasks }); const acceptance = ['A 功能完成', 'B 功能完成', 'C 功能完成'];
+  try {
+    const project = await createProject(h, acceptance);
+    const loop = await h.manager.create({ projectId: project.id, goal: '只做 A', mode: 'queue', maxRounds: 1, queue: [queueTasks[0]] });
+    const final = await waitFor(() => { const l = h.store.getLoop(loop.id); return l && ['completed', 'blocked', 'paused'].includes(l.status) ? l : null; }, 90_000, 'max final');
+    assert.equal(final.status, 'blocked', final.stop_reason);
+    assert.equal(final.product_repair_count || 0, 0, 'max_rounds 边界不应生成无法执行的修复任务');
+    assert.equal(final.queue_json.length, 0);
+  } finally { await cleanup(h); }
+});
+
+
+test('v3.2 P0-R：产品级审计 await 期间 cancel/pause 不会被产品 gate 覆盖为 completed', { timeout: 120_000 }, async () => {
+  const h = setup({ queue: queueTasks, slowProductAuditMs: 1500 });
+  try {
+    const project = await createProject(h, ['A 功能完成', 'B 功能完成', 'C 功能完成']);
+    const loop = await h.manager.create({ projectId: project.id, goal: '实现 A/B/C', mode: 'queue', maxRounds: 4, queue: queueTasks });
+    await h.productAuditStarted;
+    await h.manager.cancel(loop.id, '用户取消');
+    await new Promise((r) => setTimeout(r, 2200));
+    const final = h.store.getLoop(loop.id);
+    assert.equal(final.status, 'cancelled', '产品审计返回后不得覆盖 cancel 为 completed/running');
   } finally { await cleanup(h); }
 });

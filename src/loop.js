@@ -319,7 +319,8 @@ export class LoopManager {
 
       // 2) 轮次上限：有质量门时，质量未 PASS/修复队列未清空绝不标记 completed。
       if (loop.round >= loop.max_rounds) {
-        const product = await this.productGate(loop, project);
+        const product = await this.productGate(loop, project, { allowRepair: false });
+        if (product.cancelled) return;
         if (!product.ok) {
           const reason = product.blocked ? product.reason : `达到最大轮次且产品级验收未通过：${(product.audit?.missing || []).join('；').slice(0, 600) || '证据不足'}`;
           this.store.updateLoop(id, { status: 'blocked', stop_reason: reason });
@@ -359,6 +360,7 @@ export class LoopManager {
       if (loop.mode === 'queue' || hasQualityRepair || queued.length > 0) {
         if (!queued.length) {
           const product = await this.productGate(loop, project);
+          if (product.cancelled) return;
           if (!product.ok) {
             if (product.queued) { this.schedule(id, 800); return; }
             const reason = product.blocked ? product.reason : `队列已空且产品级验收未通过：${(product.audit?.missing || []).join('；').slice(0, 600) || '证据不足'}`;
@@ -422,6 +424,7 @@ export class LoopManager {
           if (planned.action === 'no_task') {
             // no_task 触发产品级验收，而不是无条件完成或阻塞。
             const product = await this.productGate(loop, project);
+            if (product.cancelled) return;
             if (product.required && !product.ok) {
               if (product.queued) { this.schedule(id, 800); return; }
               const reason = product.blocked ? product.reason : `Planner no_task 后产品级验收未通过：${(product.audit?.missing || []).join('；').slice(0, 600) || '证据不足'}`;
@@ -506,13 +509,14 @@ export class LoopManager {
    * 产品级验收：所有计划任务结束后，在最终 Commit 上重新独立审计全部冻结条款。
    * 历史任务 PASS 只能作为累积证据，最终必须针对最终 Git SHA 重新确认。
    */
-  async productGate(loop, project, { run = null, task = null, baseCommit = '' } = {}) {
+  async productGate(loop, project, { run = null, task = null, baseCommit = '', allowRepair = true } = {}) {
     let expected = safeJsonArray(project?.config_json?.test_plan?.acceptance || project?.config_json?.test_plan?.acceptance_json || []);
     if (!expected.length && project?.local_path) {
       try { const f = path.join(project.local_path, 'TEST_PLAN.json'); if (fs.existsSync(f)) expected = safeJsonArray(JSON.parse(fs.readFileSync(f, 'utf8')).acceptance); } catch { /* ignore */ }
     }
     if (!expected.length) {
-      const latest = run || (loop.current_run_id ? this.store.getRun(loop.current_run_id) : null);
+      const history = Array.isArray(loop.history_json) ? loop.history_json : [];
+      const latest = run || (loop.current_run_id ? this.store.getRun(loop.current_run_id) : null) || history.slice().reverse().map((h) => h.runId ? this.store.getRun(h.runId) : null).find(Boolean);
       if (latest) this.store.updateRun(latest.id, { result_json: { ...(latest.result_json || {}), productAcceptance: 'NOT_CONFIGURED' } });
       return { ok: true, required: false };
     }
@@ -530,7 +534,9 @@ export class LoopManager {
     } catch (err) {
       return { ok: false, blocked: true, reason: `产品级验收异常：${err.message}` };
     }
+    if (!loopStillRunning(this.store, loop.id)) return { ok: false, cancelled: true, audit };
     if (audit?.ok) {
+      if (!loopStillRunning(this.store, loop.id)) return { ok: false, cancelled: true, audit };
       if (latestRun) {
         this.store.updateRun(latestRun.id, {
           result_json: { ...(latestRun.result_json || {}), productAcceptance: 'PASS', productAcceptanceAuditId: audit.auditRow?.id || '', productPlanHead: planHead, productAcceptanceAt: nowIso() },
@@ -540,6 +546,11 @@ export class LoopManager {
       }
       this.emit(loop, 'product_acceptance_passed', `产品级验收 PASS：${expected.length} 条冻结条款在最终 Commit ${planHead.slice(0, 8)} 有独立审计证据`, 'info', { planHead, auditId: audit.auditRow?.id || '' });
       return { ok: true, required: true, audit, planHead };
+    }
+    if (!allowRepair) {
+      const reason = `产品级验收未通过：${(audit?.missing || []).join('；').slice(0, 800) || audit?.status || 'UNKNOWN'}；max_rounds 已耗尽，保留检查点 BLOCKED`;
+      this.emit(loop, 'product_acceptance_blocked', reason, 'warn', { status: audit?.status, missing: audit?.missing || [] });
+      return { ok: false, blocked: true, reason, audit };
     }
     const maxProductRepair = Math.max(0, Math.min(3, Number(project?.config_json?.max_product_repairs ?? 2)));
     const count = Number(loop.product_repair_count || 0);
@@ -817,7 +828,8 @@ export class LoopManager {
     let nextStatus = 'running';
     let stopReason = '';
     if (nextRound >= loop.max_rounds) {
-      const product = await this.productGate({ ...loop, round: nextRound, history_json: history, current_run_id: run.id }, project, { run });
+      const product = await this.productGate({ ...loop, round: nextRound, history_json: history, current_run_id: run.id }, project, { run, allowRepair: false });
+      if (product.cancelled) return;
       if (!product.ok) {
         nextStatus = 'blocked';
         stopReason = product.blocked ? product.reason : `达到最大轮次且产品级验收未通过：${(product.audit?.missing || []).join('；').slice(0, 600)}`;

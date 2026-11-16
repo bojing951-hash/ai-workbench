@@ -86,7 +86,6 @@ test('v3.1 P1-2：released 预留用同 key 重试必须重新做完整额度检
     store.addLlmUsage({ source: 'test', sourceId: 'used-900', provider: 'deepseek', providerKnown: true, tokensIn: 900, tokensOut: 0, budgetScope: 'global' });
     const retry = store.reserveModelBudget({ id: 'res-released-2', requestKey: 'retry-key', provider: 'deepseek', estimatedTokens: 400, maxTokens: 1_000, maxCostCny: 30, minReserveTokens: 0 });
     assert.equal(retry.ok, false, '已释放的 400 预留不能在仅剩 100 额度时无检查重新占用');
-    assert.equal(store.getAction ? true : true, true);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 test('v3.1 P1-2：未知用量保留估算额度，不被视为免费', () => {

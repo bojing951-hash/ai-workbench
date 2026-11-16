@@ -24,7 +24,7 @@
 
 ## 验证基线
 
-- 串行全量：**296 tests / 292 pass / 4 skipped / 0 fail**（最终环境 Docker/symlink 不可用）。
+- 串行全量：**299 tests / 295 pass / 4 skipped / 0 fail**（最终环境 Docker/symlink 不可用）。
 - Playwright：15/15 PASS，page errors 0。
 - 真实 E2E：**BLOCKED**（剩余约 8,654 tokens < 10,000 单任务预检；无新项目 DSH 授权）。
 - 24H：**NOT_VERIFIED**。

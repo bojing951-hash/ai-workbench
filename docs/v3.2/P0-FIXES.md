@@ -40,3 +40,17 @@
 - GLM 逐次 `resolveLlmIdentity`，unknown 不豁免；
 - 不修改预算上限。
 - 测试：`tests/v3-budget-reservation.test.js` 7 个场景 + 多进程。
+
+## 复审补充修复
+
+- **P0-R**：产品级审计 await 期间 pause/cancel 不得被覆盖：
+  - productGate 在审计返回后、写 Run/Loop 状态前再次检查 `loopStillRunning`；
+  - 四个调用点（max/queue/no_task/completeRound）收到 `cancelled` 直接返回；
+  - `tests/v32-product-gate.test.js` 增加慢审计 + cancel 测试。
+- **P1-A**：无 `testPlan.acceptance` 的 Loop 末轮：
+  - productGate 从 history 找 latest run，写 `productAcceptance=NOT_CONFIGURED`；
+  - acceptRun 允许 NOT_CONFIGURED，测试覆盖。
+- **P1-B**：max_rounds 边界：
+  - 产品 gate `allowRepair:false`，不生成无法执行的修复任务、不自增 repair count；
+  - Run/Loop 保持 BLOCKED，测试覆盖。
+- **P2**：TTL 到期扫描移出预留事务，避免额度检查失败 ROLLBACK 把 expired 恢复为 reserved。

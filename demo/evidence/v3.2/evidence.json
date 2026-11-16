@@ -3,8 +3,8 @@
   "baseline": "v3.1.0 / PR #13",
   "branch": "v3.2.0",
   "tests": {
-    "total": 296,
-    "pass": 292,
+    "total": 299,
+    "pass": 295,
     "skipped": 4,
     "fail": 0,
     "log": "demo/evidence/v3.2/tests.log"

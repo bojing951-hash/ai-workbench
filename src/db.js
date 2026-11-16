@@ -1145,10 +1145,10 @@ export class Store {
   reserveModelBudget({ id, requestKey = '', provider = 'unknown', model = '', estimatedTokens = 0, estimatedCostCny = 0, maxTokens = 0, maxCostCny = 0, minReserveTokens = 0, cacheTokenWeight = 0.1, exemptProviders = ['glm'], ttlMs = 10 * 60 * 1000 } = {}) {
     const now = nowIso();
     const expires = new Date(Date.now() + ttlMs).toISOString();
+    // TTL 结算在事务外先提交；即使随后额度检查失败回滚，不能把已过期预留重新变回 reserved。
+    this.db.prepare("UPDATE model_reservations SET status='unknown', usage_known=0 WHERE status='reserved' AND expires_at<=?").run(now);
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      // 预留 TTL 到期不等于调用没产生费用：转为 unknown 并继续占用估算额度，等待人工对账/结算。
-      this.db.prepare("UPDATE model_reservations SET status='unknown', usage_known=0 WHERE status='reserved' AND expires_at<=?").run(now);
       let retryExisting = null;
       if (requestKey) {
         const existing = this.db.prepare('SELECT * FROM model_reservations WHERE request_key=?').get(requestKey);

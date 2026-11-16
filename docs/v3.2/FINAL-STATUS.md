@@ -3,7 +3,7 @@
 1. 两项 P0 是否修复：**代码/离线测试层面是**；真实 Provider E2E 未执行。
 2. 三阶段产品能否正常完成：**离线真实 SQLite/Git/Orchestrator/Loop + fake 模型 PASS**；A/B/C 正向、缺失 B 阻断、修改 A 失效、Planner no_task 触发产品验收。
 3. 预算是否经得住重试/并发：**PASS（离线）**：released retry 重检、多进程并发、settled 重放、unknown 不免费、DSH 隔离。
-4. 现有工程测试：**296 tests / 292 pass / 4 skipped / 0 fail**（Docker/symlink 环境缺失）。
+4. 现有工程测试：**299 tests / 295 pass / 4 skipped / 0 fail**（Docker/symlink 环境缺失）。
 5. 真实零人工 E2E：**BLOCKED**。
 6. 24H：**NOT_VERIFIED**。
 7. 剩余风险：
