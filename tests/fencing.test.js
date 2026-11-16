@@ -91,3 +91,50 @@ test('v2.7 fencing：两个独立进程竞争同一项目，只有一个获得�
     assert.ok(winner.fence >= 1);
   } finally { store.close(); }
 });
+
+test('v2.7 故障注入：启动恢复只清死亡进程租约，不抢活进程租约', () => {
+  const { store } = mk();
+  try {
+    store.createProject({ id: 'pdead', name: 'dead', localPath: '/tmp/none', testCommand: 'true' });
+    store.createProject({ id: 'plive', name: 'live', localPath: '/tmp/none2', testCommand: 'true' });
+    const dead = store.acquireProjectLeaseFenced('pdead', 'wb:999999:mwiw:dead', 30 * 60 * 1000);
+    const live = store.acquireProjectLeaseFenced('plive', `wb:${process.pid}:mwiw:live`, 30 * 60 * 1000);
+    assert.equal(dead.ok, true); assert.equal(live.ok, true);
+    const cleaned = store.clearLeasesFromDeadProcesses();
+    assert.equal(cleaned.projects, 1);
+    assert.equal(store.getProjectLease('pdead').write_owner, '', '死亡进程租约必须清理');
+    assert.equal(store.getProjectLease('plive').write_owner, `wb:${process.pid}:mwiw:live`, '活进程租约不得被清理');
+  } finally { store.close(); }
+});
+
+test('v2.7 故障注入：启动恢复不得把另一个活 Workbench 进程的 running run 标成 interrupted', async () => {
+  const { config, store } = mk();
+  try {
+    const { Orchestrator } = await import('../src/orchestrator.js');
+    const { EventBus } = await import('../src/bus.js');
+    store.createProject({ id: 'plive2', name: 'live2', localPath: '/tmp/none3', testCommand: 'true' });
+    const lease = store.acquireProjectLeaseFenced('plive2', `wb:${process.pid}:other-live`, 60_000);
+    assert.equal(lease.ok, true);
+    store.createRun({ id: 'run-live', projectId: 'plive2', planId: 'pl1', goal: 'g', mode: 'single', status: 'running' });
+    store.createTasks([{ id: 't-live', projectId: 'plive2', planId: 'pl1', runId: 'run-live', seq: 1, title: 't', acceptance: ['a'], testCommand: 'true', status: 'coding' }]);
+    const o = new Orchestrator({ config, store, bus: new EventBus(), deps: { runAgent: async () => ({}), chooseAgent: async () => 'claude', runAudit: async () => ({}), checkAgents: async () => [] } });
+    const res = o.recoverOrphans();
+    assert.ok(res.skippedLiveOwners.includes('run-live'), '必须跳过活 owner 的 run');
+    assert.equal(store.getRun('run-live').status, 'running', '活 owner 的 run 不得被标 interrupted');
+  } finally { store.close(); }
+});
+
+test('v2.7 故障注入：启动恢复不得把另一个活 Workbench 进程的 running loop 标成 interrupted', async () => {
+  const { config, store } = mk();
+  try {
+    const { LoopManager } = await import('../src/loop.js');
+    const { EventBus } = await import('../src/bus.js');
+    store.createProject({ id: 'plive3', name: 'live3', localPath: '/tmp/none4', testCommand: 'true' });
+    store.acquireProjectLeaseFenced('plive3', `wb:${process.pid}:other-live-loop`, 60_000);
+    store.createLoop({ id: 'loop-live', projectId: 'plive3', goal: 'g', mode: 'plan', maxRounds: 2 });
+    const m = new LoopManager({ config, store, bus: new EventBus(), orchestrator: { emit: () => {}, startRun: async () => ({}) } });
+    const res = m.recover();
+    assert.ok(res.skipped.includes('loop-live'));
+    assert.equal(store.getLoop('loop-live').status, 'running');
+  } finally { store.close(); }
+});

@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-16T06:58:51.740Z",
+  "projectId": "proj_mwiq4y5u848f07c5",
+  "ok": true,
+  "commandFailed": false,
+  "issueClass": "",
+  "exitCode": 0,
+  "sandbox": "env-only-fallback",
+  "sandboxFallback": "sandbox-exec unavailable (EPERM); executed with minimal env only",
+  "durationMs": 103,
+  "stdout": "{\"requirements\":[{\"id\":\"R1\",\"status\":\"pass\",\"evidence\":\"隐藏检查：添加/重复拒绝通过\",\"issues\":[]},{\"id\":\"R2\",\"status\":\"pass\",\"evidence\":\"隐藏检查：优先级/去重/完成与否/unplanned 通过\",\"issues\":[]},{\"id\":\"R3\",\"status\":\"pass\",\"evidence\":\"隐藏检查：持久化与损坏文件错误通过\",\"issues\":[]},{\"id\":\"R4\",\"status\":\"pass\",\"evidence\":\"隐藏检查：CLI plan JSON 输出通过\",\"issues\":[]}],\"issues\":[]}\n",
+  "stderr": ""
+}

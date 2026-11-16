@@ -100,12 +100,22 @@ export class LoopManager {
 
   /** 启动时把未完成的循环标记为 interrupted，等待人工/API 恢复。 */
   recover() {
+    const alive = (owner) => {
+      const m = String(owner || '').match(/^wb:(\d+):/);
+      if (!m) return false;
+      try { process.kill(Number(m[1]), 0); return true; } catch (err) { return err.code !== 'ESRCH'; }
+    };
     const loops = this.store.listLoops({ status: 'running' });
+    const skipped = [];
+    const recovered = [];
     for (const loop of loops) {
+      const lease = this.store.getProjectLease(loop.project_id);
+      if (lease?.write_owner && lease.lease_expires_at > new Date().toISOString() && alive(lease.write_owner)) { skipped.push(loop.id); continue; }
       this.store.updateLoop(loop.id, { status: 'interrupted', stop_reason: '工作台进程重启，循环已中断（可恢复）' });
       this.emit(loop, 'loop_interrupted', '检测到未完成的研发循环，已标记中断；状态与历史已保留', 'warn');
+      recovered.push(loop.id);
     }
-    return loops.map((l) => l.id);
+    return { recovered, skipped };
   }
 
   emit(loop, type, message, level = 'info', data = {}) {
@@ -157,7 +167,17 @@ export class LoopManager {
           return;
         }
         if (run.status === 'awaiting_acceptance' || run.status === 'accepted') {
-          await this.completeRound(loop, project, run);
+          let controlLease = false;
+          if (this.orchestrator?.ensureControlLease) {
+            try { this.orchestrator.ensureControlLease(project.id); controlLease = true; }
+            catch (err) {
+              this.emit(loop, 'loop_write_lease_blocked', `质量轮次/历史写入未取得项目写租约，稍后重试：${err.message}`, 'warn');
+              this.schedule(id, 5000);
+              return;
+            }
+          }
+          try { await this.completeRound(loop, project, run); }
+          finally { if (controlLease) this.orchestrator.releaseProjectLease(project.id); }
           this.schedule(id, 1200);
           return;
         }
@@ -181,17 +201,21 @@ export class LoopManager {
       // 3) 选择下一任务
       let task = null;
       let rationale = '';
-      if (loop.mode === 'queue') {
-        const queue = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
-        if (!queue.length) {
+      let queuedTask = null;
+      const queued = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
+      const hasQualityRepair = queued.some((t) => t && t.qualityIssueId);
+      // plan 模式也允许质量闭环产生的修复任务优先于新规划；普通任务仍遵循显式队列。
+      if (loop.mode === 'queue' || hasQualityRepair) {
+        if (!queued.length) {
           this.store.updateLoop(id, { status: 'completed', stop_reason: '队列已空（没有伪造任务）' });
           this.emit(loop, 'loop_completed', '研发循环完成：没有更多真实任务（队列为空）');
           return;
         }
-        const next = queue.shift();
+        const next = queued.shift();
+        queuedTask = next;
         task = { ...next, seq: 1, acceptance: Array.isArray(next.acceptance) ? next.acceptance : [next.title], agent: next.agent || 'auto', testCommand: next.testCommand || '' };
-        this.store.updateLoop(id, { queue_json: queue });
-        rationale = '来自显式任务队列';
+        this.store.updateLoop(id, { queue_json: queued });
+        rationale = next.qualityIssueId ? `来自质量闭环修复任务（${next.qualityIssueId}）` : '来自显式任务队列';
       } else {
         try {
           const planned = await planNextTask({
@@ -237,15 +261,26 @@ export class LoopManager {
       }
 
       // 4) 启动本轮 run（单任务）
-      const started = await this.orchestrator.startRun({
-        projectId: project.id,
-        goal: `[Loop round ${loop.round + 1}] ${task.title}`,
-        mode: 'single',
-        tasks: [task],
-        acceptance: task.acceptance,
-        maxAttempts: Number(project.budget_json?.max_attempts || this.config.budget.maxAttempts),
-      });
-      loop = this.store.updateLoop(id, { current_run_id: started.runId, last_run_id: started.runId });
+      let started;
+      try {
+        started = await this.orchestrator.startRun({
+          projectId: project.id,
+          goal: `[Loop round ${loop.round + 1}] ${task.title}`,
+          mode: 'single',
+          tasks: [task],
+          acceptance: task.acceptance,
+          maxAttempts: Number(project.budget_json?.max_attempts || this.config.budget.maxAttempts),
+        });
+      } catch (err) {
+        // startRun 失败（租约竞争/预算/进程状态）必须把任务放回队列，不能静默丢失。
+        const current = this.store.getLoop(id);
+        const restore = Array.isArray(current?.queue_json) ? [...current.queue_json] : [];
+        if (queuedTask && !restore.some((t) => t.qualityIssueId && queuedTask.qualityIssueId && t.qualityIssueId === queuedTask.qualityIssueId) && !restore.some((t) => !queuedTask.qualityIssueId && t.title === queuedTask.title)) restore.unshift(queuedTask);
+        this.store.updateLoop(id, { queue_json: restore, status: 'paused', stop_reason: `启动运行失败，任务已保留：${err?.message || err}` });
+        this.emit(loop, 'loop_start_failed', `启动运行失败，任务已放回队列，未丢失：${err?.message || err}`, 'warn', { task: task.title });
+        return;
+      }
+      loop = this.store.updateLoop(id, { current_run_id: started.runId, last_run_id: started.runId, queue_json: (Array.isArray(loop.queue_json) ? loop.queue_json : []).filter((t) => t !== queuedTask) });
       this.emit(loop, 'loop_round_started', `第 ${loop.round + 1}/${loop.max_rounds} 轮开始：${task.title}${rationale ? `（${rationale}）` : ''}`, 'info', { task: task.title, runId: started.runId });
       this.schedule(id, 5000);
     } finally {
@@ -313,7 +348,7 @@ export class LoopManager {
     let quality = null;
     if (qcfg) {
       try {
-        const qualityRun = runQualityCommand({ config: this.config, project });
+        const qualityRun = await runQualityCommand({ config: this.config, project });
         const audits = this.store.listTasks({ projectId: project.id }).flatMap((t) => this.store.listAudits(t.id));
         quality = buildCoverageMatrix({ project, qualityRun, audits });
         history[history.length - 1].quality = quality;
@@ -339,13 +374,7 @@ export class LoopManager {
             this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
             return;
           }
-          if (cycles <= qcfg.maxCycles && loop.mode !== 'queue') {
-            const reason = '质量闭环发现可修复 P0/P1，但当前循环为 plan 模式，自动修复任务只支持 queue 模式；已保留矩阵和检查点，不伪造修复';
-            this.store.updateLoop(loop.id, { round: loop.round + 1, current_run_id: '', history_json: history, status: 'blocked', stop_reason: reason });
-            this.emit(loop, 'quality_blocked', reason, 'warn', { quality });
-            return;
-          }
-          if (cycles <= qcfg.maxCycles && loop.mode === 'queue') {
+          if (cycles <= qcfg.maxCycles) {
             const queue = Array.isArray(loop.queue_json) ? [...loop.queue_json] : [];
             const existingKeys = new Set(queue.map((t) => t.queueKey).filter(Boolean));
             const fresh = repairTasks.filter((t) => !existingKeys.has(t.queueKey));

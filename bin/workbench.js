@@ -332,7 +332,8 @@ async function main() {
     };
     const recovered = orchestrator.recoverOrphans();
     const recoveredLoops = loops.recover();
-    if (recoveredLoops.length) console.log(`[recover] ${recoveredLoops.length} 个研发循环已标记中断，可在界面恢复`);
+    if (recoveredLoops.recovered?.length) console.log(`[recover] ${recoveredLoops.recovered.length} 个研发循环已标记中断，可在界面恢复`);
+    if (recoveredLoops.skipped?.length) console.log(`[recover] ${recoveredLoops.skipped.length} 个研发循环由其他活 Workbench 持有，已跳过`);
     if (recovered.recoveredRuns.length) console.log(`[recover] ${recovered.recoveredRuns.length} 个中断运行已标记，可在界面恢复`);
     const server = await startServer({ config: serveConfig, store, orchestrator, loops });
     const shutdown = () => {

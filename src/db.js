@@ -802,11 +802,12 @@ export class Store {
     return this.db.prepare('SELECT * FROM attempts WHERE task_id = ? ORDER BY created_at ASC').all(taskId);
   }
 
-  markRunningAttemptsInterrupted() {
+  markRunningAttemptsInterrupted(runIds = null) {
     const now = nowIso();
-    return this.db
-      .prepare("UPDATE attempts SET status='interrupted', cost_source=CASE WHEN cost_cny=0 AND tokens_in=0 AND tokens_out=0 AND tokens_cache=0 THEN 'unknown' ELSE cost_source END, error=CASE WHEN error='' THEN '工作台进程中断：厂商最终用量未返回，费用/Tokens 标记为未知（不伪造为 0）' ELSE error END, updated_at=? WHERE status='running'")
-      .run(now).changes;
+    const ids = Array.isArray(runIds) ? runIds.filter(Boolean) : null;
+    if (ids && !ids.length) return 0;
+    const sql = `UPDATE attempts SET status='interrupted', cost_source=CASE WHEN cost_cny=0 AND tokens_in=0 AND tokens_out=0 AND tokens_cache=0 THEN 'unknown' ELSE cost_source END, error=CASE WHEN error='' THEN '工作台进程中断：厂商最终用量未返回，费用/Tokens 标记为未知（不伪造为 0）' ELSE error END, updated_at=? WHERE status='running'${ids ? ` AND run_id IN (${ids.map(() => '?').join(',')})` : ''}`;
+    return this.db.prepare(sql).run(now, ...(ids || [])).changes;
   }
 
   // ---------------- audits ----------------
@@ -1136,6 +1137,42 @@ export class Store {
     // fence 不重置；新 owner 通过自增 fence 获得更高写权，旧 token 无法再写。
     return { projects: this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='' WHERE lease_expires_at<>'' AND lease_expires_at<?").run(now).changes,
       runs: this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE lease_expires_at<>'' AND lease_expires_at<?").run(now).changes };
+  }
+
+  /**
+   * 启动恢复：清理明显已死亡进程留下的租约。
+   * 只按 owner 里的 `wb:<pid>:` 判断进程是否存活；其他 Workbench 实例仍活着时不清，
+   * 避免两个 HTTP 服务共库时启动清租约互相抢写。
+   */
+  clearLeasesFromDeadProcesses() {
+    const alive = (pid) => {
+      const n = Number(pid);
+      if (!Number.isInteger(n) || n <= 0) return true; // 非标准 owner 不自动清，保持 fail-closed
+      if (n === process.pid) return true;
+      try { process.kill(n, 0); return true; } catch (err) { return err.code !== 'ESRCH'; }
+    };
+    const dead = (owner) => {
+      const m = String(owner || '').match(/^wb:(\d+):/);
+      return m ? !alive(m[1]) : false;
+    };
+    let projects = 0; let runs = 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of this.db.prepare("SELECT id, write_owner FROM projects WHERE write_owner<>''").all()) {
+        if (dead(row.write_owner)) {
+          this.db.prepare("UPDATE projects SET write_owner='', lease_expires_at='', updated_at=? WHERE id=? AND write_owner=?").run(nowIso(), row.id, row.write_owner);
+          projects += 1;
+        }
+      }
+      for (const row of this.db.prepare("SELECT id, lease_owner FROM runs WHERE lease_owner<>''").all()) {
+        if (dead(row.lease_owner)) {
+          this.db.prepare("UPDATE runs SET lease_owner='', lease_expires_at='' WHERE id=? AND lease_owner=?").run(row.id, row.lease_owner);
+          runs += 1;
+        }
+      }
+      this.db.exec('COMMIT');
+    } catch (err) { try { this.db.exec('ROLLBACK'); } catch { /* ignore */ } throw err; }
+    return { projects, runs };
   }
 
   /** run 租约不能覆盖其他有效执行者；fence 只能前进，不能回退。 */

@@ -19,7 +19,7 @@
 | 自主发现缺陷率/误报/修复率 | **2 个确认产品缺陷 / 2 个修复** | DSH planner + 隐藏 R1；FINAL-ACCEPTANCE |
 | 24 小时墙钟验收 | **NOT_VERIFIED** | 产品提前完成；未制造任务；详见 24H-ACCEPTANCE |
 | 通用项目回放 | IMPLEMENTED + TESTED | 去 CDL 硬编码；项目选择器；事件分页 7 测试 |
-| 原有 212 测试保留 | PASS | 总 222/222 |
+| 原有 212 测试保留 | PASS | 总 237/237 |
 | 产品 CDL 未修改 | PASS | 产品仓库 git status 干净；未重跑 |
 | A/B 零干扰 | PASS（操作层面） | 未访问/操作；新接口按名称过滤 |
 | 预算未提高/历史未重置 | PASS | 未修改配置/DB 用量 |

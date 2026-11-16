@@ -106,8 +106,8 @@
   "duration": {
     "start": "2026-11-16T03:48:56.947Z",
     "end": "2026-11-16T05:57:11.275Z",
-    "seconds": 7694328,
-    "humanReadable": "2h08m15s"
+    "seconds": 7694,
+    "humanReadable": "2h08m14s"
   },
   "foundDefects": [
     {

@@ -9,14 +9,18 @@
  * - 质量命令由验收方预置（隐藏测试/静态检查），不把预置缺陷清单交给 Coding Agent。
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execCapture } from './runner.js';
+import { buildTestEnv } from './security.js';
 import { PolicyError, redact } from './policy.js';
 import { nowIso } from './util.js';
 
 const STATUS = ['PASS', 'FAIL', 'UNKNOWN', 'BLOCKED'];
 const NORM = { pass: 'PASS', passed: 'PASS', fail: 'FAIL', failed: 'FAIL', unproven: 'UNKNOWN', unknown: 'UNKNOWN', blocked: 'BLOCKED', blocked_by_policy: 'BLOCKED' };
 const PRIORITY = { p0: 'P0', p1: 'P1', p2: 'P2' };
+function osHome() { return process.env.HOME || process.env.USERPROFILE || '/tmp'; }
+function requireTmpDir() { return os.tmpdir(); }
 
 export function qualityConfig(project) {
   const cfg = project?.config_json?.quality;
@@ -39,8 +43,12 @@ export function qualityConfig(project) {
     qualityCommand: String(cfg.quality_command || cfg.qualityCommand || ''),
     maxCycles: Math.max(0, Math.min(5, Number(cfg.max_cycles ?? 2))),
     maxIssuesPerCycle: Math.max(1, Math.min(20, Number(cfg.max_issues_per_cycle ?? 6))),
-    timeoutMs: Math.max(10_000, Number(cfg.timeout_ms || 300_000)),
+    timeoutMs: Math.max(500, Number(cfg.timeout_ms || 300_000)),
     stopOnUnknown: cfg.stop_on_unknown !== false,
+    envAllowlist: Array.isArray(cfg.env_allowlist) ? cfg.env_allowlist : [],
+    allowedCommands: Array.isArray(cfg.allowed_commands) ? cfg.allowed_commands.map(String) : [],
+    denyNetwork: cfg.deny_network !== false,
+    sandbox: String(cfg.sandbox || 'auto'),
   };
 }
 
@@ -58,28 +66,86 @@ function parseJsonOutput(stdout) {
   return null;
 }
 
-/** 执行质量命令（隐藏测试/静态检查由项目配置提供；不在本模块写产品代码）。 */
-export function runQualityCommand({ config, project }) {
+/**
+ * 异步执行质量命令（隐藏测试/静态检查由项目配置提供；不在本模块写产品代码）。
+ *
+ * P0 安全约束：
+ * - 不继承宿主 process.env；使用 buildTestEnv + 项目显式 env allowlist；
+ * - 不传递 API Key、GitHub Token 或无关凭据；
+ * - 显式命令 allowlist（若配置）；无 shell 凭据泄露；
+ * - 异步可取消/超时，避免阻塞 Workbench 健康检查事件循环；
+ * - 非零退出码、超时、spawn 异常、无效 JSON 一律 commandFailed，不能 PASS。
+ */
+export async function runQualityCommand({ config, project, signal = null }) {
   const q = qualityConfig(project);
-  if (!q) return { ok: false, reason: '项目未配置质量需求/quality_command', skipped: true, requirements: [], issues: [], stdout: '', stderr: '' };
-  if (!q.qualityCommand) return { ok: false, reason: '项目未配置 quality_command，不能伪造质量通过', requirements: [], issues: [], stdout: '', stderr: '' };
+  if (!q) return { ok: false, commandFailed: true, reason: '项目未配置质量需求/quality_command', skipped: true, requirements: [], issues: [], stdout: '', stderr: '', exitCode: null };
+  if (!q.qualityCommand) return { ok: false, commandFailed: true, reason: '项目未配置 quality_command，不能伪造质量通过', requirements: [], issues: [], stdout: '', stderr: '', exitCode: null };
   const cwd = project.local_path;
-  if (!cwd || !fs.existsSync(cwd)) return { ok: false, reason: `项目目录不存在：${cwd}`, requirements: [], issues: [], stdout: '', stderr: '' };
-  const res = spawnSync('/bin/sh', ['-c', q.qualityCommand], {
-    cwd,
-    encoding: 'utf8',
-    timeout: q.timeoutMs,
-    maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env, WORKBENCH_PROJECT_ID: project.id, WORKBENCH_PROJECT_REPO: cwd, WORKBENCH_QUALITY_MODE: '1' },
+  if (!cwd || !fs.existsSync(cwd)) return { ok: false, commandFailed: true, reason: `项目目录不存在：${cwd}`, requirements: [], issues: [], stdout: '', stderr: '', exitCode: null };
+  if (q.allowedCommands.length && !q.allowedCommands.includes(q.qualityCommand)) {
+    return { ok: false, commandFailed: true, reason: '质量命令不在项目 allowlist 中，已拒绝执行（安全策略）', requirements: [], issues: [], stdout: '', stderr: '', exitCode: null };
+  }
+  const home = fs.mkdtempSync(path.join(requireTmpDir(), 'wb-quality-home-'));
+  const extraEnv = { WORKBENCH_PROJECT_ID: project.id, WORKBENCH_PROJECT_REPO: cwd, WORKBENCH_QUALITY_MODE: '1' };
+  // 仅项目显式允许的环境变量可以进入质量检查；buildTestEnv 本身绝不做 process.env 全量继承。
+  const allowExtra = {};
+  for (const key of q.envAllowlist) if (process.env[key] !== undefined) allowExtra[key] = process.env[key];
+  const env = buildTestEnv({ config, project, homeDir: home, extraEnv: { ...allowExtra, ...extraEnv } });
+  const started = Date.now();
+  const sandboxMode = process.platform === 'darwin' && q.sandbox !== 'off' && q.denyNetwork && fs.existsSync('/usr/bin/sandbox-exec') ? 'macos' : 'env-only';
+  let command = '/bin/sh';
+  let args = ['-c', q.qualityCommand];
+  if (sandboxMode === 'macos') {
+    const profilePath = path.join(home, 'quality.sandbox');
+    const sensitiveRead = [path.join(config.root, '.env'), config.paths.dataDir, path.join(osHome(), '.dsh'), path.join(osHome(), '.ssh')];
+    const sensitiveWrite = [config.paths.dataDir, path.join(osHome(), '.dsh'), path.join(osHome(), '.ssh')];
+    const quote = (p) => `"${String(p).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    const profile = [
+      '(version 1)',
+      '(allow default)',
+      '(deny network*)',
+      ...sensitiveRead.map((p) => `(deny file-read* (subpath ${quote(p)}))`),
+      ...sensitiveWrite.map((p) => `(deny file-write* (subpath ${quote(p)}))`),
+    ].join('\n');
+    fs.writeFileSync(profilePath, profile);
+    command = '/usr/bin/sandbox-exec';
+    args = ['-p', profile, '/bin/sh', '-c', q.qualityCommand];
+  }
+  let res = await execCapture(command, args, {
+    cwd, env, timeoutMs: q.timeoutMs, signal, abortReason: 'quality-command-aborted',
+    logPath: path.join(home, 'quality.log'),
   });
+  let sandboxFallback = '';
+  // 当前受限宿主可能连 sandbox-exec 都不允许（sandbox_apply EPERM）；此时显式降级为最小环境执行并记录，
+  // 不把沙箱基础设施失败误判为产品缺陷。
+  if (sandboxMode === 'macos' && res.code !== 0 && /sandbox_apply:\s*Operation not permitted/i.test(String(res.stderr || ''))) {
+    sandboxFallback = 'sandbox-exec unavailable (EPERM); executed with minimal env only';
+    res = await execCapture('/bin/sh', ['-c', q.qualityCommand], {
+      cwd, env, timeoutMs: q.timeoutMs, signal, abortReason: 'quality-command-aborted',
+      logPath: path.join(home, 'quality.log'),
+    });
+  }
   const stdout = String(res.stdout || '');
   const stderr = String(res.stderr || '');
+  const base = { stdout, stderr, exitCode: res.code, timedOut: !!res.timedOut, spawnError: !!res.spawnError, durationMs: Date.now() - started, sandbox: sandboxFallback ? 'env-only-fallback' : sandboxMode, sandboxFallback };
+  if (res.spawnError) {
+    const reason = `质量命令无法启动：${stderr.slice(0, 600) || 'spawn error'}`;
+    return { ok: false, commandFailed: true, reason, issueClass: 'SPAWN_ERROR', ...base, requirements: [], issues: [{ id: 'quality-command-spawn', title: reason, priority: 'P0', evidence: reason, requirementId: '', hypothesis: true, source: 'quality-command' }] };
+  }
+  if (res.timedOut) {
+    const reason = `质量命令超时（${q.timeoutMs}ms），已终止子进程`;
+    return { ok: false, commandFailed: true, reason, issueClass: 'TIMEOUT', ...base, requirements: [], issues: [{ id: 'quality-command-timeout', title: reason, priority: 'P0', evidence: reason, requirementId: '', hypothesis: true, source: 'quality-command' }] };
+  }
+  if (res.code !== 0) {
+    const reason = `质量命令非零退出码 exit=${res.code}；非零退出不得视为成功检查`;
+    return { ok: false, commandFailed: true, reason, issueClass: 'NONZERO_EXIT', ...base, requirements: [], issues: [{ id: 'quality-command-nonzero', title: reason, priority: 'P0', evidence: redact((stderr || stdout || reason).slice(-4000), config), requirementId: '', hypothesis: true, source: 'quality-command' }] };
+  }
   const parsed = parseJsonOutput(stdout);
   if (!parsed) {
-    const reason = res.error?.message || (res.timedOut ? '质量命令超时' : `质量命令未返回 JSON（exit=${res.status}）`);
-    return { ok: false, commandFailed: true, reason, requirements: [], issues: [{ id: 'quality-command-error', title: reason, priority: 'P1', evidence: redact((stderr || stdout || reason).slice(-4000), config), requirementId: '', hypothesis: true, source: 'quality-command' }], stdout, stderr, exitCode: res.status };
+    const reason = `质量命令 exit=0 但输出不是有效 JSON（损坏/截断），不能判定 PASS`;
+    return { ok: false, commandFailed: true, reason, issueClass: 'INVALID_JSON', ...base, requirements: [], issues: [{ id: 'quality-command-invalid-json', title: reason, priority: 'P0', evidence: redact((stdout || stderr || reason).slice(-4000), config), requirementId: '', hypothesis: true, source: 'quality-command' }] };
   }
-  return { ok: true, parsed, requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [], issues: Array.isArray(parsed.issues) ? parsed.issues : [], stdout, stderr, exitCode: res.status, reason: '' };
+  return { ok: true, parsed, requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [], issues: Array.isArray(parsed.issues) ? parsed.issues : [], ...base, reason: '' };
 }
 
 function evidenceText(value) {

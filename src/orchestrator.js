@@ -245,11 +245,23 @@ export class Orchestrator {
   // 启动恢复
   // ============================================================
   recoverOrphans() {
+    const deadLeases = this.store.clearLeasesFromDeadProcesses();
     const leases = this.store.clearExpiredLeases();
     const active = this.store.listActiveRuns();
     const recovered = [];
+    const skippedLiveOwners = [];
+    const ownerAlive = (owner) => {
+      const m = String(owner || '').match(/^wb:(\d+):/);
+      if (!m) return false;
+      try { process.kill(Number(m[1]), 0); return true; } catch (err) { return err.code !== 'ESRCH'; }
+    };
     for (const run of active) {
       if (run.status === 'running' || run.status === 'queued') {
+        const lease = this.store.getProjectLease(run.project_id);
+        if (lease?.write_owner && lease.lease_expires_at > nowIso() && lease.write_owner !== this.instanceId && ownerAlive(lease.write_owner)) {
+          skippedLiveOwners.push(run.id);
+          continue;
+        }
         this.store.updateRun(run.id, {
           status: RunStatus.INTERRUPTED,
           stop_reason: '工作台进程重启导致运行中断，可在界面点击"恢复运行"从断点继续',
@@ -264,8 +276,8 @@ export class Orchestrator {
         recovered.push(run.id);
       }
     }
-    const attempts = this.store.markRunningAttemptsInterrupted();
-    return { recoveredRuns: recovered, interruptedAttempts: attempts, expiredLeases: leases };
+    const attempts = this.store.markRunningAttemptsInterrupted(recovered);
+    return { recoveredRuns: recovered, skippedLiveOwners, interruptedAttempts: attempts, expiredLeases: leases, deadLeases };
   }
 
   /**
@@ -1791,9 +1803,26 @@ export class Orchestrator {
   // ============================================================
   // 运行控制
   // ============================================================
+  /** 控制 API 的写所有权：已有租约必须匹配；无有效 owner 时原子获取；其他 owner 拒绝。 */
+  ensureControlLease(projectId) {
+    const own = this.projectLeases.get(projectId);
+    if (own) { this.assertProjectLease(projectId); return own; }
+    const row = this.store.getProjectLease(projectId);
+    const now = new Date().toISOString();
+    if (row?.write_owner && row.lease_expires_at && row.lease_expires_at > now) {
+      throw new PolicyError('PROJECT_LEASE_HELD', `项目写租约由其他执行者持有（${row.write_owner}，fence=${row.lease_fence}），拒绝控制写入`);
+    }
+    const acquired = this.store.acquireProjectLeaseFenced(projectId, this.instanceId, 30 * 60 * 1000);
+    if (!acquired.ok) throw new PolicyError('PROJECT_LEASE_HELD', `无法取得控制写租约：${acquired.reason || '其他执行者持有'}`);
+    const lease = { owner: this.instanceId, fence: acquired.fence };
+    this.projectLeases.set(projectId, lease);
+    return lease;
+  }
+
   pauseRun(runId, reason, kind = 'manual') {
     const run = this.store.getRun(runId);
     if (!run) return null;
+    this.ensureControlLease(run.project_id);
     const controller = this.controllers.get(runId);
     if (controller) controller.abort();
     const stopped = this.store.updateRun(runId, {
@@ -1808,6 +1837,7 @@ export class Orchestrator {
       message: `运行已暂停：${redact(reason || '人工暂停', this.config)}`,
       data: { kind },
     });
+    if (!controller) this.releaseProjectLease(run.project_id);
     return stopped;
   }
 
@@ -1817,6 +1847,8 @@ export class Orchestrator {
     if ([RunStatus.ACCEPTED, RunStatus.CANCELLED].includes(run.status)) {
       throw new PolicyError('RUN_CLOSED', `运行已结束（${run.status}），不能恢复`);
     }
+    this.ensureControlLease(run.project_id);
+    try {
     this.assertBudget(5_000);
     const resumeProject = this.store.getProject(run.project_id);
     const tasks = this.store.listTasks({ runId });
@@ -1873,21 +1905,26 @@ export class Orchestrator {
     });
     this.kick(runId);
     return this.store.getRun(runId);
+    } catch (err) { this.releaseProjectLease(run.project_id); throw err; }
   }
 
   cancelRun(runId) {
     const run = this.store.getRun(runId);
     if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
+    this.ensureControlLease(run.project_id);
     const controller = this.controllers.get(runId);
     if (controller) controller.abort();
     this.store.updateRun(runId, { status: RunStatus.CANCELLED, stop_reason: '用户取消', ended_at: nowIso() });
     this.emit({ runId, projectId: run.project_id, type: 'run_cancelled', level: 'warn', message: '运行已取消' });
+    if (!controller) this.releaseProjectLease(run.project_id);
     return this.store.getRun(runId);
   }
 
   acceptRun(runId, { confirmLocalOnly = false } = {}) {
     const run = this.store.getRun(runId);
     if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
+    this.ensureControlLease(run.project_id);
+    try {
     if (run.status !== RunStatus.AWAITING_ACCEPTANCE) {
       throw new PolicyError('RUN_NOT_READY', `运行尚未完成，当前状态：${run.status}`);
     }
@@ -1924,6 +1961,7 @@ export class Orchestrator {
       data: { verifiedSha, verification, localOnly: verification === 'LOCAL_VERIFIED' },
     });
     return updated;
+    } finally { this.releaseProjectLease(run.project_id); }
   }
 
   /** 读取审计参考上下文（未改动文件，仅只读展示，用于核对文档声明与实现是否一致）。 */

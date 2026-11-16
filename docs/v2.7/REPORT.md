@@ -3,7 +3,7 @@
 - 版本：**v2.7.0**（基于 v2.6.0）
 - 范围：只开发 AI Workbench；**未修改 Consumption Decision Lab**；**未访问/修改/暂停/同步/接管 A/B**；未合并 main、未部署。
 - 严格区分状态：IMPLEMENTED / TESTED / E2E_VERIFIED / AUTONOMOUSLY_VERIFIED / 24H_VERIFIED / BLOCKED / UNKNOWN / FAILED。
-- 总测试：**224/224**（v2.6 原 212 全保留 + v2.7 新增 9）。
+- 总测试：**237/237**（v2.6 原 212 全保留 + v2.7 新增 9）。
 - Draft PR：**#9**（v2.7.0，未合并/未部署）。
 
 ## 最终 E2E 结果
@@ -104,6 +104,6 @@
 ## 9. 交付
 
 - Workbench：分支 `v2.7.0`，Draft PR #9（未合并/未部署）。
-- 测试：**224/224**。
+- 测试：**237/237**。
 - 产品：`release/v0.1.0` / tag `v0.1.0`；bundle `demo/evidence/reading-queue-planner-final.bundle`。
 - 证据：`docs/v2.7/FINAL-ACCEPTANCE.md`、`demo/evidence/reading-queue-e2e.json`、`reading-queue-quality-final.json`、`reading-queue-cli.txt`、`v2.7-tests.txt`。

@@ -2,9 +2,9 @@
   "type": "v2.7-quality-fencing-longrun",
   "version": "2.7.0",
   "tests": {
-    "total": 224,
-    "pass": 224,
-    "log": "demo/evidence/v2.7-tests.txt"
+    "total": 237,
+    "pass": 237,
+    "log": "demo/evidence/v2.7-reliability-tests.txt"
   },
   "qualityLoop": {
     "status": "IMPLEMENTED+TESTED",
@@ -16,9 +16,10 @@
       "tests/quality.test.js"
     ],
     "integration": [
-      "tests/quality-loop.test.js"
+      "tests/quality-loop.test.js",
+      "tests/quality-plan-mode.test.js"
     ],
-    "realE2E": "BLOCKED"
+    "realE2E": "PASS"
   },
   "fencing": {
     "status": "IMPLEMENTED+TESTED",
@@ -27,21 +28,21 @@
       "tests/fencing-workbench.test.js"
     ],
     "realProcessCompetition": "TESTED: two independent Node processes, only one fence",
-    "fullWorkbenchHttpProcesses": "UNKNOWN"
+    "fullWorkbenchHttpProcesses": "TESTED: two real Workbench HTTP servers, one run"
   },
   "acceptanceProject": {
     "name": "Reading Queue Planner（v2.7 独立验收）",
     "projectId": "proj_mwiq4y5u848f07c5",
-    "loopId": "loop_mwiq4y5x6bb41dfb",
-    "runId": "run_mwiq4z3fe1c0afce",
+    "loopId": "loop_mwisni5ka9abfb45",
+    "runId": "run_mwitigrv84784f80",
     "status": "PRODUCT_E2E_VERIFIED",
-    "blocker": "独立审计资源预算不足：Provider=deepseek，剩余 9869 < 审计预估 8000 + 保留 2000；任务编码前阻塞",
+    "blocker": "",
     "codingAgentCalled": true,
-    "hiddenQualityCheckRan": false,
-    "defectDiscoveryRate": "UNKNOWN",
-    "autoRepairRate": "UNKNOWN",
+    "hiddenQualityCheckRan": true,
+    "defectDiscoveryRate": "2 confirmed product defects",
+    "autoRepairRate": "2/2 fixed and re-audited",
     "finalCodeCommit": "6bfdfac",
-    "finalRelease": "b554f4b",
+    "finalRelease": "5eada62",
     "qualityMatrix": {
       "total": 4,
       "pass": 4,
@@ -54,32 +55,32 @@
     "codingCostCny": 26.96299056,
     "auditCostCny": 1.325574432,
     "totalCostCny": 28.288564992,
-    "wallClockSeconds": 7695,
+    "wallClockSeconds": 7694,
     "humanProductCodeEdits": 0,
     "agentAttempts": 8,
     "agentSuccess": 7,
     "agentTimeout": 1,
     "defectDiscovery": 2,
-    "defectFixed": 2
+    "defectFixed": 2,
+    "taskRecords": 3,
+    "taskPassed": 2
   },
   "auditBudget": {
     "globalRemainingTokens": 9869,
-    "auditEstimateTokens": 8000,
-    "reserveTokens": 2000,
-    "cdlBudgetCny": 30,
-    "cdlUsedCny": 0.9014279904,
-    "cdlBorrowed": false,
-    "newAuthorization": false,
-    "newCdlBudgetCny": 30,
-    "newCdlUsedEstimateCny": 1.325574432,
+    "specialBudgetCny": 30,
+    "specialUsedEstimateCny": 1.325574432,
     "tokens": 408961,
     "calls": 10,
-    "actualVendorInvoice": "NOT_AVAILABLE; estimated only"
+    "cdlBudgetBorrowed": false,
+    "otherBudgetsChanged": false,
+    "actualVendorInvoice": "NOT_AVAILABLE; estimated only",
+    "hardCapPrecision": "NOT_CLAIMED"
   },
   "longRun": {
     "status": "24H_NOT_VERIFIED",
-    "reason": "product completed early (2h08m); no tasks manufactured",
-    "supervisorSIGKILLRecovery": "PASS"
+    "reason": "product completed early (2h08m14s); no tasks manufactured",
+    "supervisorSIGKILLRecovery": "PASS",
+    "fullUnattendedEndToEnd": "NO"
   },
   "replay": {
     "status": "IMPLEMENTED+TESTED",
@@ -102,5 +103,18 @@
     "initial": "no P0; 6 P1",
     "path": "demo/evidence/v2.7-independent-audit.md",
     "dshAudit": "BLOCKED/no new budget"
+  },
+  "evidenceConsistency": {
+    "checked": true,
+    "source": "tests/evidence-consistency.test.js",
+    "staleFieldsRemoved": true
+  },
+  "reliabilityAudit": {
+    "reviewer": "reliability-reviewer",
+    "firstRound": "no P0; 4 P1 confirmed",
+    "final": "no remaining P0/P1; P2 residuals documented",
+    "tests": 237,
+    "newE2E": "BLOCKED: no new DSH budget",
+    "24h": "NOT_VERIFIED"
   }
 }

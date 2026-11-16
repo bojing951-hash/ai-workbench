@@ -38,7 +38,7 @@
 | 人工测试环境/验收辅助 | 1 类：test command/package harness 修正；另有 Workbench 工程缺陷修复（见下） | 不计入产品源码 |
 | Supervisor SIGKILL 恢复 | PASS（验收完成后注入，非任务进行中） | state.json crash/restart；产品 commit 不变 |
 | 重复提交 | 0 | Git commit/loop history |
-| 实际开发墙钟 | **2 小时 8 分 15 秒**（11:48:56–13:57:11） | 130 events |
+| 实际开发墙钟 | **2 小时 8 分 14 秒**（11:48:56–13:57:11） | 130 events |
 | 24h 连续研发 | **NOT VERIFIED** | 产品提前完成；无任务可继续；未制造任务 |
 | 产品等待人工验收 | 是 | run.status=awaiting_acceptance；未自动接受/合并 |
 
