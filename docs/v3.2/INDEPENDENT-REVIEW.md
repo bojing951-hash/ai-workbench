@@ -30,3 +30,12 @@
 - P1-B：max_rounds 使用 allowRepair:false，不生成不可执行修复任务、不自增计数；BLOCKED 测试 PASS。
 - P2：TTL 扫描移出预留事务；去掉恒真断言；新增产品审计最终 SHA 绑定断言。
 - 最终本地串行：299 tests / 295 pass / 4 skipped / 0 fail。
+
+## 独立复审最终确认
+
+审查者基于 `f0393d2` 源码（HEAD 仅 docs 差异）确认：
+- **无剩余 P0/P1**；
+- P0-R/P1-A/P1-B 全部由独立探针复验；
+- 目标测试 14/14；全量串行独立复跑 **299 tests / 295 pass / 4 skipped / 0 fail**；
+- 补充：startRun/规划期间 pause 的窗口已在本轮额外加检查：startRun 返回后若 Loop 已 paused/cancelled，则真实 pause 刚启动的 Run 并保留 pending 任务，不继续到 awaiting。
+- 仅 P2：真实 Agent/DSH E2E、24H、真实 Provider 对账、非本轮范围控制窗口。

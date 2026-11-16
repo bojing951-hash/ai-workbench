@@ -485,6 +485,13 @@ export class LoopManager {
         this.emit(loop, 'loop_start_failed', `启动运行失败，任务已保留在队列：${err?.message || err}`, 'warn', { task: task.title });
         return;
       }
+      // startRun 规划/创建期间可能收到 pause/cancel：Run 已启动则必须真正暂停，不能留到 awaiting。
+      if (this.store.getLoop(id)?.status !== 'running') {
+        try { await this.orchestrator.pauseRun(started.runId, 'Loop 在启动/规划期间被暂停或取消', 'manual'); } catch (err) { this.emit(loop, 'loop_start_pause_failed', `启动期间暂停失败：${err.message}`, 'error'); }
+        this.store.setLoopPending(id, {});
+        this.emit(loop, 'loop_start_cancelled', 'Loop 已暂停/取消，已中止刚启动的 Run，待恢复时重新认领任务', 'warn');
+        return;
+      }
       // 原子：移除队列项 + 清 pending + 绑定 run；崩溃在 startRun 与 claim 之间时由 requestKey 恢复。
       let claimed;
       try {
