@@ -81,10 +81,19 @@
   "merged": false,
   "deployed": false,
   "businessProductsModified": false,
-  "commit": "PENDING",
-  "pr": "PENDING",
+  "commit": "ef0b685",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/12",
   "screenshots": {
     "production": "docs/v3.0/screenshots/",
     "browser": "demo/evidence/v3.0/ui/"
+  },
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43881403178"
+  },
+  "production": {
+    "version": "3.0.0",
+    "health": "ok",
+    "budgetUnchanged": true
   }
 }
