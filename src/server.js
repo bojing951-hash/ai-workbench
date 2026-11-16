@@ -14,6 +14,8 @@ import { VERSION } from './orchestrator.js';
 import { buildLive, buildReplay, readProjectCommit } from './replay.js';
 import { latestMatrixFromHistory, qualityConfig } from './quality.js';
 import { chatTurn, startDevelopment } from './chat.js';
+import { recordModelUsage, budgetSnapshot } from './budget.js';
+import { executeConversationControl, parseControlIntent, CONTROL_ACTIONS } from './controls.js';
 import { assertSafeWriteRequest, isAllowedHost, redactForResponse, resolveWithin, WriteRateLimiter } from './security.js';
 
 const MAX_BODY = 2 * 1024 * 1024;
@@ -72,12 +74,20 @@ async function readBody(req, maxBody = MAX_BODY) {
 function mapErrorStatus(err) {
   const code = err?.code || '';
   if (code === 'PROJECT_NOT_FOUND' || code === 'RUN_NOT_FOUND' || code === 'TASK_NOT_FOUND' || code === 'ARTIFACT_MISSING') return 404;
-  if (code === 'RUN_NOT_READY' || code === 'RUN_CLOSED' || code === 'BUDGET_TOKENS_EXHAUSTED' || code === 'BUDGET_TOKENS_EXCEEDED' || code === 'BUDGET_COST_EXCEEDED') return 409;
+  if (code === 'RUN_NOT_READY' || code === 'RUN_CLOSED' || code === 'BUDGET_TOKENS_EXHAUSTED' || code === 'BUDGET_TOKENS_EXCEEDED' || code === 'BUDGET_COST_EXCEEDED' || code.startsWith('BUDGET_CHAT_')) return 409;
   return 400;
 }
 
 export function createApp({ config, store, orchestrator, loops = null }) {
   let isolationCache = null;
+  const conversationLocks = new Map();
+  async function withConversationLock(id, fn) {
+    while (conversationLocks.has(id)) await conversationLocks.get(id).catch(() => {});
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    conversationLocks.set(id, gate);
+    try { return await fn(); } finally { conversationLocks.delete(id); release(); }
+  }
   const isolation = () => { if (!isolationCache) isolationCache = detectIsolationCapabilities(); return isolationCache; };
   const webDir = path.join(config.paths.root, 'web');
   const maxBody = Number(config.security?.maxBodyBytes || MAX_BODY);
@@ -201,10 +211,24 @@ export function createApp({ config, store, orchestrator, loops = null }) {
     }
     if (pathname === '/api/conversations' && method === 'POST') {
       const body = await readBody(req, maxBody);
-      const conv = store.createConversation({ title: String(body.title || '新对话').slice(0, 120), projectId: String(body.projectId || '') });
+      const requestKey = String(body.clientRequestId || body.requestKey || '').slice(0, 160);
+      if (requestKey) {
+        const existing = store.getConversationByRequestKey(requestKey);
+        if (existing) return sendJson(res, 200, { ok: true, data: { conversation: existing, messages: store.listConversationMessages(existing.id), idempotent: true } });
+      }
+      let conv;
+      try {
+        conv = store.createConversation({ title: String(body.title || '新对话').slice(0, 120), projectId: String(body.projectId || ''), requestKey });
+      } catch (err) {
+        if (requestKey) {
+          const existing = store.getConversationByRequestKey(requestKey);
+          if (existing) return sendJson(res, 200, { ok: true, data: { conversation: existing, messages: store.listConversationMessages(existing.id), idempotent: true } });
+        }
+        throw err;
+      }
       return sendJson(res, 201, { ok: true, data: { conversation: conv, messages: [] } });
     }
-    const convMatch = pathname.match(/^\/api\/conversations\/([^/]+)(?:\/(messages|start))?$/);
+    const convMatch = pathname.match(/^\/api\/conversations\/([^/]+)(?:\/(messages|start|control))?$/);
     if (convMatch) {
       const [, convId, action] = convMatch;
       const conv = store.getConversation(convId);
@@ -219,7 +243,15 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         return sendJson(res, 200, { ok: true, data: { conversation: conv, messages: store.listConversationMessages(convId), project, loop, run, runContext } });
       }
       if (pathname === `/api/conversations/${convId}/start` && method === 'POST') {
+        return await withConversationLock(convId, async () => {
         const body = await readBody(req, maxBody).catch(() => ({}));
+        if (body.projectId && conv.project_id && String(body.projectId) !== conv.project_id) {
+          throw new PolicyError('CONVERSATION_PROJECT_MISMATCH', '该对话未关联此项目；不允许操作其他项目');
+        }
+        const existingLoop = conv.loop_id ? store.getLoop(conv.loop_id) : null;
+        if (existingLoop && ['running', 'paused'].includes(existingLoop.status)) {
+          return sendJson(res, 200, { ok: true, data: { conversation: conv, messages: store.listConversationMessages(conv.id), project: conv.project_id ? store.getProject(conv.project_id) : null, loop: existingLoop, existing: true } });
+        }
         const brief = body.brief && typeof body.brief === 'object' ? body.brief : {};
         const acceptance = Array.isArray(brief.acceptance) ? brief.acceptance.map(String) : (conv.brief_json?.acceptance || []);
         const goal = String(brief.goal || conv.goal || '').trim();
@@ -241,23 +273,96 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         const message = store.addConversationMessage({ conversationId: conv.id, role: 'assistant', content: started.existing ? '这个目标已经在开发中，我带你回到当前进度。' : '已开始开发。我会自动完成规划、编码、测试与独立审计；遇到问题时先尝试自动修复，需要你授权时再告诉你。', data: { kind: 'started', projectId: started.project?.id, loopId: started.loop?.id } });
         store.updateConversation(conv.id, { status: 'running', run_id: started.loop?.current_run_id || '', loop_id: started.loop?.id || conv.loop_id });
         return sendJson(res, 200, { ok: true, data: { conversation: store.getConversation(conv.id), messages: store.listConversationMessages(conv.id), project: started.project, loop: started.loop, message } });
+        });
+      }
+      if (pathname === `/api/conversations/${convId}/control` && method === 'POST') {
+        return await withConversationLock(convId, async () => {
+          const body = await readBody(req, maxBody);
+          const action = String(body.action || body.intent || '').trim();
+          if (!CONTROL_ACTIONS.includes(action)) throw new PolicyError('CONTROL_NOT_ALLOWED', '控制动作不在白名单');
+          const requestKey = String(body.requestKey || `control:${conv.id}:${action}:${crypto.randomUUID()}`).slice(0, 160);
+          const current = store.getConversation(conv.id);
+          const control = await executeConversationControl({ config, store, orchestrator, loops, conversation: current, intent: action, requestKey, budgetProvider: () => budgetSnapshot(store, config) });
+          return sendJson(res, 200, { ok: true, data: { control, conversation: store.getConversation(conv.id), messages: store.listConversationMessages(conv.id) } });
+        });
       }
       if (pathname === `/api/conversations/${convId}/messages` && method === 'POST') {
+        return await withConversationLock(convId, async () => {
         const body = await readBody(req, maxBody);
         const content = String(body.content || '').trim();
         if (!content) throw new PolicyError('CHAT_MESSAGE_EMPTY', '消息不能为空');
         if (content.length > 8000) throw new PolicyError('CHAT_MESSAGE_TOO_LONG', '消息过长');
+        const clientMessageId = String(body.clientMessageId || '').slice(0, 160) || crypto.randomUUID();
         let conversation = conv;
-        if (body.projectId && !conversation.project_id) conversation = store.updateConversation(conv.id, { project_id: String(body.projectId) });
+        if (body.projectId && !conversation.project_id) {
+          const selected = store.getProject(String(body.projectId));
+          if (!selected) throw new PolicyError('PROJECT_NOT_FOUND', '项目不存在');
+          conversation = store.updateConversation(conv.id, { project_id: selected.id });
+        }
         const project = conversation.project_id ? store.getProject(conversation.project_id) : null;
-        store.addConversationMessage({ conversationId: conversation.id, role: 'user', content });
+        let userMessage = store.getConversationMessageByRequestKey(conversation.id, clientMessageId);
+        if (userMessage) {
+          const priorReply = store.getConversationReplyTo(conversation.id, userMessage.id);
+          if (priorReply && priorReply.data?.kind !== 'error' && !priorReply.data?.retryable) {
+            return sendJson(res, 200, { ok: true, data: { conversation: store.getConversation(conversation.id), messages: store.listConversationMessages(conversation.id), assistant: priorReply, idempotent: true } });
+          }
+          if (priorReply && (priorReply.data?.kind === 'error' || priorReply.data?.retryable)) store.deleteConversationMessage(priorReply.id);
+        } else {
+          try {
+            userMessage = store.addConversationMessage({ conversationId: conversation.id, role: 'user', content, requestKey: clientMessageId });
+          } catch (err) {
+            userMessage = store.getConversationMessageByRequestKey(conversation.id, clientMessageId);
+            if (!userMessage) throw err;
+          }
+        }
+        // 受限自然语言控制：只识别白名单短语，执行前校验对话/项目/循环归属；不把模型文本当命令。
+        const explicitIntent = parseControlIntent(content);
+        const hasLoop = !!(conversation.loop_id || (conversation.project_id && store.listLoops({ projectId: conversation.project_id })[0]));
+        const canControl = explicitIntent && (
+          explicitIntent === 'start' ? (conversation.status === 'ready' || hasLoop) :
+          ['pause', 'resume', 'status', 'current_task', 'failure', 'cost', 'tests', 'audit', 'delivery'].includes(explicitIntent) ? (hasLoop || ['status', 'cost', 'delivery'].includes(explicitIntent)) : false
+        );
+        if (canControl) {
+          try {
+            const control = await executeConversationControl({
+              config, store, orchestrator, loops, conversation, intent: explicitIntent,
+              requestKey: `chat:${userMessage.id}:${explicitIntent}`,
+              budgetProvider: () => budgetSnapshot(store, config),
+            });
+            const controlAssistant = store.addConversationMessage({
+              conversationId: conversation.id, role: 'assistant', content: control.text,
+              replyTo: userMessage.id, data: { kind: 'control', control },
+            });
+            return sendJson(res, 200, { ok: true, data: { conversation: store.getConversation(conversation.id), messages: store.listConversationMessages(conversation.id), assistant: controlAssistant, clientMessageId, control } });
+          } catch (err) {
+            const message = redactForResponse(String(err?.message || err), config);
+            const controlAssistant = store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: `控制未执行：${message}`, replyTo: userMessage.id, data: { kind: 'error', error: message, retryable: false, code: err?.code || 'CONTROL_FAILED' } });
+            return sendError(res, mapErrorStatus(err), err?.code || 'CONTROL_FAILED', message, { control: explicitIntent }, config);
+          }
+        }
         let turn;
         try {
           turn = await chatTurn({ config, store, conversation, userMessage: content, project });
         } catch (err) {
           const message = redactForResponse(String(err?.message || err), config);
-          store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: `暂时无法调用对话模型：${message}`, data: { kind: 'error', error: message } });
-          return sendError(res, 503, err?.code || 'CHAT_MODEL_ERROR', message, {}, config);
+          // 已发生但未拿到最终 usage 的调用必须标记 unknown，不能静默漏账；预算预检失败则没有发生调用。
+          if (!/^BUDGET_/.test(String(err?.code || '')) && err?.code !== 'CHAT_MODEL_UNAVAILABLE') {
+            try {
+              recordModelUsage({ store, config, source: 'chat', sourceId: `chatfail:${conversation.id}:${userMessage.id}`, provider: 'unknown', model: '', usage: {}, costCny: 0, projectId: conversation.project_id || '', conversationId: conversation.id, costSource: 'unknown' });
+            } catch { /* ledger failure must not replace original error */ }
+          }
+          store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: `暂时无法调用对话模型：${message}`, replyTo: userMessage.id, data: { kind: 'error', error: message, retryable: true, code: err?.code || 'CHAT_MODEL_ERROR' } });
+          return sendError(res, mapErrorStatus(err), err?.code || 'CHAT_MODEL_ERROR', message, { retryable: true, clientMessageId }, config);
+        }
+        try {
+          recordModelUsage({
+            store, config, source: 'chat', sourceId: `chat:${conversation.id}:${userMessage.id}`,
+            provider: turn.provider, model: turn.model, usage: turn.usage, costCny: turn.costCny,
+            projectId: conversation.project_id || '', conversationId: conversation.id,
+          });
+        } catch (err) {
+          // 用量入账失败不能悄悄吞掉；但仍返回已经产生的真实回复。
+          store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: '回复已生成，但用量账本写入失败，请在开发详情中核对。', replyTo: userMessage.id, data: { kind: 'error', error: String(err?.message || err), retryable: false } });
         }
         const acceptance = turn.acceptance.length ? turn.acceptance : (conversation.brief_json?.acceptance || []);
         const updated = store.updateConversation(conversation.id, {
@@ -265,10 +370,11 @@ export function createApp({ config, store, orchestrator, loops = null }) {
           goal: turn.goal || conversation.goal,
           acceptance_json: acceptance,
           brief_json: { ...(conversation.brief_json || {}), productName: turn.productName, goal: turn.goal, acceptance, ready: turn.ready, missing: turn.missing, provider: turn.provider, model: turn.model, costCny: turn.costCny },
-          status: turn.ready ? 'ready' : 'draft',
+          status: conversation.status === 'running' || conversation.status === 'awaiting_acceptance' ? conversation.status : (turn.ready ? 'ready' : 'draft'),
         });
-        const assistant = store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: turn.reply, data: { kind: 'brief', ...turn } });
-        return sendJson(res, 200, { ok: true, data: { conversation: updated, messages: store.listConversationMessages(conversation.id), assistant } });
+        const assistant = store.addConversationMessage({ conversationId: conversation.id, role: 'assistant', content: turn.reply, replyTo: userMessage.id, data: { kind: 'brief', ...turn } });
+        return sendJson(res, 200, { ok: true, data: { conversation: updated, messages: store.listConversationMessages(conversation.id), assistant, clientMessageId } });
+        });
       }
     }
 

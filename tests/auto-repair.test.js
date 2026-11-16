@@ -10,6 +10,10 @@ import { openStore } from '../src/db.js';
 import { EventBus } from '../src/bus.js';
 import { LoopManager } from '../src/loop.js';
 import { Orchestrator } from '../src/orchestrator.js';
+
+function gitInit(repo) { spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo }); spawnSync('git', ['config', 'user.email', 'wb@test'], { cwd: repo }); spawnSync('git', ['config', 'user.name', 'wb'], { cwd: repo }); spawnSync('git', ['add', '-A'], { cwd: repo }); spawnSync('git', ['commit', '--allow-empty', '-qm', 'init'], { cwd: repo }); }
+function gitHead(repo) { return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(); }
+function testConfig(root) { return getConfig({ root, paths: { root, dataDir: path.join(root, 'data'), dbPath: path.join(root, 'data', 'test.db'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(root, 'worktrees'), artifactsDir: path.join(root, 'artifacts'), logsDir: path.join(root, 'logs'), agentsDir: path.join(root, 'agents'), dshHome: path.join(root, 'agents', 'dsh'), claudeHome: path.join(root, 'agents', 'claude') }, llm: { openai: { apiKey: '' }, glm: { apiKey: '' }, deepseek: { apiKey: '' } }, github: { token: '' }, budget: { minReserveTokens: 20_000 } }); }
 import { spawnSync } from 'node:child_process';
 
 function mk() {
@@ -112,4 +116,26 @@ test('v2.8 P0-1 回归：自动修复后真实 startRun 不再被 paused run 阻
     assert.notEqual(started.runId, 'run-old');
     store.updateRun(started.runId, { status: 'cancelled' });
   } finally { store.close(); }
+});
+
+test('v3.0：prepareAutoRepair 重试幂等，崩溃恢复不重复创建修复基线', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v3-ar-'));
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(repo, { recursive: true }); gitInit(repo);
+  const config = testConfig(root);
+  const store = openStore(config.paths.dbPath);
+  try {
+    const project = store.createProject({ id: 'p-idem', name: 'idem', localPath: repo, testCommand: 'node --test', ciRequired: false });
+    const task = { id: 'task-idem', projectId: project.id, runId: 'run-idem', status: 'blocked', worktree_path: repo, head_commit: gitHead(repo), result_json: {} };
+    store.createTasks([{ ...task, planId: 'plan-idem', seq: 1, title: '失败任务', acceptance: ['a'], testCommand: 'node --test' }]);
+    store.updateTask(task.id, { worktree_path: repo, status: 'blocked' });
+    fs.writeFileSync(path.join(repo, 'FAILED.txt'), 'failed agent output\n');
+    spawnSync('git', ['add', '-A'], { cwd: repo });
+    const orch = new Orchestrator({ config, store, bus: new EventBus(), deps: { runAgent: async () => { throw new Error('no'); }, runAudit: async () => { throw new Error('no'); }, chooseAgent: async () => { throw new Error('no'); }, checkAgents: async () => [] } });
+    const first = await orch.prepareAutoRepair({ project: store.getProject(project.id), task: store.getTask(task.id), label: 'one' });
+    const second = await orch.prepareAutoRepair({ project: store.getProject(project.id), task: store.getTask(task.id), label: 'two' });
+    assert.equal(first.ok, true); assert.equal(second.ok, true);
+    assert.equal(second.branch, first.branch); assert.equal(second.reused, true);
+    assert.equal(store.getProject(project.id).default_branch, first.branch);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

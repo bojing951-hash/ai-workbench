@@ -6,6 +6,8 @@ import { completeJson, availableProviders } from './llm.js';
 import { PolicyError } from './policy.js';
 import { newId } from './util.js';
 import * as gitops from './git.js';
+import { assertModelBudget, chatBudgetEstimate } from './budget.js';
+import { writeProjectContract, contractBaseline, sha256File, CONTRACT_FILES, CONTRACT_PROTECTED_PATHS, TRUSTED_CONTRACT_TEST } from './contract.js';
 
 const SYSTEM = `你是 AI 开发工作台里的产品工程伙伴。用户通常不懂 Project/Loop/Run/Agent 等工程词，你要用自然中文和他讨论产品，同时判断是否已经可以开始开发。
 只输出一个 JSON 对象（不要 Markdown 代码围栏）。字段：
@@ -16,7 +18,8 @@ const SYSTEM = `你是 AI 开发工作台里的产品工程伙伴。用户通常
   "productName": "产品名称",
   "goal": "可执行的产品目标（包含核心用户、功能和边界）",
   "acceptance": ["可客观验证的验收标准1", "验收标准2", "验收标准3"],
-  "questions": ["如果要追问，给用户的一两个短问题"]
+  "questions": ["如果要追问，给用户的一两个短问题"],
+  "intent": "none|start|status|current_task|failure|pause|resume|cost|tests|audit|delivery"
 }
 规则：
 1. 先理解用户目标；信息足够时 ready=true，并把目标整理成不含工程术语的产品目标。
@@ -33,6 +36,7 @@ function providerFor(config) {
 export async function chatTurn({ config, store, conversation, userMessage, project = null }) {
   const provider = providerFor(config);
   if (!provider) throw new PolicyError('CHAT_MODEL_UNAVAILABLE', '对话模型不可用：请在 .env 配置 DeepSeek/GLM/OpenAI API Key；未使用预设回复冒充 AI');
+  const budget = assertModelBudget({ config, store, provider: provider.name, model: provider.model, ...chatBudgetEstimate(provider.name, provider.model), label: '对话模型' });
   const history = store.listConversationMessages(conversation.id).slice(-12).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 4000) }));
   // 最新用户消息已由 server 保存；从历史尾部去掉，避免模型收到重复内容。
   if (history.length && history[history.length - 1].role === 'user' && history[history.length - 1].content === userMessage) history.pop();
@@ -62,6 +66,8 @@ export async function chatTurn({ config, store, conversation, userMessage, proje
     goal,
     acceptance,
     provider: result.provider, model: result.model, usage: result.usage || {}, costCny: result.costCny || 0,
+    providerKnown: budget.identity.known, providerSource: budget.identity.source, budgetExempt: budget.exempt,
+    intent: ['start','status','current_task','failure','pause','resume','cost','tests','audit','delivery'].includes(String(j.intent || '')) ? String(j.intent) : 'none',
   };
 }
 
@@ -82,15 +88,28 @@ export async function startDevelopment({ config, store, orchestrator, loops, con
     await gitops.git(localPath, ['init', '-b', 'main']);
     await gitops.ensureGitRepo(localPath, 'main');
     fs.writeFileSync(path.join(localPath, 'README.md'), `# ${conversation.title || conversation.goal}\n\n${conversation.goal}\n\n由 AI Workbench Chat 创建；验收契约见 CONTRACT.md。\n`);
-    fs.writeFileSync(path.join(localPath, 'CONTRACT.md'), `# 产品验收契约\n\n## 目标\n${conversation.goal}\n\n## 验收标准\n${conversation.brief_json.acceptance.map((a, i) => `${i + 1}. ${a}`).join('\n')}\n`);
-    // 新对话项目没有现成测试/质量命令：保留真实状态，不用伪造测试通过。
+    // 冻结契约 + 真实测试计划：不再用 testCommand='true' 作为通过依据。
+    const componentHashes = writeProjectContract(localPath, {
+      title: conversation.title, goal: conversation.goal, acceptance: conversation.brief_json.acceptance, productName: conversation.title,
+    });
+    // 可信契约测试也在冻结基线内，Agent 修改即失败。
+    const baseline = { ...contractBaseline(localPath), ...componentHashes, [TRUSTED_CONTRACT_TEST]: sha256File(path.join(localPath, TRUSTED_CONTRACT_TEST)) };
+    const trustedTestHashes = { [TRUSTED_CONTRACT_TEST]: baseline[TRUSTED_CONTRACT_TEST] };
+    const testPlan = { minTests: Math.max(2, (conversation.brief_json?.acceptance || []).length), requireActualTests: true, forbidTrivialCommand: true, trustedContractTest: TRUSTED_CONTRACT_TEST };
     project = await orchestrator.createProject({
       name: conversation.title || conversation.goal.slice(0, 40),
       repo: localPath,
       defaultBranch: 'main',
-      testCommand: 'true',
-      allowedTestCommands: ['true'],
-      contractFiles: ['CONTRACT.md'],
+      // 初始无测试命令：按实现后的真实技术栈检测；没有有效测试则 blocked，而不是 exit 0 假通过。
+      testCommand: '',
+      allowedTestCommands: [],
+      contractFiles: CONTRACT_FILES,
+      protectedPaths: CONTRACT_PROTECTED_PATHS,
+      requireRealTests: true,
+      autoTestSetup: true,
+      testPlan,
+      contractBaseline: baseline,
+      trustedTestHashes,
       ciRequired: false,
       supervisorManaged: true,
       publish: false,

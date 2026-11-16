@@ -152,6 +152,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE TABLE IF NOT EXISTS actions (
   id TEXT PRIMARY KEY,
   run_id TEXT DEFAULT '',
+  conversation_id TEXT DEFAULT '',
+  request_key TEXT DEFAULT '',
   task_id TEXT DEFAULT '',
   type TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
@@ -208,6 +210,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   acceptance_json TEXT DEFAULT '[]',
   brief_json TEXT DEFAULT '{}',
   status TEXT DEFAULT 'draft',
+  request_key TEXT DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -217,7 +220,31 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
   conversation_id TEXT NOT NULL,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
+  request_key TEXT DEFAULT '',
+  reply_to TEXT DEFAULT '',
   data_json TEXT DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id TEXT PRIMARY KEY,
+  source_id TEXT UNIQUE,
+  source TEXT NOT NULL,
+  run_id TEXT DEFAULT '',
+  task_id TEXT DEFAULT '',
+  project_id TEXT DEFAULT '',
+  conversation_id TEXT DEFAULT '',
+  provider TEXT DEFAULT 'unknown',
+  provider_known INTEGER DEFAULT 0,
+  provider_source TEXT DEFAULT '',
+  model TEXT DEFAULT '',
+  tokens_in INTEGER DEFAULT 0,
+  tokens_out INTEGER DEFAULT 0,
+  tokens_cache INTEGER DEFAULT 0,
+  cost_cny REAL DEFAULT 0,
+  cost_source TEXT DEFAULT 'estimated',
+  usage_known INTEGER DEFAULT 0,
+  budget_scope TEXT DEFAULT 'global',
   created_at TEXT NOT NULL
 );
 
@@ -299,6 +326,17 @@ export class Store {
         ['failure_signature', "TEXT DEFAULT ''"],
         ['repeated_failures', 'INTEGER DEFAULT 0'],
       ],
+      conversations: [
+        ['request_key', "TEXT DEFAULT ''"],
+      ],
+      conversation_messages: [
+        ['request_key', "TEXT DEFAULT ''"],
+        ['reply_to', "TEXT DEFAULT ''"],
+      ],
+      actions: [
+        ['conversation_id', "TEXT DEFAULT ''"],
+        ['request_key', "TEXT DEFAULT ''"],
+      ],
       attempts: [
         ['cost_reported', 'INTEGER DEFAULT 0'],
         ['cost_source', "TEXT DEFAULT 'estimated'"],
@@ -330,8 +368,11 @@ export class Store {
     }
     try {
       this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS runs_request_key_unique ON runs(request_key) WHERE request_key<>''");
+      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS conversations_request_key_unique ON conversations(request_key) WHERE request_key<>''");
+      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS messages_request_key_unique ON conversation_messages(conversation_id, request_key) WHERE request_key<>''");
+      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS actions_request_key_unique ON actions(request_key) WHERE request_key<>''");
     } catch {
-      /* 旧库可能已有重复非空 key；保留现状并让 startRun 的回查兜底 */
+      /* 旧库可能已有重复非空 key；保留现状并让业务回查兜底 */
     }
     // 旧记录回填 provider（用于按模型族分开统计；不改动金额/用量）
     try {
@@ -342,6 +383,42 @@ export class Store {
       this.db.exec("UPDATE attempts SET provider_known=1, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek') AND provider_known=0 AND provider_source=''");
       this.db.exec("UPDATE attempts SET provider='unknown', provider_known=0, provider_source='legacy_unknown' WHERE provider NOT IN ('glm','deepseek','openai','anthropic') AND provider_source=''");
       this.db.exec("UPDATE audits SET provider_known=1, provider_source='legacy_inferred' WHERE provider IN ('glm','deepseek','openai','anthropic') AND provider_known=0 AND provider_source=''");
+    } catch {
+      /* ignore */
+    }
+    // 统一用量账本：旧 attempts/audits 一次性回填；后续通过触发器自动入账，避免双计或漏计。
+    try {
+      this.db.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_attempt_usage AFTER INSERT ON attempts
+        BEGIN
+          INSERT OR IGNORE INTO llm_usage (id,source_id,source,run_id,task_id,project_id,conversation_id,provider,provider_known,provider_source,model,tokens_in,tokens_out,tokens_cache,cost_cny,cost_source,usage_known,budget_scope,created_at)
+          VALUES ('usage_att_'||NEW.id, 'attempt:'||NEW.id, 'attempt', NEW.run_id, NEW.task_id,
+            COALESCE((SELECT project_id FROM runs WHERE id=NEW.run_id),''), '', COALESCE(NULLIF(NEW.provider,''),'unknown'),
+            COALESCE(NEW.provider_known,0), COALESCE(NEW.provider_source,''), COALESCE(NEW.model,''),
+            COALESCE(NEW.tokens_in,0), COALESCE(NEW.tokens_out,0), COALESCE(NEW.tokens_cache,0),
+            COALESCE(NEW.cost_cny,0), COALESCE(NEW.cost_source,'estimated'), 1, 'global', NEW.created_at);
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_attempt_usage_update AFTER UPDATE OF tokens_in,tokens_out,tokens_cache,cost_cny,provider,provider_known,provider_source,model ON attempts
+        BEGIN
+          INSERT INTO llm_usage (id,source_id,source,run_id,task_id,project_id,conversation_id,provider,provider_known,provider_source,model,tokens_in,tokens_out,tokens_cache,cost_cny,cost_source,usage_known,budget_scope,created_at)
+          VALUES ('usage_att_'||NEW.id, 'attempt:'||NEW.id, 'attempt', NEW.run_id, NEW.task_id,
+            COALESCE((SELECT project_id FROM runs WHERE id=NEW.run_id),''), '', COALESCE(NULLIF(NEW.provider,''),'unknown'),
+            COALESCE(NEW.provider_known,0), COALESCE(NEW.provider_source,''), COALESCE(NEW.model,''),
+            COALESCE(NEW.tokens_in,0), COALESCE(NEW.tokens_out,0), COALESCE(NEW.tokens_cache,0),
+            COALESCE(NEW.cost_cny,0), COALESCE(NEW.cost_source,'estimated'), 1, 'global', NEW.created_at)
+          ON CONFLICT(source_id) DO UPDATE SET provider=excluded.provider,provider_known=excluded.provider_known,provider_source=excluded.provider_source,model=excluded.model,tokens_in=excluded.tokens_in,tokens_out=excluded.tokens_out,tokens_cache=excluded.tokens_cache,cost_cny=excluded.cost_cny,cost_source=excluded.cost_source;
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_audit_usage AFTER INSERT ON audits
+        BEGIN
+          INSERT OR IGNORE INTO llm_usage (id,source_id,source,run_id,task_id,project_id,conversation_id,provider,provider_known,provider_source,model,tokens_in,tokens_out,tokens_cache,cost_cny,cost_source,usage_known,budget_scope,created_at)
+          VALUES ('usage_aud_'||NEW.id, 'audit:'||NEW.id, 'audit', NEW.run_id, NEW.task_id,
+            COALESCE((SELECT project_id FROM runs WHERE id=NEW.run_id),''), '', COALESCE(NULLIF(NEW.provider,''),'unknown'),
+            COALESCE(NEW.provider_known,0), COALESCE(NEW.provider_source,''), COALESCE(NEW.model,''),
+            COALESCE(NEW.tokens_in,0), COALESCE(NEW.tokens_out,0), 0, COALESCE(NEW.cost_cny,0),
+            'estimated', 1, COALESCE(NEW.budget_scope,'global'), NEW.created_at);
+        END;
+      `);
+      this.backfillLlmUsage();
     } catch {
       /* ignore */
     }
@@ -443,12 +520,16 @@ export class Store {
   createConversation(c = {}) {
     const now = nowIso();
     const id = c.id || `conv_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-    this.db.prepare('INSERT INTO conversations (id,title,project_id,run_id,loop_id,goal,acceptance_json,brief_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-      .run(id, String(c.title || '新对话'), c.projectId || '', c.runId || '', c.loopId || '', c.goal || '', JSON.stringify(c.acceptance || []), JSON.stringify(c.brief || {}), c.status || 'draft', now, now);
+    this.db.prepare('INSERT INTO conversations (id,title,project_id,run_id,loop_id,goal,acceptance_json,brief_json,status,request_key,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, String(c.title || '新对话'), c.projectId || '', c.runId || '', c.loopId || '', c.goal || '', JSON.stringify(c.acceptance || []), JSON.stringify(c.brief || {}), c.status || 'draft', c.requestKey || '', now, now);
     return this.getConversation(id);
   }
   getConversation(id) {
     return parseRow(this.db.prepare('SELECT * FROM conversations WHERE id=?').get(id), { acceptance_json: [], brief_json: {} });
+  }
+  getConversationByRequestKey(requestKey) {
+    if (!requestKey) return null;
+    return parseRow(this.db.prepare('SELECT * FROM conversations WHERE request_key=?').get(requestKey), { acceptance_json: [], brief_json: {} });
   }
   listConversations(limit = 40) {
     return this.db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?').all(limit)
@@ -463,10 +544,24 @@ export class Store {
   }
   addConversationMessage(m = {}) {
     const id = m.id || `msg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-    this.db.prepare('INSERT INTO conversation_messages (id,conversation_id,role,content,data_json,created_at) VALUES (?,?,?,?,?,?)')
-      .run(id, m.conversationId, m.role || 'user', String(m.content || ''), JSON.stringify(m.data || {}), nowIso());
+    this.db.prepare('INSERT INTO conversation_messages (id,conversation_id,role,content,request_key,reply_to,data_json,created_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(id, m.conversationId, m.role || 'user', String(m.content || ''), m.requestKey || '', m.replyTo || '', JSON.stringify(m.data || {}), nowIso());
     this.db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(nowIso(), m.conversationId);
     return this.listConversationMessages(m.conversationId).find((x) => x.id === id) || null;
+  }
+  getConversationMessageByRequestKey(conversationId, requestKey) {
+    if (!requestKey) return null;
+    const r = this.db.prepare('SELECT * FROM conversation_messages WHERE conversation_id=? AND request_key=?').get(conversationId, requestKey);
+    if (!r) return null;
+    const m = parseRow(r, { data_json: {} }); m.data = m.data_json || {}; return m;
+  }
+  getConversationReplyTo(conversationId, userMessageId) {
+    const r = this.db.prepare("SELECT * FROM conversation_messages WHERE conversation_id=? AND reply_to=? AND role='assistant' ORDER BY created_at DESC LIMIT 1").get(conversationId, userMessageId);
+    if (!r) return null;
+    const m = parseRow(r, { data_json: {} }); m.data = m.data_json || {}; return m;
+  }
+  deleteConversationMessage(id) {
+    return this.db.prepare('DELETE FROM conversation_messages WHERE id=?').run(id).changes;
   }
   listConversationMessages(conversationId) {
     return this.db.prepare('SELECT * FROM conversation_messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC').all(conversationId)
@@ -988,9 +1083,17 @@ export class Store {
   createAction(a) {
     const now = nowIso();
     this.db
-      .prepare('INSERT INTO actions (id,run_id,task_id,type,status,payload_json,result_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(a.id, a.runId || '', a.taskId || '', a.type, a.status || 'pending', JSON.stringify(a.payload || {}), JSON.stringify(a.result || {}), now, now);
+      .prepare('INSERT INTO actions (id,run_id,conversation_id,request_key,task_id,type,status,payload_json,result_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .run(a.id, a.runId || '', a.conversationId || '', a.requestKey || '', a.taskId || '', a.type, a.status || 'pending', JSON.stringify(a.payload || {}), JSON.stringify(a.result || {}), now, now);
     return this.getAction(a.id);
+  }
+  getActionByRequestKey(requestKey) {
+    if (!requestKey) return null;
+    return parseRow(this.db.prepare('SELECT * FROM actions WHERE request_key=?').get(requestKey), { payload_json: {}, result_json: {} });
+  }
+  listConversationActions(conversationId, limit = 100) {
+    return this.db.prepare('SELECT * FROM actions WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?').all(conversationId, limit)
+      .map((r) => parseRow(r, { payload_json: {}, result_json: {} }));
   }
 
   getAction(id) {
@@ -1016,6 +1119,46 @@ export class Store {
       .map((r) => parseRow(r, { payload_json: {}, result_json: {} }));
   }
 
+  // ---------------- unified LLM usage ledger ----------------
+  addLlmUsage(u = {}) {
+    const now = nowIso();
+    const id = u.id || `usage_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      this.db.prepare(`INSERT INTO llm_usage (id,source_id,source,run_id,task_id,project_id,conversation_id,provider,provider_known,provider_source,model,tokens_in,tokens_out,tokens_cache,cost_cny,cost_source,usage_known,budget_scope,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        id, u.sourceId || id, u.source || 'unknown', u.runId || '', u.taskId || '', u.projectId || '', u.conversationId || '',
+        u.provider || 'unknown', u.providerKnown ? 1 : 0, u.providerSource || '', u.model || '',
+        Number(u.tokensIn || 0), Number(u.tokensOut || 0), Number(u.tokensCache || 0), Number(u.costCny || 0),
+        u.costSource || 'estimated', u.usageKnown === false ? 0 : 1, u.budgetScope || 'global', now,
+      );
+    } catch (err) {
+      // 幂等重试：同一 sourceId 已入账时返回已有记录，不重复计费。
+      const existing = u.sourceId ? this.db.prepare('SELECT * FROM llm_usage WHERE source_id=?').get(u.sourceId) : null;
+      if (existing) return existing;
+      throw err;
+    }
+    return this.db.prepare('SELECT * FROM llm_usage WHERE id=?').get(id);
+  }
+  listLlmUsage({ projectId = '', conversationId = '', runId = '', limit = 500 } = {}) {
+    const where = []; const params = [];
+    if (projectId) { where.push('project_id=?'); params.push(projectId); }
+    if (conversationId) { where.push('conversation_id=?'); params.push(conversationId); }
+    if (runId) { where.push('run_id=?'); params.push(runId); }
+    params.push(limit);
+    return this.db.prepare(`SELECT * FROM llm_usage ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT ?`).all(...params);
+  }
+  backfillLlmUsage() {
+    // 一次性回填旧 attempts/audits 用量，确保预算不因新账本上线而“重置”。
+    const now = nowIso();
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO llm_usage (id,source_id,source,run_id,task_id,project_id,conversation_id,provider,provider_known,provider_source,model,tokens_in,tokens_out,tokens_cache,cost_cny,cost_source,usage_known,budget_scope,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const attempts = this.db.prepare(`SELECT a.id,a.run_id,a.task_id,r.project_id,a.provider,a.provider_known,a.provider_source,a.model,a.tokens_in,a.tokens_out,a.tokens_cache,a.cost_cny,a.stage,a.created_at FROM attempts a LEFT JOIN runs r ON r.id=a.run_id`).all();
+    for (const a of attempts) insert.run(`usage_legacy_att_${a.id}`, `attempt:${a.id}`, 'legacy_attempt', a.run_id || '', a.task_id || '', a.project_id || '', '', a.provider || 'unknown', a.provider_known ? 1 : 0, a.provider_source || 'legacy', a.model || '', Number(a.tokens_in || 0), Number(a.tokens_out || 0), Number(a.tokens_cache || 0), Number(a.cost_cny || 0), 'legacy', 1, 'global', a.created_at || now);
+    const audits = this.db.prepare(`SELECT au.id,au.run_id,au.task_id,r.project_id,au.provider,au.provider_known,au.provider_source,au.model,au.tokens_in,au.tokens_out,au.cost_cny,au.budget_scope,au.created_at FROM audits au LEFT JOIN runs r ON r.id=au.run_id`).all();
+    for (const a of audits) insert.run(`usage_legacy_aud_${a.id}`, `audit:${a.id}`, 'legacy_audit', a.run_id || '', a.task_id || '', a.project_id || '', '', a.provider || 'unknown', a.provider_known ? 1 : 0, a.provider_source || 'legacy', a.model || '', Number(a.tokens_in || 0), Number(a.tokens_out || 0), 0, Number(a.cost_cny || 0), 'legacy', 1, a.budget_scope || 'global', a.created_at || now);
+    return this.db.prepare('SELECT COUNT(*) n FROM llm_usage').get().n;
+  }
+
   // ---------------- stats ----------------
   usageForProject(projectId) {
     const attempts = this.db
@@ -1039,28 +1182,18 @@ export class Store {
   }
 
   usageTotals() {
-    const attemptRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM attempts GROUP BY provider`).all();
-    const auditRows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_in ELSE 0 END),0) tin, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_out ELSE 0 END),0) tout, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN cost_cny ELSE 0 END),0) cost FROM audits GROUP BY provider`).all();
-    const scoped = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(cost_cny),0) cost FROM audits WHERE budget_scope='project_audit' GROUP BY provider`).all();
+    // 单一事实源：llm_usage；旧 attempts/audits 已在迁移时回填，后续由触发器入账。
+    const rows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_in ELSE 0 END),0) tin, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_out ELSE 0 END),0) tout, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_cache ELSE 0 END),0) tc, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN cost_cny ELSE 0 END),0) cost FROM llm_usage GROUP BY provider`).all();
+    const scoped = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM llm_usage WHERE budget_scope='project_audit' GROUP BY provider`).all();
     const byProvider = {};
     const ensure = (name) => {
       const key = name || 'unknown';
       if (!byProvider[key]) byProvider[key] = { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0, known: false };
       return byProvider[key];
     };
-    for (const r of attemptRows) {
+    for (const r of rows) {
       const agg = ensure(r.provider || 'unknown');
-      agg.tokensIn += Number(r.tin);
-      agg.tokensOut += Number(r.tout);
-      agg.tokensCache += Number(r.tc);
-      agg.costCny += Number(r.cost);
-      agg.known = agg.known || Number(r.known) === 1;
-    }
-    for (const r of auditRows) {
-      const agg = ensure(r.provider || 'unknown');
-      agg.tokensIn += Number(r.tin);
-      agg.tokensOut += Number(r.tout);
-      agg.costCny += Number(r.cost);
+      agg.tokensIn += Number(r.tin); agg.tokensOut += Number(r.tout); agg.tokensCache += Number(r.tc); agg.costCny += Number(r.cost);
       agg.known = agg.known || Number(r.known) === 1;
     }
     for (const agg of Object.values(byProvider)) agg.tokens = agg.tokensIn + agg.tokensOut + agg.tokensCache;
@@ -1068,7 +1201,7 @@ export class Store {
       acc.tokensIn += a.tokensIn; acc.tokensOut += a.tokensOut; acc.tokensCache += a.tokensCache; acc.tokens += a.tokens; acc.costCny += a.costCny;
       return acc;
     }, { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 });
-    const projectAudit = scoped.reduce((acc, r) => { acc.tokensIn += Number(r.tin); acc.tokensOut += Number(r.tout); acc.tokens += Number(r.tin) + Number(r.tout); acc.costCny += Number(r.cost); return acc; }, { tokensIn: 0, tokensOut: 0, tokens: 0, costCny: 0 });
+    const projectAudit = scoped.reduce((acc, r) => { acc.tokensIn += Number(r.tin); acc.tokensOut += Number(r.tout); acc.tokensCache += Number(r.tc); acc.tokens += Number(r.tin) + Number(r.tout) + Number(r.tc); acc.costCny += Number(r.cost); return acc; }, { tokensIn: 0, tokensOut: 0, tokensCache: 0, tokens: 0, costCny: 0 });
     return { ...total, byProvider, projectAudit };
   }
 
@@ -1079,12 +1212,10 @@ export class Store {
   }
 
   usageForProject(projectId) {
-    const attemptRows = this.db.prepare(`SELECT a.provider, MAX(a.provider_known) known, COALESCE(SUM(a.tokens_in),0) tin, COALESCE(SUM(a.tokens_out),0) tout, COALESCE(SUM(a.tokens_cache),0) tc, COALESCE(SUM(a.cost_cny),0) cost FROM attempts a JOIN runs r ON r.id=a.run_id WHERE r.project_id=? GROUP BY a.provider`).all(projectId);
-    const auditRows = this.db.prepare(`SELECT au.provider, MAX(au.provider_known) known, COALESCE(SUM(au.tokens_in),0) tin, COALESCE(SUM(au.tokens_out),0) tout, COALESCE(SUM(au.cost_cny),0) cost FROM audits au JOIN runs r ON r.id=au.run_id WHERE r.project_id=? GROUP BY au.provider`).all(projectId);
+    const rows = this.db.prepare(`SELECT provider, MAX(provider_known) known, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM llm_usage WHERE project_id=? GROUP BY provider`).all(projectId);
     const byProvider = {};
     const ensure = (name) => { const k = name || 'unknown'; if (!byProvider[k]) byProvider[k] = { tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0,known:false }; return byProvider[k]; };
-    for (const r of attemptRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.tokensCache+=Number(r.tc); a.costCny+=Number(r.cost); a.known=a.known||Number(r.known)===1; }
-    for (const r of auditRows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.costCny+=Number(r.cost); a.known=a.known||Number(r.known)===1; }
+    for (const r of rows) { const a=ensure(r.provider||'unknown'); a.tokensIn+=Number(r.tin); a.tokensOut+=Number(r.tout); a.tokensCache+=Number(r.tc); a.costCny+=Number(r.cost); a.known=a.known||Number(r.known)===1; }
     for (const a of Object.values(byProvider)) a.tokens=a.tokensIn+a.tokensOut+a.tokensCache;
     const total = Object.values(byProvider).reduce((acc,a)=>{acc.tokensIn+=a.tokensIn;acc.tokensOut+=a.tokensOut;acc.tokensCache+=a.tokensCache;acc.tokens+=a.tokens;acc.costCny+=a.costCny;return acc;},{tokensIn:0,tokensOut:0,tokensCache:0,tokens:0,costCny:0});
     return { ...total, byProvider };

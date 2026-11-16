@@ -13,6 +13,7 @@ import * as gitops from './git.js';
 import { nowIso, newId } from './util.js';
 import { PolicyError, redact, modelFamily } from './policy.js';
 import { planNextTask } from './planner.js';
+import { assertModelBudget } from './budget.js';
 import { buildCoverageMatrix, qualityConfig, repairTasksFromQuality, runQualityCommand } from './quality.js';
 
 function lastAttemptFamily(loop, store) {
@@ -313,6 +314,7 @@ export class LoopManager {
         rationale = next.qualityIssueId ? `来自质量闭环修复任务（${next.qualityIssueId}）` : '来自显式任务队列';
       } else {
         try {
+          assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner' });
           const planned = await planNextTask({
             config: this.config, project, goal: loop.goal,
             history: loop.history_json || [],
@@ -499,8 +501,10 @@ export class LoopManager {
     const history = Array.isArray(loop.history_json) ? [...loop.history_json] : [];
     // 幂等：同一 run/commit 不重复入历史，避免恢复后重复轮次/重复提交语义
     if (history.some((h) => h.runId === run.id || (task.head_commit && h.commit === task.head_commit))) {
-      this.store.updateLoop(loop.id, { current_run_id: '', status: loop.round >= loop.max_rounds ? 'completed' : 'running' });
-      this.emit(loop, 'loop_round_duplicate_skipped', `检测到已完成轮次的重复通知，已跳过：${run.id}`);
+      const qIncomplete = qualityGateIncomplete(loop, project);
+      const status = qIncomplete ? 'blocked' : (loop.round >= loop.max_rounds ? 'completed' : 'running');
+      this.store.updateLoop(loop.id, { current_run_id: '', status, stop_reason: qIncomplete ? `重复轮次通知但质量门未完成：${qIncomplete.reason}` : '' });
+      this.emit(loop, qIncomplete ? 'loop_blocked' : 'loop_round_duplicate_skipped', qIncomplete ? `重复轮次通知但质量门未完成，不标记 completed：${qIncomplete.reason}` : `检测到已完成轮次的重复通知，已跳过：${run.id}`, qIncomplete ? 'warn' : 'info');
       return;
     }
     // 任务完成判定：必须 passed 且验证状态可信；UNKNOWN/FAILED 不得推进

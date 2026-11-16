@@ -29,6 +29,8 @@ import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { deriveClausePlan } from './quality.js';
+import { assertModelBudget } from './budget.js';
+import { verifyContractBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount } from './contract.js';
 import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
 import { AsyncSemaphore } from './semaphore.js';
@@ -38,7 +40,7 @@ import {
   tmpHomeFor, WriteRateLimiter, isAllowedHost, assertSafeWriteRequest, redactForResponse,
 } from './security.js';
 
-const VERSION = '2.9.0';
+const VERSION = '3.0.0';
 
 export class Orchestrator {
   constructor({ config, store, bus, deps = {} }) {
@@ -432,6 +434,11 @@ export class Orchestrator {
         low_budget_finalize: input.lowBudgetFinalize === true || input.low_budget_finalize === true,
         supervisor_managed: input.supervisorManaged === true || input.supervisor_managed === true,
         audit_budget: input.auditBudget || input.audit_budget || {},
+        require_real_tests: input.requireRealTests === true || input.require_real_tests === true,
+        auto_test_setup: input.autoTestSetup === true || input.auto_test_setup === true,
+        test_plan: input.testPlan || input.test_plan || null,
+        contract_baseline: input.contractBaseline || input.contract_baseline || null,
+        trusted_test_hashes: input.trustedTestHashes || input.trusted_test_hashes || null,
         quality: qualityConfigInput,
         quality_plan: qualityPlanInput,
         replay_assets: input.replayAssets || input.replay_assets || undefined,
@@ -469,11 +476,12 @@ export class Orchestrator {
     if (patch.ciRequired !== undefined || patch.ci_required !== undefined) mapped.ci_required = (patch.ciRequired ?? patch.ci_required) ? 1 : 0;
     if (patch.allowLocalAcceptance !== undefined || patch.allow_local_acceptance !== undefined) mapped.allow_local_acceptance = (patch.allowLocalAcceptance ?? patch.allow_local_acceptance) ? 1 : 0;
     if (patch.remotePushAuthorized !== undefined || patch.remote_push_authorized !== undefined) mapped.remote_push_authorized = (patch.remotePushAuthorized ?? patch.remote_push_authorized) ? 1 : 0;
-    const configPatch = {};
+    let configPatch = {};
     if (patch.allowedTestCommands !== undefined || patch.allowed_test_commands !== undefined) configPatch.allowed_test_commands = parseList(patch.allowedTestCommands ?? patch.allowed_test_commands);
     if (patch.testEnvAllowlist !== undefined || patch.test_env_allowlist !== undefined) configPatch.test_env_allowlist = parseList(patch.testEnvAllowlist ?? patch.test_env_allowlist);
     if (patch.agentPermission !== undefined || patch.agent_permission !== undefined) configPatch.agent_permission = patch.agentPermission ?? patch.agent_permission;
     if (patch.testTimeoutMs !== undefined || patch.test_timeout_ms !== undefined) configPatch.test_timeout_ms = Number(patch.testTimeoutMs ?? patch.test_timeout_ms);
+    if (patch.autoTestSetup !== undefined || patch.auto_test_setup !== undefined) configPatch.auto_test_setup = patch.autoTestSetup === true || patch.auto_test_setup === true;
     if (patch.testIsolation !== undefined || patch.test_isolation !== undefined) configPatch.test_isolation = String(patch.testIsolation ?? patch.test_isolation);
     if (patch.agentIsolation !== undefined || patch.agent_isolation !== undefined) configPatch.agent_isolation = String(patch.agentIsolation ?? patch.agent_isolation);
     if (patch.containerAgentNetwork !== undefined || patch.container_agent_network !== undefined) configPatch.container_agent_network = String(patch.containerAgentNetwork ?? patch.container_agent_network);
@@ -485,6 +493,8 @@ export class Orchestrator {
     if (patch.agentAllowedTools !== undefined || patch.agent_allowed_tools !== undefined) configPatch.agent_allowed_tools = String(patch.agentAllowedTools ?? patch.agent_allowed_tools);
     if (patch.agentDisallowedTools !== undefined || patch.agent_disallowed_tools !== undefined) configPatch.agent_disallowed_tools = String(patch.agentDisallowedTools ?? patch.agent_disallowed_tools);
     if (patch.quality !== undefined) configPatch.quality = patch.quality;
+    if (patch.config !== undefined) configPatch = { ...configPatch, ...(patch.config || {}) };
+    if (patch.protectedPaths !== undefined || patch.protected_paths !== undefined) mapped.protected_paths = parseList(patch.protectedPaths ?? patch.protected_paths);
     if (patch.replayAssets !== undefined || patch.replay_assets !== undefined) configPatch.replay_assets = patch.replayAssets ?? patch.replay_assets;
     if (patch.publish !== undefined) configPatch.publish = !!patch.publish;
     if (Object.keys(configPatch).length) mapped.config_json = { ...(project.config_json || {}), ...configPatch };
@@ -510,6 +520,7 @@ export class Orchestrator {
     }
 
     this.assertBudget(5_000);
+    assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner' });
 
     const busy = this.store.activeRunForProject(project.id);
     if (busy) {
@@ -562,6 +573,7 @@ export class Orchestrator {
     }
 
     try {
+      this.assertProjectLease(project.id);
       try {
         this.store.createRun({
           id: runId,
@@ -960,10 +972,45 @@ export class Orchestrator {
         env: buildTestEnv({ config: this.config, project, homeDir: path.join(sandbox, 'test-home') }),
       });
     };
-    let res = await runOnce(command, logPath);
-    // P1-2：测试命令因缺少项目依赖而失败（典型 exit=127，如 vitest/npm 不可执行）时，
-    // 若项目显式配置 test_setup_command，先执行环境准备再重试一次；不修改产品业务代码。
-    const setup = String(project?.config_json?.test_setup_command || '').trim();
+    // 按真实技术栈准备依赖：仅对 require_real_tests 的新项目自动执行一次有界依赖安装。
+    const autoSetup = (() => {
+      const cfg = project?.config_json || {};
+      if (!cfg.require_real_tests || !cfg.auto_test_setup) return '';
+      try {
+        if (fs.existsSync(path.join(worktree, 'requirements.txt'))) return 'python3 -m pip install -r requirements.txt';
+        if (fs.existsSync(path.join(worktree, 'pyproject.toml'))) return 'python3 -m pip install -e .';
+        if (fs.existsSync(path.join(worktree, 'go.mod'))) return 'go mod download';
+        if (fs.existsSync(path.join(worktree, 'Cargo.toml'))) return 'cargo fetch';
+        if (!fs.existsSync(path.join(worktree, 'package.json'))) return '';
+        if (fs.existsSync(path.join(worktree, 'node_modules'))) return '';
+        const pkg = JSON.parse(fs.readFileSync(path.join(worktree, 'package.json'), 'utf8'));
+        if (!pkg.dependencies && !pkg.devDependencies) return '';
+        if (fs.existsSync(path.join(worktree, 'pnpm-lock.yaml'))) return 'pnpm install --frozen-lockfile --ignore-scripts';
+        if (fs.existsSync(path.join(worktree, 'yarn.lock'))) return 'yarn install --frozen-lockfile --ignore-scripts';
+        return 'npm install --no-audit --no-fund --ignore-scripts';
+      } catch { return ''; }
+    })();
+    const setup = String(project?.config_json?.test_setup_command || '').trim() || autoSetup;
+    // 隐藏契约测试由 Workbench 独立执行，不依赖 Agent 的 test script 是否包含它。
+    if (project?.config_json?.require_real_tests) {
+      const trustedRel = project.config_json?.test_plan?.trustedContractTest || 'tests/acceptance/workbench-contract.test.mjs';
+      const trustedLog = `${logPath}.trusted-contract.log`;
+      const trusted = await runOnce(`${JSON.stringify(process.execPath)} --test ${JSON.stringify(trustedRel)}`, trustedLog);
+      if (trusted.code !== 0) throw new PolicyError('TRUSTED_CONTRACT_TEST_FAILED', `隐藏契约测试未通过（exit=${trusted.code}）：${(trusted.stderr || trusted.stdout || '').slice(-2000)}`);
+    }
+    let res;
+    if (autoSetup) {
+      const setupLog = `${logPath}.auto-setup.log`;
+      const setupRes = await runOnce(autoSetup, setupLog);
+      if (setupRes.code !== 0) throw new PolicyError('TEST_SETUP_FAILED', `真实测试依赖准备失败（${autoSetup}，exit=${setupRes.code}）：${(setupRes.stderr || setupRes.stdout || '').slice(-2000)}`);
+      res = await runOnce(command, logPath);
+      res.autoSetup = true;
+      res.setupCommand = autoSetup;
+      res.setupLogPath = setupLog;
+    } else {
+      res = await runOnce(command, logPath);
+    }
+    // P1-2：测试命令因缺少项目依赖/环境而失败时，先执行有界 setup 再重试一次；不修改业务代码。
     if (res.code === 127 && setup) {
       if (setup.length > 1200 || /[\n\r]/.test(setup)) throw new PolicyError('TEST_SETUP_INVALID', 'test_setup_command 非法');
       const setupLog = `${logPath}.setup.log`;
@@ -980,6 +1027,20 @@ export class Orchestrator {
         res.setupFailed = true;
         res.stderr = `${res.stderr || ''}\n[test_setup_command exit=${setupRes.code}]\n${(setupRes.stderr || setupRes.stdout || '').slice(-2000)}`;
       }
+    }
+    if (project?.config_json?.require_real_tests) {
+      const evidence = validateTestEvidence({ project, worktree, command, result: res });
+      res.realTestEvidence = evidence;
+      if (!evidence.ok) throw new PolicyError(evidence.code || 'TEST_EVIDENCE_INVALID', `${evidence.reason}；真实测试未成立，不能进入审计/交付`);
+      // 独立可信运行器：不信任 Agent 的 test script 输出；直接执行发现到的产品测试文件。
+      const trustedCommand = trustedProductTestCommand(worktree, evidence.productTestFiles || []);
+      const trustedLog = `${logPath}.trusted-product.log`;
+      const trustedRes = await runOnce(trustedCommand, trustedLog);
+      const trustedCount = parseTestCount(trustedRes.stdout || '', trustedRes.stderr || '');
+      const minTests = Math.max(1, Number(project.config_json?.test_plan?.minTests || 1));
+      if (trustedRes.code !== 0) throw new PolicyError('TRUSTED_TEST_RUN_FAILED', `可信测试运行器失败（exit=${trustedRes.code}）：${(trustedRes.stderr || trustedRes.stdout || '').slice(-2000)}`);
+      if (!trustedCount || trustedCount < minTests) throw new PolicyError('TRUSTED_TEST_COUNT_TOO_LOW', `可信运行器实际执行测试数 ${trustedCount} < ${minTests}；拒绝用 Agent 自报输出作为 PASS`);
+      res.trustedProductTest = { command: trustedCommand, testCount: trustedCount, logPath: trustedLog, files: evidence.productTestFiles };
     }
     return res;
   }
@@ -1224,13 +1285,19 @@ export class Orchestrator {
           if (repeated >= 1) return this.failTask(run, task, '多次修改受保护路径，任务阻塞', 'blocked', { violations });
           continue;
         }
+        const contractViolations = verifyContractBaseline(worktree, project.config_json?.contract_baseline || {});
+        if (contractViolations.length) {
+          await enforceProtectedPaths(worktree, contractViolations);
+          return this.failTask(run, task, `冻结验收契约被修改且已还原：${contractViolations.join(', ')}；修改契约必须由用户显式授权`, 'blocked', { contractViolations });
+        }
 
         // ---- 指纹：确保审计/测试/提交是同一版本 ----
+        this.assertProjectLease(project.id);
         await gitops.stageAll(worktree);
         const testedHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
         this.store.updateTask(task.id, { status: TaskStatus.TESTING, verification_json: { baseCommit, testedHash } });
 
-        const testCommand = this.resolveTaskTestCommand(project, task);
+        const testCommand = this.resolveTaskTestCommand(project, task, worktree);
         let safeCommand;
         try {
           safeCommand = assertSafeTestCommand(testCommand, project);
@@ -1373,6 +1440,7 @@ export class Orchestrator {
             }
             await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
           }
+          this.freezeTestBaseline(project, worktree);
           const headCommit = await gitops.currentHead(worktree);
           const verification = {
             baseCommit, testedHash, commit: headCommit, planBranch,
@@ -1439,13 +1507,51 @@ export class Orchestrator {
     }
   }
 
-  resolveTaskTestCommand(project, task) {
+  freezeTestBaseline(project, worktree) {
+    const cfg = project.config_json || {};
+    if (cfg.require_real_tests !== true || cfg.tests_frozen_at) return cfg.trusted_test_hashes || {};
+    const files = findTestFiles(worktree);
+    const hashes = {};
+    for (const rel of files) {
+      const h = sha256File(path.join(worktree, rel));
+      if (h) hashes[rel] = h;
+    }
+    if (!Object.keys(hashes).length) throw new PolicyError('TEST_FREEZE_EMPTY', '没有可冻结的真实测试文件，不能标记任务通过');
+    // 冻结测试运行器配置：只冻结测试文件不足以防止 Agent 改 package.json 的 test script。
+    const runnerConfigs = ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'pyproject.toml', 'pytest.ini', 'go.mod', 'Cargo.toml', 'vitest.config.js', 'vitest.config.mjs', 'jest.config.js', 'jest.config.mjs', 'playwright.config.js', 'playwright.config.mjs', 'playwright.config.ts'];
+    for (const rel of runnerConfigs) {
+      const h = sha256File(path.join(worktree, rel));
+      if (h) hashes[rel] = h;
+    }
+    const protectedPaths = [...new Set([...(project.protected_paths || []), 'tests/**', 'test/**', '**/*.test.js', '**/*.test.mjs', '**/*.spec.js', '**/*.spec.mjs', ...runnerConfigs])];
+    const updated = this.updateProject(project.id, {
+      protectedPaths,
+      config: { ...cfg, trusted_test_hashes: hashes, tests_frozen_at: new Date().toISOString() },
+    });
+    project.protected_paths = updated.protected_paths;
+    project.config_json = updated.config_json;
+    this.emit({ projectId: project.id, type: 'tests_frozen', message: `已冻结 ${Object.keys(hashes).length} 个真实测试文件；后续修改测试需显式授权`, data: { files: Object.keys(hashes) } });
+    return hashes;
+  }
+
+  resolveTaskTestCommand(project, task, worktree = '') {
     const projectConfig = project.config_json || {};
+    const requireReal = projectConfig.require_real_tests === true;
     const allowed = new Set([project.test_command, ...(projectConfig.allowed_test_commands || [])].map((s) => String(s || '').trim()).filter(Boolean));
     const requested = String(task.test_command || '').trim();
     if (requested && allowed.has(requested)) return requested;
     if (requested) {
       this.emit({ runId: task.run_id, projectId: project.id, taskId: task.id, type: 'test_command_fallback', level: 'warn', message: `任务测试命令未在项目 allowlist 中，已回退到项目默认测试命令：${requested}` });
+    }
+    if (project.test_command) return project.test_command;
+    if (requireReal && worktree) {
+      const detected = detectTestCommand(worktree);
+      if (!detected) throw new PolicyError('TEST_PLAN_UNRESOLVED', '真实测试计划未建立：项目没有测试命令，Coding Agent 也没有生成可检测的测试框架/脚本；不能宣布通过');
+      const updatedProject = this.updateProject(project.id, { testCommand: detected, allowedTestCommands: [detected] });
+      project.test_command = updatedProject.test_command;
+      project.config_json = updatedProject.config_json;
+      this.emit({ runId: task.run_id, projectId: project.id, taskId: task.id, type: 'test_command_detected', message: `按真实技术栈检测到测试命令：${detected}` });
+      return detected;
     }
     return project.test_command;
   }
@@ -2055,6 +2161,12 @@ export class Orchestrator {
    * 只提交 worktree 当前内容（由 Agent 产生），不修改业务逻辑；返回后更新项目默认分支。
    */
   async prepareAutoRepair({ project, task, label = 'auto-repair' } = {}) {
+    // 幂等：崩溃后重试不得重复创建修复基线分支。
+    const prior = task?.result_json?.autoRepairBaseline;
+    if (prior?.branch && prior?.head) {
+      this.store.updateProject(project.id, { default_branch: prior.branch });
+      return { ok: true, branch: prior.branch, head: prior.head, reused: true };
+    }
     const suffix = newId('ar').replace(/^ar_?/, '').slice(0, 8);
     let head = '';
     if (task?.worktree_path && fs.existsSync(task.worktree_path)) {
@@ -2071,6 +2183,8 @@ export class Orchestrator {
         await gitops.updateRef(project.local_path, branch, head);
         await gitops.removeWorktree(project.local_path, worktree).catch(() => {});
         this.store.updateProject(project.id, { default_branch: branch });
+        const freshTask = this.store.getTask(task.id);
+        this.store.updateTask(task.id, { result_json: { ...(freshTask?.result_json || {}), autoRepairBaseline: { branch, head, at: nowIso() } } });
         this.emit({ projectId: project.id, taskId: task.id, type: 'auto_repair_baseline', message: `已保存失败任务产物为修复基线 ${branch}（${head.slice(0, 8)}）`, data: { branch, head, sourceTaskId: task.id } });
         return { ok: true, branch, head, worktree: '' };
       }
@@ -2124,10 +2238,11 @@ export class Orchestrator {
     this.store.updateRun(run.id, { status: RunStatus.RUNNING, stop_reason: '', current_task_id: task.id });
     this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'verification_retry_started', message: '复用现有工作副本，仅重试测试与独立审计' });
     try {
+      this.assertProjectLease(project.id);
       await gitops.stageAll(worktree);
       const testedHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
       this.store.updateTask(task.id, { status: TaskStatus.TESTING, verification_json: { baseCommit, testedHash, verificationRetry: true } });
-      const testCommand = this.resolveTaskTestCommand(project, task);
+      const testCommand = this.resolveTaskTestCommand(project, task, worktree);
       const safeCommand = assertSafeTestCommand(testCommand, project);
       this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_started', message: `运行测试：${safeCommand}`, data: { command: safeCommand, testedHash } });
       const testRes = await this.runProjectTest({
@@ -2158,6 +2273,8 @@ export class Orchestrator {
         await enforceProtectedPaths(worktree, violations);
         throw new PolicyError('PROTECTED_PATH_VIOLATION', `受保护路径被修改：${violations.join(', ')}`);
       }
+      const contractViolations = verifyContractBaseline(worktree, project.config_json?.contract_baseline || {});
+      if (contractViolations.length) throw new PolicyError('CONTRACT_MUTATED', `冻结验收契约被修改：${contractViolations.join(', ')}`);
       const diff = await gitops.stagedDiff(worktree, baseCommit, { maxChars: 1_000_000 });
       const diffStat = await gitops.diffStat(worktree, baseCommit);
       const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
@@ -2166,12 +2283,14 @@ export class Orchestrator {
       this.store.updateTask(task.id, { status: TaskStatus.AUDITING });
       this.assertBudget(8_000);
       const contextFiles = await this.collectAuditContext(worktree);
+      this.assertProjectLease(project.id);
       const audit = await this.deps.runAudit({
         config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },
         diff, diffStat, testResult, repoFiles, coderFamily, contextFiles,
         versionInfo: { baseCommit, worktreeHash: testedHash, testedHash }, worktree, commit: '',
       });
       const auditStatus = audit.status || (audit.verdict === 'pass' ? 'PASS' : 'FAIL');
+      this.assertProjectLease(project.id);
       const auditIdentity = resolveLlmIdentity({ config: this.config, provider: audit.provider });
       const actualAuditProvider = auditIdentity.known ? auditIdentity.provider : 'unknown';
       const auditRow = this.store.createAudit({
@@ -2225,6 +2344,7 @@ export class Orchestrator {
         const sameCheckedOutBranch = currentBranch && currentBranch === planBranch && (await gitops.currentHead(worktree)) === commit.commit;
         if (!sameCheckedOutBranch) await gitops.updateRef(project.local_path, planBranch, commit.commit || (await gitops.currentHead(worktree)));
       }
+      this.freezeTestBaseline(project, worktree);
       const headCommit = await gitops.currentHead(worktree);
       const verification = {
         baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },

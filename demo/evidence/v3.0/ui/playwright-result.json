@@ -1,0 +1,88 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "首页可见",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "桌面无移动菜单",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "首条消息进入真实聊天",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "收到回复",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "上游只调用一次",
+      "ok": true,
+      "extra": "calls=1"
+    },
+    {
+      "name": "无重复用户消息",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "自然语言查询显示控制卡",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "控制查询不调用模型",
+      "ok": true,
+      "extra": "calls=1"
+    },
+    {
+      "name": "重复发送只产生一条新用户消息",
+      "ok": true,
+      "extra": "users=3"
+    },
+    {
+      "name": "重复发送只多调用一次模型",
+      "ok": true,
+      "extra": "calls=2"
+    },
+    {
+      "name": "刷新恢复对话",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "刷新恢复历史消息",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "我的项目切换主面板",
+      "ok": true,
+      "extra": ""
+    },
+    {
+      "name": "无浏览器错误",
+      "ok": true,
+      "extra": "[]"
+    },
+    {
+      "name": "390px 无横向溢出",
+      "ok": true,
+      "extra": "overflow=0"
+    }
+  ],
+  "upstreamCalls": 2,
+  "errors": [],
+  "screenshots": [
+    "01-welcome.png",
+    "02-first-message.png",
+    "03-control.png",
+    "04-mobile.png"
+  ]
+}

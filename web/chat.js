@@ -7,6 +7,7 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const state = {
   conversations: [], projects: [], current: null, messages: [], loop: null, run: null,
   projectsView: false, sending: false, polling: null, theme: 'system', selectedProjectId: '',
+  conversationRequestKey: '', lastFailed: null,
 };
 const dom = {};
 
@@ -104,6 +105,7 @@ function setView(name) {
 function showWelcome() {
   dom.welcome.hidden = false;
   dom.conversation.hidden = true;
+  if (dom.quickControls) dom.quickControls.hidden = true;
   dom.crumb.textContent = '新对话';
   renderWelcome();
 }
@@ -173,7 +175,8 @@ function bindWelcome() {
   $$('.suggestion').forEach((b) => b.addEventListener('click', () => { if (input) { input.value = b.dataset.prompt || ''; input.focus(); autoGrow(input); } }));
 }
 function newChat() {
-  state.current = null; state.messages = []; state.loop = null; state.run = null;
+  state.current = null; state.messages = []; state.loop = null; state.run = null; state.lastFailed = null; state.conversationRequestKey = '';
+  localStorage.removeItem('wb-last-failed'); localStorage.removeItem('wb-pending-conversation');
   localStorage.removeItem('wb-current-conversation');
   stopPolling(); showWelcome(); closeSidebar();
   $('#welcomeInput')?.focus();
@@ -209,31 +212,38 @@ function openSidebar() { dom.sidebar.classList.add('open'); dom.scrim.hidden = f
 function closeSidebar() { dom.sidebar.classList.remove('open'); dom.scrim.hidden = true; dom.menuBtn?.setAttribute('aria-expanded', 'false'); }
 
 // ---------- conversation ----------
+function requestId() {
+  return (globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+}
 async function startFromText(text) {
   if (state.sending) return;
-  state.sending = true;
+  if (!text || !String(text).trim()) return;
   try {
     if (!state.current) {
-      const created = await api('/api/conversations', { method: 'POST', body: JSON.stringify({ title: text.slice(0, 80), projectId: state.selectedProjectId || '' }) });
+      state.conversationRequestKey = state.conversationRequestKey || localStorage.getItem('wb-pending-conversation') || requestId();
+      localStorage.setItem('wb-pending-conversation', state.conversationRequestKey);
+      const created = await api('/api/conversations', { method: 'POST', body: JSON.stringify({ title: text.slice(0, 80), projectId: state.selectedProjectId || '', clientRequestId: state.conversationRequestKey }) });
       state.current = created.conversation;
-      state.messages = [];
+      state.messages = created.messages || [];
+      state.conversations = state.conversations.filter((c) => c.id !== state.current.id);
       state.conversations.unshift(state.current);
+      state.conversationRequestKey = '';
+      localStorage.removeItem('wb-pending-conversation');
     }
     localStorage.setItem('wb-current-conversation', state.current.id);
     showConversation();
     renderMessages();
-    await sendMessage(text);
+    await sendMessage(text, { clientMessageId: requestId() });
   } catch (err) {
+    // 保留 conversationRequestKey：网络恢复后同一请求不会创建第二个对话。
     toast(err.message, 'error');
-  } finally {
-    state.sending = false;
-    updateComposerState();
   }
 }
 async function openConversation(id) {
   try {
     const data = await api(`/api/conversations/${id}`);
     state.current = data.conversation; state.messages = data.messages || []; state.loop = data.loop || null; state.run = data.run || null;
+    try { const pending = JSON.parse(localStorage.getItem('wb-last-failed') || 'null'); if (pending?.conversationId === id) state.lastFailed = pending; } catch { /* ignore */ }
     localStorage.setItem('wb-current-conversation', id);
     state.projectsView = false;
     showConversation(); renderMessages(); renderRunPanel();
@@ -241,29 +251,44 @@ async function openConversation(id) {
     closeSidebar();
   } catch (err) { toast(err.message, 'error'); }
 }
-async function sendMessage(text) {
-  if (state.sending) return;
+async function sendMessage(text, opts = {}) {
+  if (state.sending || !state.current) return;
+  const content = String(text || '').trim();
+  if (!content) return;
+  const clientMessageId = opts.clientMessageId || state.lastFailed?.clientMessageId || requestId();
   state.sending = true;
+  state.lastFailed = null;
   updateComposerState();
-  const optimistic = { id: `local-${Date.now()}`, role: 'user', content: text, created_at: new Date().toISOString() };
+  const optimistic = { id: `local-${clientMessageId}`, role: 'user', content, created_at: new Date().toISOString() };
   state.messages.push(optimistic);
   renderMessages();
   const input = $('#chatInput');
   if (input) { input.value = ''; autoGrow(input); }
   try {
-    const data = await api(`/api/conversations/${state.current.id}/messages`, { method: 'POST', body: JSON.stringify({ content: text, projectId: state.selectedProjectId || state.current.project_id || '' }) });
-    state.current = data.conversation; state.messages = data.messages || []; state.messages = state.messages.filter((m) => m.id !== optimistic.id);
+    const data = await api(`/api/conversations/${state.current.id}/messages`, { method: 'POST', body: JSON.stringify({ content, projectId: state.selectedProjectId || state.current.project_id || '', clientMessageId }) });
+    state.current = data.conversation; state.messages = data.messages || []; state.lastFailed = null; localStorage.removeItem('wb-last-failed');
     state.conversations = state.conversations.filter((c) => c.id !== state.current.id); state.conversations.unshift(state.current);
     renderSidebar(); renderMessages();
     if (state.current.status === 'running') startPolling();
   } catch (err) {
-    state.messages = state.messages.filter((m) => m.id !== optimistic.id);
-    state.messages.push({ id: `err-${Date.now()}`, role: 'assistant', content: `暂时无法调用对话模型：${err.message}`, data: { kind: 'error' } });
+    state.lastFailed = { text: content, clientMessageId, conversationId: state.current.id };
+    localStorage.setItem('wb-last-failed', JSON.stringify(state.lastFailed));
+    // 重新读取服务端真实状态；若网络已恢复，用户消息和错误回复都已持久化。
+    let refreshed = true;
+    await refreshConversation().catch(() => { refreshed = false; });
+    if (!refreshed) state.messages.push({ id: `err-${Date.now()}`, role: 'assistant', content: '网络中断，消息已保留；请点击重试，不会重复发送。', data: { kind: 'error', retryable: true } });
+    state.messages = state.messages.filter((m) => !(m.id === optimistic.id && state.messages.some((x) => x.role === 'user' && x.content === content && x.id !== optimistic.id)));
     renderMessages();
-    toast(err.message, 'error');
+    toast(`${err.message}（可重试，不会重复发送）`, 'error');
   } finally {
     state.sending = false; updateComposerState();
   }
+}
+async function refreshConversation() {
+  if (!state.current) return;
+  const data = await api(`/api/conversations/${state.current.id}`);
+  state.current = data.conversation; state.messages = data.messages || []; state.loop = data.loop || null; state.run = data.run || null; state.runContext = data.runContext || '';
+  renderMessages(); renderRunPanel();
 }
 function updateComposerState() {
   const button = $('#chatComposer .send');
@@ -278,11 +303,51 @@ function renderMessages() {
     const body = el('div', { class: 'msg-body' });
     body.append(el('div', { text: safeText(m.content) }));
     if (m.data?.kind === 'brief' && (m.data.goal || m.data.acceptance?.length)) body.append(renderBrief(m.data));
-    if (m.data?.kind === 'error') body.classList.add('msg-error');
+    if (m.data?.kind === 'control' && m.data.control) body.append(renderControl(m.data.control));
+    if (m.data?.kind === 'error') {
+      body.classList.add('msg-error');
+      if (m.data.retryable && state.lastFailed) {
+        body.append(el('div', { class: 'brief-actions' }, [el('button', { class: 'ghost-btn', type: 'button', text: '重试这条消息', onclick: () => sendMessage(state.lastFailed.text, { clientMessageId: state.lastFailed.clientMessageId }) })]));
+      }
+    }
     body.append(el('div', { class: 'msg-meta', text: fmtTime(m.created_at) }));
     dom.messages.append(el('div', { class: `msg ${assistant ? 'assistant' : 'user'}` }, [el('div', { class: 'avatar', text: assistant ? 'AI' : '你' }), body]));
   }
   dom.messages.scrollTop = dom.messages.scrollHeight;
+}
+function controlButton(label, action) {
+  return el('button', { class: 'ghost-btn', type: 'button', text: label, onclick: () => sendControl(action) });
+}
+function renderControl(control) {
+  const card = el('div', { class: 'brief control-card' });
+  card.append(el('div', { class: 'brief-head' }, [el('strong', { text: control.title || '开发控制' }), el('span', { class: 'status-chip ready', text: '真实状态' })]));
+  if (control.text) card.append(el('p', { text: control.text }));
+  const facts = el('div', { class: 'detail-grid' });
+  for (const [label, value] of [
+    ['运行', control.runStatus || '—'],
+    ['当前任务', control.currentTask?.title || '—'],
+    ['任务', `${control.tasksPassed || 0}/${control.tasksTotal || 0} 通过`],
+    ['质量', control.quality ? `${control.quality.allPass ? 'PASS' : '未通过'} ${control.quality.coverage?.pass || 0}/${control.quality.coverage?.total || 0}` : '未配置'],
+  ]) facts.append(detail(label, value));
+  card.append(facts);
+  const actions = el('div', { class: 'brief-actions' });
+  for (const [label, action] of [['进度', 'status'], ['当前任务', 'current_task'], ['失败原因', 'failure'], ['成本', 'cost'], ['测试', 'tests'], ['审计', 'audit'], ['交付', 'delivery']]) actions.append(controlButton(label, action));
+  if (control.loopStatus === 'running') actions.prepend(controlButton('暂停', 'pause'));
+  if (['paused', 'blocked'].includes(control.loopStatus)) actions.prepend(controlButton('继续', 'resume'));
+  card.append(actions);
+  return card;
+}
+async function sendControl(action) {
+  if (!state.current || state.sending) return;
+  state.sending = true; updateComposerState();
+  try {
+    const data = await api(`/api/conversations/${state.current.id}/control`, { method: 'POST', body: JSON.stringify({ action, requestKey: `ui:${state.current.id}:${action}:${requestId()}` }) });
+    state.current = data.conversation; state.messages = data.messages || [];
+    renderMessages(); renderSidebar();
+    if (action === 'start') startPolling();
+    toast(data.control?.title || '已执行');
+  } catch (err) { toast(err.message, 'error'); }
+  finally { state.sending = false; updateComposerState(); }
 }
 function renderBrief(data) {
   const card = el('div', { class: 'brief' });
@@ -402,8 +467,21 @@ function stepsFor(run, phase) {
 }
 function renderRunPanel() {
   const panel = dom.runPanel;
-  if (!state.loop && !state.run) { panel.hidden = true; return; }
+  if (!state.loop && !state.run) {
+    panel.hidden = true;
+    if (dom.quickControls) dom.quickControls.hidden = true;
+    return;
+  }
   panel.hidden = false;
+  if (dom.quickControls) {
+    dom.quickControls.hidden = false;
+    dom.quickControls.innerHTML = '';
+    for (const [label, action] of [['进度', 'status'], ['当前任务', 'current_task'], ['失败原因', 'failure'], ['成本', 'cost'], ['测试', 'tests'], ['审计', 'audit'], ['交付', 'delivery'], ['暂停', 'pause'], ['继续', 'resume']]) {
+      if (action === 'pause' && state.loop?.status !== 'running') continue;
+      if (action === 'resume' && !['paused', 'blocked'].includes(state.loop?.status)) continue;
+      dom.quickControls.append(el('button', { class: 'ghost-btn', type: 'button', text: label, onclick: () => sendControl(action) }));
+    }
+  }
   const phase = friendlyPhase(state.run, state.loop);
   panel.innerHTML = '';
   const head = el('div', { class: 'run-head' }, [
@@ -478,7 +556,7 @@ async function loadBudget() {
 async function boot() {
   dom.sidebar = $('#sidebar'); dom.scrim = $('#scrim'); dom.menuBtn = $('#menuBtn');
   dom.welcome = $('#welcome'); dom.conversation = $('#conversation'); dom.messages = $('#messages');
-  dom.runPanel = $('#runPanel'); dom.crumb = $('#crumb'); dom.projectList = $('#projectList'); dom.recentList = $('#recentList');
+  dom.runPanel = $('#runPanel'); dom.quickControls = $('#quickControls'); dom.crumb = $('#crumb'); dom.projectList = $('#projectList'); dom.recentList = $('#recentList');
   dom.livePill = $('#livePill'); dom.liveText = $('#liveText'); dom.offlineBanner = $('#offlineBanner');
   dom.toast = $('#toast'); dom.settingsModal = $('#settingsModal'); dom.budgetInfo = $('#budgetInfo');
   applyTheme(localStorage.getItem('wb-chat-theme') || 'system');
