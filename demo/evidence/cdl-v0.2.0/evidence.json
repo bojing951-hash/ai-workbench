@@ -1,0 +1,226 @@
+{
+  "project": {
+    "name": "Consumption Decision Lab",
+    "id": "proj_mwi251atbd752de4",
+    "repo": "projects/consumption-decision-lab",
+    "targetVersion": "0.2.0",
+    "candidateBranch": "release/v0.2.0",
+    "tag": "v0.2.0-rc.2",
+    "commit": "1f0c6f52e9c2594022e16ae0de3340a0c2ea10cc",
+    "previousReleaseTag": "v0.1.0",
+    "previousReleaseCommit": "5d60c9760522f1c659d3579484d85e8a8109b786",
+    "worktreeClean": true
+  },
+  "status": {
+    "product": "AWAITING_USER_ACCEPTANCE",
+    "runStatus": "awaiting_acceptance",
+    "verificationStatus": "LOCAL_VERIFIED",
+    "loopStatus": "completed",
+    "loopRound": 1,
+    "merged": false,
+    "deployed": false
+  },
+  "runIds": {
+    "initialAttempt": "run_mwiyzmqt278011d2",
+    "auditRepair": "run_mwj1blbc8c287230",
+    "finalP2": "run_mwj2k9fxe8419fc7"
+  },
+  "loopIds": {
+    "initial": "loop_mwiyzlkb5a31de6b",
+    "repair": "loop_mwj1bkdo105924b5",
+    "final": "loop_mwj2k8i88db89c5b"
+  },
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "v0.1.0 回归与构建浏览 tests",
+      "description": "",
+      "priority": "P0",
+      "required": true,
+      "acceptance": [
+        "既有 unit/build/desktop/mobile 浏览器测试全部通过",
+        "v0.1.0 原有画像/单笔/证据/技巧仍可用"
+      ],
+      "codeRefs": [],
+      "testRefs": [
+        "tests/unit/domain.test.ts",
+        "tests/e2e/app.spec.ts"
+      ],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "v0.1 证据库/消费技巧导航仍可用；未发现外部网络请求",
+      "auditEvidence": [],
+      "issues": []
+    },
+    {
+      "id": "R2",
+      "title": "至少三个财务情景对同一消费对照",
+      "description": "",
+      "priority": "P0",
+      "required": true,
+      "acceptance": [
+        "可创建≥3个命名情景，包含收入/职业/固定支出/负债/储蓄/收入稳定性",
+        "同一笔消费在每个情景下输出结果对比"
+      ],
+      "codeRefs": [],
+      "testRefs": [],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "检测到 4 个命名情景（林然 · 产品设计师、陈默 · 自由插画师、赵青 · 房产销售、孙一 · 应届毕业生）；每个情景包含职业/收入/固定支出/负债/储蓄/稳定性字段；共享消费表单存在",
+      "auditEvidence": [],
+      "issues": []
+    },
+    {
+      "id": "R3",
+      "title": "现金流、可负担、TCO、机会成本与效用公式透明",
+      "description": "",
+      "priority": "P0",
+      "required": true,
+      "acceptance": [
+        "显示输入、公式、输出",
+        "负现金流不得被判无条件可负担",
+        "总拥有成本与机会成本/效用因素可核对"
+      ],
+      "codeRefs": [],
+      "testRefs": [],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "负现金流（月收入 3000 - 固定 5000 - 还款 1000）场景标为不可负担、建议放弃，未出现建议购买",
+      "auditEvidence": [],
+      "issues": []
+    },
+    {
+      "id": "R4",
+      "title": "条件化建议与理由/替代/假设/失效条件",
+      "description": "",
+      "priority": "P0",
+      "required": true,
+      "acceptance": [
+        "购买/推迟/替代/放弃四类条件建议",
+        "每个建议有主要因素、替代选择、假设和失效条件",
+        "输入不足输出 UNKNOWN 不编造"
+      ],
+      "codeRefs": [],
+      "testRefs": [],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "对照结果包含主要判断因素/替代选择/关键假设/失效条件；四类建议语义可见",
+      "auditEvidence": [],
+      "issues": []
+    },
+    {
+      "id": "R5",
+      "title": "本地数据与边界错误处理",
+      "description": "",
+      "priority": "P1",
+      "required": true,
+      "acceptance": [
+        "数据仅本地保存，不发送第三方",
+        "改变收入/负债/储蓄/价格后正确更新且不丢已有本地数据",
+        "正常/边界/错误输入有测试或验证"
+      ],
+      "codeRefs": [],
+      "testRefs": [],
+      "auditRefs": [],
+      "status": "PASS",
+      "evidence": "390px 移动视口无横向溢出（≤2px）",
+      "auditEvidence": [],
+      "issues": []
+    }
+  ],
+  "quality": {
+    "allPass": true,
+    "coverage": {
+      "total": 5,
+      "pass": 5,
+      "fail": 0,
+      "unknown": 0,
+      "blocked": 0
+    },
+    "p0p1": [],
+    "checker": "projects/v0.2/cdl-quality/check.mjs",
+    "source": "Workbench quality loop, independent browser checker"
+  },
+  "dshAudit": {
+    "finalVerdict": "PASS",
+    "score": 100,
+    "criteria": "4/4",
+    "auditId": "aud_mwj36ch2a02b87be",
+    "priorAudit": "FAIL 82 (fixed by agent), earlier UNKNOWN timeout (retried)",
+    "callsTotalProject": 8,
+    "v02Calls": 4,
+    "v02CostCnyEstimate": 1.62525,
+    "projectAuditUsedCny": 2.5266634848,
+    "projectAuditBudgetCny": 30,
+    "vendorInvoice": "NOT_AVAILABLE"
+  },
+  "tests": {
+    "unit": {
+      "suite": "tests/unit/domain.test.ts",
+      "result": "9/9 pass"
+    },
+    "rootE2E": {
+      "result": "3 passed / 1 skipped",
+      "projects": [
+        "desktop",
+        "mobile"
+      ]
+    },
+    "verifyE2E": {
+      "result": "22 passed / 2 project-scoped skipped",
+      "file": "verify/e2e/scenarios.spec.ts",
+      "coverage": [
+        "normal",
+        "boundary",
+        "invalid",
+        "persistence",
+        "clear+reload",
+        "mobile overflow",
+        "audit fixes"
+      ]
+    },
+    "testCommandExit": 0,
+    "logs": [
+      "demo/evidence/cdl-v0.2.0/root-tests.log",
+      "demo/evidence/cdl-v0.2.0/verify-tests.log"
+    ]
+  },
+  "agent": {
+    "provider": "glm",
+    "model": "glm-5.3",
+    "attempts": 10,
+    "completed": 5,
+    "failed": 4,
+    "interrupted": 1,
+    "failureClasses": {
+      "agent_timeout": 1,
+      "error_max_turns": 3
+    },
+    "costCny": 63.11046959999999,
+    "tokensNote": "actual usage from attempts"
+  },
+  "humanInterventions": {
+    "productSourceEdits": 0,
+    "productCodePreservedViaAgentRescueCommit": "949f15e",
+    "testHarnessConfigFixes": [
+      "test command npm ci + browser path",
+      "Claude/DSH timeout expanded"
+    ],
+    "qualityCheckerAuthoredByExternalResponsible": true,
+    "manualRunControl": "cancel/resume/retry after real failures",
+    "frozenTestsModified": false,
+    "packageJsonModified": false
+  },
+  "v01Preservation": {
+    "tag": "v0.1.0",
+    "branch": "release/v0.1.0",
+    "commit": "5d60c9760522f1c659d3579484d85e8a8109b786",
+    "unchanged": true
+  },
+  "limitations": [
+    "package.json version remains 0.1.0 because package.json is frozen/protected; candidate identified by branch/tag",
+    "audit fees are estimates; no vendor per-call invoice",
+    "quality checker lives outside product repo",
+    "user final acceptance pending; no merge/deploy"
+  ]
+}

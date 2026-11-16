@@ -23,10 +23,19 @@ export async function waitServer({ timeoutMs = 15_000 } = {}) {
   }
 }
 
+function readApiToken() {
+  try {
+    return fs.readFileSync(path.join(ROOT, 'data', 'api-token'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
 export async function api(method, apiPath, body) {
+  const token = readApiToken();
   const res = await fetch(`${API}${apiPath}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(token ? { 'x-workbench-token': token } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();

@@ -1,0 +1,23 @@
+{
+  "attemptedAt": "2026-11-16T20:15+08:00",
+  "status": "BLOCKED",
+  "conversationId": "conv_mwj83dcqnh4rm",
+  "projectId": "proj_mwj87qxufc93073b",
+  "loopId": "loop_mwj87r46593f9b15",
+  "runId": "run_mwj87v1a35b91f38",
+  "taskTitle": "搭建本地消费记录单页应用骨架并实现收支记录的增删改查与本地持久化",
+  "blockedAt": "任务执行异常：预计消耗 10000 tokens 超过剩余预算 8654.200000000186",
+  "agentAttempts": 0,
+  "dshAuditCalls": 0,
+  "glmCostCny": 0,
+  "uiState": "开发暂停，需要你处理；规划已完成、编码未执行；测试/审计/质量/交付未执行",
+  "requiredAuthorization": [
+    "新的全局或项目级 token/费用预算（用户明确授权）",
+    "新隔离项目的独立 DSH 审计预算/授权（不能挪用既有项目）"
+  ],
+  "notClaimed": [
+    "真实产品交付 PASS",
+    "AUTONOMOUSLY_VERIFIED",
+    "24H_VERIFIED"
+  ]
+}

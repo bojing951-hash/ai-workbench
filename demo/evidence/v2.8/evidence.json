@@ -1,0 +1,57 @@
+{
+  "baseline": "v2.7.0 @ 7af6d9a / PR #9",
+  "scope": "Workbench autonomy/reliability/security/quality learning from CDL v0.2",
+  "auditSourceFile": "NOT_FOUND in workspace: CDL_v0.2_independent_audit_2026-11-16.md; actual SQLite/Events/Attempts/Audits/Git used",
+  "status": {
+    "P0-1": "IMPLEMENTED+TESTED (offline/real startRun state machine; real agent E2E BLOCKED)",
+    "P0-2": "IMPLEMENTED+TESTED (store + real child SIGKILL windows); all write paths PARTIAL",
+    "P0-3": "PASS (Docker fail-closed, container execution, timeout/cancel); host requires explicit acknowledgment",
+    "P1-1": "IMPLEMENTED (contract->clause plan, clause matrix, UNKNOWN on missing); executable test generation PARTIAL",
+    "P1-2": "IMPLEMENTED+TESTED (test_setup exit127, audit UNKNOWN auto retry, agent fallback); some infra paths UNKNOWN",
+    "realE2E": "BLOCKED: no new project-specific DSH audit budget/authorization",
+    "24h": "NOT_VERIFIED"
+  },
+  "tests": {
+    "total": 256,
+    "pass": 256,
+    "fail": 0,
+    "log": "demo/evidence/v2.8/tests-full.log"
+  },
+  "keyEvidence": [
+    "tests/crash-injection.test.js",
+    "tests/auto-repair.test.js",
+    "tests/quality-isolation.test.js",
+    "tests/quality.test.js",
+    "tests/contract-plan.test.js",
+    "tests/test-setup-recovery.test.js",
+    "tests/loop-recovery.test.js",
+    "demo/evidence/v2.8/crash-injection.log",
+    "demo/evidence/v2.8/quality-isolation.log",
+    "demo/evidence/v2.8/autonomy-tests.log"
+  ],
+  "modelSpendThisRound": {
+    "glmCny": 0,
+    "dshCny": 0,
+    "note": "local tests/Docker only; historical CDL costs not included"
+  },
+  "independentReview": {
+    "reviewer": "v28-reviewer",
+    "readOnly": true,
+    "firstRound": "1 P0 + 2 P1 confirmed",
+    "reReview": "no remaining P0/P1; residual P2 documented",
+    "path": "docs/v2.8/INDEPENDENT-REVIEW.md"
+  },
+  "constraints": {
+    "cdlProductModified": false,
+    "abTouched": false,
+    "readingQueueBudgetBorrowed": false,
+    "mainMerged": false,
+    "deployed": false
+  },
+  "finalCommit": "832fdef",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/10",
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43855315884"
+  }
+}

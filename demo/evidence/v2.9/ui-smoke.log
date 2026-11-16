@@ -1,0 +1,9 @@
+Playwright desktop/mobile UI smoke (final, 2026-11-16)
+- title AI Workbench · 把想法变成软件
+- welcome visible; desktop hamburger hidden
+- project view: 22 cards, conversation hidden
+- real DeepSeek chat: normal project conversation + project-status conversation
+- message persistence/refresh; light/dark; 390px overflow 0
+- /advanced loads; API auth works; old console intact
+- page errors: []
+- one-click start: created project/loop/run; blocked in Coding preflight by global token budget; UI shows real paused state (规划 done / 编码 not executed), no fake progress

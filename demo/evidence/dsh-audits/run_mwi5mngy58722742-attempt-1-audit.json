@@ -1,0 +1,52 @@
+{
+  "provider": "deepseek",
+  "providerLabel": "DeepSeek Harness",
+  "model": "deepseek",
+  "status": "PASS",
+  "verdict": "pass",
+  "score": 100,
+  "criteria": [
+    {
+      "criterion": "npm test 全部通过（unit+tsc/build+Playwright desktop/mobile）",
+      "status": "pass",
+      "evidence": "npm test 退出码 0：vitest 9/9 通过；tsc --noEmit + vite build 成功；Playwright 4 例中 3 passed、1 skipped，skip 是 tests/e2e/app.spec.ts:31 在 desktop 项目上的 mobile-only 断言，mobile 项目已实际执行并通过（playwright.config.ts:7-10）；test-results/.last-run.json:2 为 passed，dist/assets/index-C2jra42X.js 与记录产物同名且含 role=status。"
+    },
+    {
+      "criterion": "画像→单笔决策→情景比较→证据库→消费技巧 全流程可交互",
+      "status": "pass",
+      "evidence": "tests/e2e/app.spec.ts:4-29 的完整流程用例在 desktop 与 mobile 两个 project 均通过（Playwright 3 passed 中含两条 flow）；App.tsx:214-226 提供主导航，231-463 渲染画像、单笔决策、情景比较、证据库、消费技巧视图，表单输入、保存、分析及导航按钮均绑定 onClick。"
+    },
+    {
+      "criterion": "移动视口无横向溢出",
+      "status": "pass",
+      "evidence": "tests/e2e/app.spec.ts:30-36 在 mobile 项目执行并通过，断言 document.documentElement.scrollWidth - clientWidth <= 2；styles.css:150-154、241-246、333-341、565-571、616-628 使用 minmax(min(100%,...))、min-width:0、overflow-wrap/word-break 及移动端 padding 降级，未发现固定宽度容器。"
+    },
+    {
+      "criterion": "敏感财务字段可选且仅保存在浏览器本地，不上传服务器",
+      "status": "pass",
+      "evidence": "src/App.tsx:250-321 的画像字段均标注可选且无 required；src/domain.ts:11-17 字段全为 optional，tests/unit/domain.test.ts:9-15 验证空画像有效；src 仅在 App.tsx:141/168/181 使用 localStorage，grep 未发现 fetch/XMLHttpRequest/sendBeacon；package.json:14-16 依赖仅 react/react-dom，无后端或上传 SDK。"
+    }
+  ],
+  "findings": [],
+  "requiredFixes": [],
+  "unknownReasons": [],
+  "independence": {
+    "independent": true,
+    "coderFamily": "glm",
+    "note": "DSH CLI read-only audit; DeepSeek API budget"
+  },
+  "chunks": 1,
+  "versionInfo": {
+    "baseCommit": "437158c03bd84e20d2c330e23edd99cfacf09af5",
+    "worktreeHash": "e9953e137aaf9a9bceb71059f72549f354767b3e",
+    "testedHash": "e9953e137aaf9a9bceb71059f72549f354767b3e"
+  },
+  "usage": {
+    "input": 51017,
+    "output": 27753,
+    "cacheRead": 808832,
+    "cacheWrite": 0
+  },
+  "costCny": 0.34983587520000003,
+  "raw": "{\"score\":100,\"criteria\":[{\"criterion\":\"npm test 全部通过（unit+tsc/build+Playwright desktop/mobile）\",\"status\":\"pass\",\"evidence\":\"npm test 退出码 0：vitest 9/9 通过；tsc --noEmit + vite build 成功；Playwright 4 例中 3 passed、1 skipped，skip 是 tests/e2e/app.spec.ts:31 在 desktop 项目上的 mobile-only 断言，mobile 项目已实际执行并通过（playwright.config.ts:7-10）；test-results/.last-run.json:2 为 passed，dist/assets/index-C2jra42X.js 与记录产物同名且含 role=status。\"},{\"criterion\":\"画像→单笔决策→情景比较→证据库→消费技巧 全流程可交互\",\"status\":\"pass\",\"evidence\":\"tests/e2e/app.spec.ts:4-29 的完整流程用例在 desktop 与 mobile 两个 project 均通过（Playwright 3 passed 中含两条 flow）；App.tsx:214-226 提供主导航，231-463 渲染画像、单笔决策、情景比较、证据库、消费技巧视图，表单输入、保存、分析及导航按钮均绑定 onClick。\"},{\"criterion\":\"移动视口无横向溢出\",\"status\":\"pass\",\"evidence\":\"tests/e2e/app.spec.ts:30-36 在 mobile 项目执行并通过，断言 document.documentElement.scrollWidth - clientWidth <= 2；styles.css:150-154、241-246、333-341、565-571、616-628 使用 minmax(min(100%,...))、min-width:0、overflow-wrap/word-break 及移动端 padding 降级，未发现固定宽度容器。\"},{\"criterion\":\"敏感财务字段可选且仅保存在浏览器本地，不上传服务器\",\"status\":\"pass\",\"evidence\":\"src/App.tsx:250-321 的画像字段均标注可选且无 required；src/domain.ts:11-17 字段全为 optional，tests/unit/domain.test.ts:9-15 验证空画像有效；src 仅在 App.tsx:141/168/181 使用 localStorage，grep 未发现 fetch/XMLHttpRequest/sendBeacon；package.json:14-16 依赖仅 react/react-dom，无后端或上传 SDK。\"}],\"findings\":[],\"required_fixes\":[],\"summary\":\"四项验收全部通过；npm test 退出码 0（唯一 skip 为 desktop 上的 mobile-only 溢出断言，mobile 已执行并通过），唯一改动是在 App.tsx 结果卡增加 role=status/aria-live=polite，未改 tests/contract/package 配置。\"}"
+}
