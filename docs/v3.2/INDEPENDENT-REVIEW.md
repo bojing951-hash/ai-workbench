@@ -22,3 +22,11 @@
   - 各阶段 SIGKILL 覆盖不完整；
   - 产品级审计依赖独立模型判断；
   - 24H NOT_VERIFIED。
+
+## 复审后补充修复（提交 f0393d2）
+
+- P0-R：productGate 在审计返回后/写状态前重查 loop status；四入口 cancelled 返回；慢审计 cancel 测试 PASS。
+- P1-A：无冻结验收的 Loop 末轮 Run 写 NOT_CONFIGURED；acceptRun 测试 PASS。
+- P1-B：max_rounds 使用 allowRepair:false，不生成不可执行修复任务、不自增计数；BLOCKED 测试 PASS。
+- P2：TTL 扫描移出预留事务；去掉恒真断言；新增产品审计最终 SHA 绑定断言。
+- 最终本地串行：299 tests / 295 pass / 4 skipped / 0 fail。
