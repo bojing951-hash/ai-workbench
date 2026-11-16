@@ -77,6 +77,10 @@
   "merged": false,
   "deployed": false,
   "businessProductsModified": false,
-  "commit": "PENDING",
-  "pr": "PENDING"
+  "commit": "1d18465",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/13",
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43897689753"
+  }
 }

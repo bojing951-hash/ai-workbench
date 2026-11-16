@@ -38,3 +38,11 @@
 - 真实 Provider 的 Audit 预留未跑（测试注入审计器）。
 - 测试 runner/package 配置的合法更新授权 UI 尚未实现（变更需显式维护者操作）。
 - 全部写路径 Fencing 未形式化穷举。
+
+
+## 最终复审（提交 `1d18465`）
+
+- 审查者确认 R1/R2/R3 已修复，最终无剩余 P0。
+- 仅剩窄 P1：`retryVerification` 在 Run 仍 active 时可被 API 并发触发并覆盖 controller；已在提交 `1d18465` 中拒绝：
+  `RUN_ACTIVE: 运行正在执行中，不能并发启动验证重试`。
+- 残留 P2：共享 project lease map 无引用计数；finalize/CI pause 可能 60s 超时；aborted/unknown usage 结算为 0；crash reservations TTL；真实 E2E/DSH/24H 未验证。
