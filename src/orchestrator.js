@@ -543,6 +543,7 @@ export class Orchestrator {
     if (auditIdentity.provider !== audit.provider || String(auditIdentity.model || '').toLowerCase() !== String(audit.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Audit 实际身份 ${auditIdentity.provider}/${auditIdentity.model} 与授权 ${audit.provider}/${audit.model} 不匹配`);
     if (modelFamily(coding.provider, coding.model) === modelFamily(audit.provider, audit.model)) throw new PolicyError('EXPERIMENT_MODEL_SAME_FAMILY', 'Coding 与 Audit 不允许同模型族');
     if (audit.client === 'dsh' && !dshAuditAvailable(this.config)) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', '授权要求 DSH 审计，但 DSH CLI 不可用');
+    if (audit.client === 'dsh' && !this.config.llm?.deepseek?.apiKey) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', '授权要求 DSH/DeepSeek 审计，但缺少 DeepSeek API Key；DSH 可能使用未授权凭据');
     return exp;
   }
 
@@ -628,6 +629,7 @@ export class Orchestrator {
     try {
       // 原子预算预留：并发进程不能同时读到同一余额后越权调用。
       plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id) });
+      const experimentPlanBinding = this.store.getExperimentForProject?.(project.id)?.provider_json?.planner || null;
       planResult = await planTasks({
         config: this.config,
         project,
@@ -635,6 +637,7 @@ export class Orchestrator {
         acceptance,
         mode,
         tasks: input.tasks,
+        plannerBinding: experimentPlanBinding,
       });
     } catch (err) {
       if (plannerReservation?.reservation?.id) this.store.markModelReservationUnknown(plannerReservation.reservation.id);

@@ -271,8 +271,9 @@ export class LoopManager {
       if (!loop || loop.status !== 'running') return;
       const project = this.store.getProject(loop.project_id);
       if (!project) throw new PolicyError('PROJECT_NOT_FOUND', '循环项目不存在');
-      // 实验隔离必须在 Loop 的任何 Planner 模型调用之前生效。
+      // 实验隔离与模型绑定必须在 Loop 的任何 Planner 模型调用之前生效。
       this.orchestrator?.assertExperimentIsolation?.(project);
+      await this.orchestrator?.assertExperimentModelBinding?.(project);
 
       // 1) 等待当前运行结束
       if (loop.current_run_id) {
@@ -408,6 +409,7 @@ export class LoopManager {
             history: loop.history_json || [],
             contractFiles: loop.contract_files_json || [],
             previousTasks: this.store.listTasks({ projectId: project.id }).slice(-20),
+            plannerBinding: this.store.getExperimentForProject?.(project.id)?.provider_json?.planner || null,
           });
           if (plannerReservation?.reservation?.id) {
             this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: Number(planned.usage?.input || 0) + Number(planned.usage?.output || 0) + Number(planned.usage?.cacheRead || 0) + Number(planned.usage?.cacheWrite || 0), actualCostCny: planned.costCny || 0, usageKnown: true });

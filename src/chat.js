@@ -144,8 +144,7 @@ export async function startDevelopment({ config, store, orchestrator, loops, con
       auditProvider: experiment?.provider_json?.audit?.client === 'dsh' ? 'dsh' : 'auto',
       config: experiment ? { agent_isolation: 'docker', test_isolation: 'docker' } : undefined,
     });
-    // 先持久化项目关联：即使后续 commit/Loop 创建失败，重试也复用同一项目，不重复建项目。
-    if (experiment) store.linkExperimentProject?.(experiment.id, project.id, { conversationId: conversation.id });
+    // 项目关联在下方实验绑定块统一完成；禁止在哈希校验前重复写 project_id。
     store.updateConversation(conversation.id, { project_id: project.id, title: conversation.title, goal: conversation.goal });
     await gitops.commitAll(localPath, 'chore: initialize chat product');
   }

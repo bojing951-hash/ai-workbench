@@ -4,7 +4,7 @@
 
 ## 最终结论
 
-**当前工作树无剩余 P0/P1。** 重点测试 14/14 PASS；全量 321 tests / 317 pass / 4 skipped / 0 fail。
+**当前工作树无剩余 P0/P1。** 重点测试 15/15 PASS；全量 322 tests / 318 pass / 4 skipped / 0 fail。
 
 ## 审查发现及修复
 

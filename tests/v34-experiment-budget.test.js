@@ -248,3 +248,13 @@ test('v3.4 P0-2：Coding/Audit 模型身份必须与授权契约一致，禁止�
     assert.equal(store.listModelReservations().length, 0, '模型绑定错误必须发生在任何付费预留之前');
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('v3.4 P0-2：Planner 授权绑定不可用时禁止 fallback 到其它 Provider', async () => {
+  const { root, config, store } = mk();
+  try {
+    const { planNextTask } = await import('../src/planner.js');
+    const cfg2 = { ...config, llm: { ...config.llm, deepseek: { ...config.llm.deepseek, apiKey: '' }, openai: { ...config.llm.openai, apiKey: 'other-provider-key', baseUrl: 'http://127.0.0.1:1', model: 'other-model' } } };
+    const project = store.getProject('p-exp');
+    await assert.rejects(planNextTask({ config: cfg2, project, goal: 'x', plannerBinding: { provider: 'deepseek', model: 'deepseek-chat' } }), /PLANNER_MODEL_MISMATCH|禁止 fallback|不匹配/);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});

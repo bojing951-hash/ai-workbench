@@ -319,6 +319,27 @@ function parseRow(row, jsonFields = {}) {
   return out;
 }
 
+function experimentContractPayload(row) {
+  return {
+    version: String(row.contract_version || 'e2e-budget-v1'),
+    projectId: row.project_id || '', conversationId: row.conversation_id || '',
+    authorizedBy: String(row.authorized_by || ''), authorizedAt: row.authorized_at || '',
+    authorizationSource: String(row.authorization_source || ''),
+    tokenLimit: Number(row.token_limit), costLimitCny: Number(row.cost_limit_cny),
+    stopLossCny: Number(row.stop_loss_cny || 0), callLimit: Number(row.call_limit),
+    deadlineAt: String(row.deadline_at || ''),
+    glmTokenLimit: Number(row.glm_token_limit || 0), glmCostLimitCny: Number(row.glm_cost_limit_cny || 0),
+    dshTokenLimit: Number(row.dsh_token_limit || 0), dshCostLimitCny: Number(row.dsh_cost_limit_cny || 0),
+    nonGlmCostLimitCny: Number(row.non_glm_cost_limit_cny || 0), perCallMaxTokens: Number(row.per_call_max_tokens || 0),
+    provider: row.provider_json ? JSON.parse(row.provider_json) : {}, isolationMode: String(row.isolation_mode || ''),
+    stopConditions: row.stop_conditions_json ? JSON.parse(row.stop_conditions_json) : [],
+  };
+}
+
+function experimentContractHashFor(row) {
+  return crypto.createHash('sha256').update(JSON.stringify(experimentContractPayload(row))).digest('hex');
+}
+
 function readJsonValue(value, fallback) {
   if (value === null || value === undefined) return fallback;
   try {
@@ -1243,6 +1264,12 @@ export class Store {
     return parseRow(this.db.prepare('SELECT * FROM experiment_contracts WHERE id=?').get(id), { provider_json: {}, stop_conditions_json: [] });
   }
 
+  verifyExperimentContractHash(id) {
+    const row = this.db.prepare('SELECT * FROM experiment_contracts WHERE id=?').get(id);
+    if (!row) return false;
+    return row.contract_hash === experimentContractHashFor(row);
+  }
+
   getExperimentForProject(projectId) {
     if (!projectId) return null;
     return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE project_id=? AND status IN ('authorized','running','stop_loss_reached','overspent','completed','cancelled','failed','ended') ORDER BY created_at DESC LIMIT 1").get(projectId), { provider_json: {}, stop_conditions_json: [] });
@@ -1263,7 +1290,7 @@ export class Store {
     const exp = this.getExperimentContract(experimentId);
     if (!exp) throw new Error('EXPERIMENT_NOT_FOUND');
     if (!['authorized', 'running'].includes(exp.status)) throw new Error('EXPERIMENT_NOT_ACTIVE');
-    if (!exp.contract_hash || exp.contract_hash.length !== 64) throw new Error('EXPERIMENT_CONTRACT_HASH_INVALID');
+    if (!exp.contract_hash || exp.contract_hash.length !== 64 || !this.verifyExperimentContractHash(exp.id)) throw new Error('EXPERIMENT_CONTRACT_HASH_INVALID');
     if (exp.conversation_id && conversationId && exp.conversation_id !== conversationId) throw new Error('EXPERIMENT_CONVERSATION_MISMATCH');
     if (exp.project_id && exp.project_id !== projectId) throw new Error('EXPERIMENT_PROJECT_MISMATCH');
     const other = this.db.prepare("SELECT id FROM experiment_contracts WHERE project_id=? AND id<>? AND status IN ('authorized','running')").get(projectId, experimentId);
@@ -1320,7 +1347,7 @@ export class Store {
       let experimentUsage = { calls: 0, tokens: 0, costCny: 0, byScope: {} };
       if (experimentId) {
         experiment = this.getExperimentContract(experimentId);
-        if (!experiment || !['authorized', 'running'].includes(experiment.status)) {
+        if (!experiment || !this.verifyExperimentContractHash(experimentId) || !['authorized', 'running'].includes(experiment.status)) {
           this.db.exec('ROLLBACK');
           return { ok: false, reason: 'experiment-not-authorized', experimentId };
         }

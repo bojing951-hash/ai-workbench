@@ -81,7 +81,7 @@ function validateTasks(rawTasks) {
   });
 }
 
-export async function planTasks({ config, project, goal, acceptance = [], mode = 'single', tasks = [] }) {
+export async function planTasks({ config, project, goal, acceptance = [], mode = 'single', tasks = [], plannerBinding = null }) {
   const acceptanceList = parseList(acceptance);
 
   // 显式任务模式（阶段二既定计划 / 阶段一单任务）
@@ -123,11 +123,13 @@ export async function planTasks({ config, project, goal, acceptance = [], mode =
   // 多任务自动规划
   const providers = availableProviders(config);
   const plannerProvider = config.planner.provider;
-  const usable =
-    providers.find((p) => p.name === plannerProvider) ||
-    providers.find((p) => p.name === 'deepseek') ||
-    providers.find((p) => p.name === 'openai') ||
-    null;
+  const usable = plannerBinding
+    ? providers.find((p) => p.name === plannerBinding.provider && String(p.model || '') === String(plannerBinding.model || '')) || null
+    : (providers.find((p) => p.name === plannerProvider) ||
+      providers.find((p) => p.name === 'deepseek') ||
+      providers.find((p) => p.name === 'openai') ||
+      null);
+  if (plannerBinding && !usable) throw new PolicyError('PLANNER_MODEL_MISMATCH', `实验授权 Planner=${plannerBinding.provider}/${plannerBinding.model}，不可用或模型身份不匹配；禁止 fallback`);
   if (!usable) {
     throw new PolicyError(
       'PLANNER_UNAVAILABLE',
@@ -190,9 +192,12 @@ const NEXT_TASK_SYSTEM = `你是 AI 研发循环的 Planner。你的任务是基
 {"action":"no_task","rationale":"..."}
 {"action":"blocked","rationale":"...","blocked_reason":"..."}`;
 
-export async function planNextTask({ config, project, goal, history = [], contractFiles = [], previousTasks = [] }) {
+export async function planNextTask({ config, project, goal, history = [], contractFiles = [], previousTasks = [], plannerBinding = null }) {
   const providers = availableProviders(config);
-  const usable = providers.find((p) => p.name === config.planner.provider) || providers.find((p) => p.name === 'deepseek') || providers[0];
+  const usable = plannerBinding
+    ? providers.find((p) => p.name === plannerBinding.provider && String(p.model || '') === String(plannerBinding.model || '')) || null
+    : (providers.find((p) => p.name === config.planner.provider) || providers.find((p) => p.name === 'deepseek') || providers[0]);
+  if (plannerBinding && !usable) throw new PolicyError('PLANNER_MODEL_MISMATCH', `实验授权 Planner=${plannerBinding.provider}/${plannerBinding.model}，不可用或模型身份不匹配；禁止 fallback`);
   if (!usable) throw new PolicyError('PLANNER_UNAVAILABLE', '缺少规划模型，无法生成下一任务');
   const repoContext = await buildRepoContext(config, project);
   const contractBlocks = [];
