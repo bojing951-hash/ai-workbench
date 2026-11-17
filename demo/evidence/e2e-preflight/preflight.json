@@ -1,0 +1,169 @@
+{
+  "generatedAt": "2026-11-17T00:47:38.362Z",
+  "worktree": "/Users/cast/Downloads/开发工作台",
+  "version": "3.3.0",
+  "health": true,
+  "git": {
+    "head": "3fba725635a52753497ac620e07341351bed8f18",
+    "branch": "v3.3.0"
+  },
+  "agents": [
+    {
+      "id": "dsh",
+      "label": "DeepSeek Harness",
+      "ok": true,
+      "detail": "CLI 可用（headless）"
+    },
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "ok": true,
+      "detail": "CLI 可用（glm-5.3）"
+    },
+    {
+      "id": "custom",
+      "label": "自定义 Agent",
+      "ok": false,
+      "detail": "未配置 CUSTOM_AGENT_BIN"
+    }
+  ],
+  "providers": {
+    "chatPlanner": {
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "baseUrl": "https://api.deepseek.com",
+      "keyPresent": true
+    },
+    "coding": {
+      "client": "Claude Code 2.1.104",
+      "model": "glm-5.3",
+      "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+      "actualProvider": "glm",
+      "keyPresent": true
+    },
+    "audit": {
+      "client": "DSH 0.2.2-rc.2",
+      "provider": "deepseek",
+      "model": "deepseek",
+      "keyPresent": true,
+      "projectBudgetDefault": {
+        "maxTokens": 2000000,
+        "maxCostCny": 30
+      }
+    },
+    "openai": {
+      "keyPresent": false
+    }
+  },
+  "container": {
+    "docker": false,
+    "dockerReason": "spawnSync docker ENOENT",
+    "image": "ai-workbench-runtime:2.2",
+    "imageAvailable": false,
+    "testExecution": false,
+    "agentExecution": false
+  },
+  "budget": {
+    "maxTokens": 3000000,
+    "usedBudgetTokens": 3495479,
+    "remainingTokens": 0,
+    "usedBudgetCostCny": 15.2375,
+    "remainingCostCny": 14.762513046399999,
+    "reservedTokens": 0,
+    "glm": {
+      "tokensIn": 1372957,
+      "tokensOut": 508363,
+      "tokensCache": 18036032,
+      "tokens": 19917352,
+      "costCny": 121.52835712,
+      "known": true,
+      "baseProvider": "glm"
+    },
+    "nonGlm": {
+      "tokensIn": 1150350,
+      "tokensOut": 442671,
+      "tokensCache": 19024576,
+      "costCny": 15.237486953600001,
+      "names": [
+        "deepseek@unknown",
+        "deepseek",
+        "glm@unknown"
+      ],
+      "tokens": 20617597
+    },
+    "byProvider": {
+      "deepseek@unknown": {
+        "tokensIn": 751923,
+        "tokensOut": 280646,
+        "tokensCache": 17255040,
+        "tokens": 18287609,
+        "costCny": 5.8432179456,
+        "known": false,
+        "baseProvider": "deepseek"
+      },
+      "deepseek": {
+        "tokensIn": 138749,
+        "tokensOut": 25903,
+        "tokensCache": 686208,
+        "tokens": 850860,
+        "costCny": 0.4971365280000001,
+        "known": true,
+        "baseProvider": "deepseek"
+      },
+      "glm@unknown": {
+        "tokensIn": 259678,
+        "tokensOut": 136122,
+        "tokensCache": 1083328,
+        "tokens": 1479128,
+        "costCny": 8.89713248,
+        "known": false,
+        "baseProvider": "glm"
+      },
+      "glm": {
+        "tokensIn": 1372957,
+        "tokensOut": 508363,
+        "tokensCache": 18036032,
+        "tokens": 19917352,
+        "costCny": 121.52835712,
+        "known": true,
+        "baseProvider": "glm"
+      }
+    },
+    "projectAudit": {
+      "tokensIn": 564080,
+      "tokensOut": 426701,
+      "tokensCache": 0,
+      "tokens": 990781,
+      "costCny": 3.8522379168
+    }
+  },
+  "db": {
+    "integrity": "ok",
+    "projects": 22,
+    "loops": 25,
+    "runs": 53,
+    "tasks": 56,
+    "attempts": 124,
+    "audits": 54,
+    "reservations": 0,
+    "unknownReservations": 0
+  },
+  "supervisor": {
+    "circuitOpen": false,
+    "restartCount": 43,
+    "crashCount": 43,
+    "recoveryCount": 44,
+    "lastStartAt": "2026-11-16T21:42:46.909Z",
+    "heartbeatAt": "2026-11-17T00:47:29.515Z"
+  },
+  "active": {
+    "runningLoops": 0,
+    "activeLeases": 0
+  },
+  "priorPausedE2E": {
+    "id": "loop_mwj87r46593f9b15",
+    "status": "paused",
+    "goal": "面向普通上班族的本地网页应用：记录收入与支出（金额、分类、日期、备注），查看收支汇总与分类趋势，并按优先级给出消费决策参考（如超预算、大额支出、结余预警）；数据仅保存在浏览器本地，不接入账户、支付或云端上传。",
+    "stop_reason": "第 1 轮运行 run_mwj87v1a35b91f38 状态为 paused：任务「搭建本地消费记录单页应用骨架并实现收支记录的增删改查与本地持久化」未通过：任务执行异常：预计消耗 10000 tokens 超过剩余预算 8654.200000000186"
+  }
+}
