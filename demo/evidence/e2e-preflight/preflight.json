@@ -4,7 +4,7 @@
   "version": "3.3.0",
   "health": true,
   "git": {
-    "head": "c76099e956882274f83b8be8209c8070e56c4006",
+    "head": "431b881728c39629fed0e84e4d50879489ee9f80",
     "branch": "v3.3.0"
   },
   "agents": [
@@ -271,6 +271,9 @@
       "skipped": 4,
       "fail": 0
     },
-    "noPaidCalls": true
+    "noPaidCalls": true,
+    "chatFirstBinding": true,
+    "modelBinding": true,
+    "autoTermination": true
   }
 }
