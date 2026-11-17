@@ -23,3 +23,16 @@
 限制：
 - 当前自动化覆盖 **Coding 阶段**。
 - Testing、Auditing、Committing 阶段的 Supervisor 故障注入仍未单独自动化；标记 UNKNOWN，不冒充 PASS。
+
+## 四阶段补齐（2026-11-18）
+
+新增真实 Supervisor 测试：
+
+- `tests/v35-supervisor-testing.test.js`：Testing 阶段 SIGKILL，自动重启并完成；
+- `tests/v35-supervisor-auditing.test.js`：Auditing mock 请求挂起时 SIGKILL，自动重启并完成；
+- `tests/v35-supervisor-committing.test.js`：Committing 阶段 pre-commit hook 挂起时 SIGKILL，自动重启并完成；
+- 原 `tests/v35-supervisor-auto-restart.test.js`：Coding 阶段。
+
+四者均使用真正独立 Supervisor、真实 Workbench 子进程 SIGKILL、真实 Git/SQLite、零付费 custom Agent、mock 审计，最终 `awaiting_acceptance`，不重复 Run/Task。
+
+限制：Commit 成功但 SQLite 尚未写入的窄窗口、UNKNOWN 未结算窗口仍未单独注入。

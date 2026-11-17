@@ -57,3 +57,31 @@ test('v3.5 Checkpoint：tracked/untracked/staged/unstaged 全部保存并可校�
     await assert.rejects(() => o.verifyAndRestoreCheckpoint(meta, path.join(root, 'restored2')), /CHECKPOINT_CORRUPT|哈希/);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('v35 Checkpoint：Git Index 恢复到新 Worktree，且路径穿越/陈旧归档被阻断', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-index-'));
+  const repo = path.join(root, 'repo'); fs.mkdirSync(repo, { recursive: true });
+  const git = (args, cwd = repo) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r; };
+  fs.writeFileSync(path.join(repo, 'tracked.js'), 'v1\n'); fs.writeFileSync(path.join(repo, 'README.md'), '# p\n');
+  git(['init', '-q', '-b', 'main']); git(['config', 'user.name', 't']); git(['config', 'user.email', 't@t']); git(['add', '-A']); git(['commit', '-qm', 'base']);
+  const wt = path.join(root, 'wt'); git(['worktree', 'add', '-b', 'wb/t1', wt, 'HEAD']);
+  fs.writeFileSync(path.join(wt, 'tracked.js'), 'v2\n'); fs.writeFileSync(path.join(wt, 'staged.js'), 'staged\n'); git(['add', 'staged.js'], wt);
+  const dataDir = path.join(root, 'data');
+  const config = getConfig({ root, paths: { root, dataDir, dbPath: path.join(dataDir, 'test.db'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(dataDir, 'worktrees'), artifactsDir: path.join(dataDir, 'artifacts'), logsDir: path.join(dataDir, 'logs'), agentsDir: path.join(dataDir, 'agents'), dshHome: path.join(dataDir, 'agents/dsh'), claudeHome: path.join(dataDir, 'agents/claude') } });
+  const store = openStore(config.paths.dbPath);
+  try {
+    const o = new Orchestrator({ config, store, bus: new EventBus(), deps: {} });
+    const meta = await o.saveWorktreeCheckpoint({ run: { id: 'r-index' }, task: { id: 't-index' }, project: { id: 'p-index', local_path: repo }, worktree: wt });
+    assert.ok(meta.indexTree, '必须保存 Git index tree');
+    const wt2 = path.join(root, 'wt2'); git(['worktree', 'add', '-b', 'wb/t2', wt2, 'HEAD']);
+    await o.verifyAndRestoreCheckpoint(meta, wt2);
+    const staged = git(['diff', '--cached', '--name-only'], wt2).stdout.trim();
+    assert.match(staged, /staged\.js/);
+    // 路径穿越：篡改 manifest 并重算 meta hash，仍必须拒绝。
+    const parsed = JSON.parse(fs.readFileSync(meta.manifestFile, 'utf8'));
+    parsed.manifest.push({ type: 'file', path: '../escape.txt', size: 1, mode: 420, sha256: '0'.repeat(64) });
+    fs.writeFileSync(meta.manifestFile, JSON.stringify(parsed));
+    const badMeta = { ...meta, manifestHash: (await import('node:crypto')).createHash('sha256').update(JSON.stringify(parsed.manifest)).digest('hex') };
+    await assert.rejects(() => o.verifyAndRestoreCheckpoint(badMeta, path.join(root, 'restore-bad')), /PATH_TRAVERSAL|越界|路径非法/);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
