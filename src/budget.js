@@ -129,3 +129,24 @@ export function recordModelUsage({ store, config, source, provider, model = '', 
 export function chatBudgetEstimate(provider, model = '') {
   return { estimatedTokens: 1600, estimatedCostCny: Number(estimateCostCny(provider, model, { input: 1200, output: 400 }).toFixed(6)) };
 }
+
+/**
+ * Provider 是否具备“调用中可执行”的费用/Token 硬边界。
+ * 当前真实 Coding/GLM/Claude Code 只能调用后结算，因此返回 false；
+ * 只有未来接入网关/供应商硬限额并有测试证明时才可改为 true。
+ */
+export function providerHasExecutableCostLimit({ client = '', provider = '', model = '' } = {}) {
+  return false;
+}
+
+/**
+ * 无界风险许可必须绑定实验契约（provider_json.risk.unbounded），
+ * 精确匹配 client/provider/model，且包含授权人、时间、原因和风险说明。
+ * 环境变量或单个配置开关不能成为授权来源。
+ */
+export function riskAcceptanceFor(experiment, binding = {}) {
+  const entries = experiment?.provider_json?.risk?.unbounded;
+  if (!Array.isArray(entries)) return null;
+  return entries.find((e) => e && String(e.client) === String(binding.client || '') && String(e.provider) === String(binding.provider || '') && String(e.model) === String(binding.model || '')
+    && String(e.acceptedBy || '').trim().length >= 2 && String(e.acceptedAt || '').trim().length >= 10 && String(e.reason || '').trim().length >= 8) || null;
+}

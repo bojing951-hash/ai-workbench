@@ -51,6 +51,30 @@
 - 显式允许风险必须由用户重新授权；这不是硬上限，只是把“无法保证调用在授权风险内结束”的配置标为 BLOCKED。
 - Coding 预留改为 `max(12k, perTaskTokens)`；`overspent/stop_loss_reached` 不会被 completed 覆盖。
 - 测试回退只允许 `runner_compatibility`，产品断言失败/混合 FAIL/遗漏测试文件/隐藏契约 FAIL 全部保持失败（负向 B/C/D/F）。
-- 最终全量：**351 tests / 351 pass / 0 skipped / 0 fail**。
+- 最终全量：**355 tests / 355 pass / 0 skipped / 0 fail**。
 
 残余 P1：Supervisor Testing/Auditing/Committing 注入、Commit 后崩溃幂等恢复、宿主 Agent 孤儿进程清理仍未完全验证。
+
+## 最终收口（2026-11-18）
+
+### 预算风险准入
+- 所有真实付费 Coding Provider 统一检查 `providerHasExecutableCostLimit`；
+- 无调用中可执行硬边界时，必须存在冻结实验契约 `provider_json.risk.unbounded` 中精确匹配 client/provider/model 的用户风险许可；
+- 许可包含 acceptedBy/acceptedAt/reason，且被契约哈希绑定；
+- 环境变量 `ALLOW_UNBOUNDED_PROVIDER_RISK` 已移除，不能再单独绕过；
+- 默认真实 Claude/GLM/OpenAI/DeepSeek Coding：BLOCKED；
+- 风险许可不改变“无绝对硬上限”的事实。
+
+### Docker 清理失败
+- inspect 非零且无明确 `No such container/object` → `CONTAINER_CLEANUP_UNCONFIRMED`；
+- 清理失败进入 `failed[]`，不再混入 `skipped[]`；
+- Workbench 启动时发现 failed/error → 拒绝启动和恢复，保持 BLOCKED；
+- 真实 Docker 有效/孤儿/失败分类测试通过。
+
+### 测试误放行
+- 仅“测试入口/目录/命令不存在”类结构错误可回退；
+- 产品断言失败、混合 pass/fail、文件遗漏、隐藏契约失败、含 lint/build 强制阶段全部禁止回退；
+- 回退不得跳过原 package.json test 的 lint/build/typecheck 等阶段；
+- 原始退出码/stdout/stderr、文件清单、命令完整保留。
+
+最终全量：**355 tests / 355 pass / 0 skipped / 0 fail**。

@@ -28,6 +28,10 @@ async function removeContainerVerified(bin, name) {
   }
   const inspect = await execCapture(bin, ['inspect', name], { env: safeDockerEnv(), timeoutMs: 10_000 });
   if (inspect.code === 0) throw new PolicyError('CONTAINER_CLEANUP_UNCONFIRMED', `容器 ${name} 仍存在，拒绝启动新 Agent`);
+  // inspect 非零不能一律视为“不存在”：权限/daemon/超时同样非零，必须明确确认 No such object。
+  if (!/No such (container|object)|not found/i.test(String(inspect.stderr || ''))) {
+    throw new PolicyError('CONTAINER_CLEANUP_UNCONFIRMED', `无法确认容器 ${name} 已删除（inspect exit=${inspect.code}）：${String(inspect.stderr || '').slice(0, 500)}`);
+  }
 }
 
 export function containerConfig(config) {
@@ -343,7 +347,7 @@ export async function cleanupOrphanContainers({ config, store, log = () => {} } 
   } catch (err) {
     return { checked: 0, removed: [], skipped: [], error: String(err?.message || err) };
   }
-  const removed = []; const skipped = [];
+  const removed = []; const skipped = []; const failed = [];
   for (const raw of String(out || '').split('\n').map((x) => x.trim()).filter(Boolean)) {
     const [id, runId, projectId, owner, fence] = raw.split('\t');
     if (!id) continue;
@@ -360,8 +364,8 @@ export async function cleanupOrphanContainers({ config, store, log = () => {} } 
       removed.push({ id, runId, projectId, owner });
       log(`[container-recover] 已清理孤儿容器 ${id} run=${runId || '—'} project=${projectId || '—'}`);
     } catch (err) {
-      skipped.push({ id, runId, projectId, owner, error: String(err?.message || err) });
+      failed.push({ id, runId, projectId, owner, error: String(err?.message || err) });
     }
   }
-  return { checked: String(out || '').split('\n').filter(Boolean).length, removed, skipped };
+  return { checked: String(out || '').split('\n').filter(Boolean).length, removed, skipped, failed };
 }

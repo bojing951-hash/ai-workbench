@@ -68,3 +68,31 @@ test('v3.5 启动恢复不得清理仍有有效 owner+fence 的活执行者容�
     h.store.close(); fs.rmSync(h.root, { recursive: true, force: true });
   }
 });
+
+test('v3.5 容器清理失败必须分类为 failed，不得混入正常保留', async () => {
+  const h = mk();
+  const fake = path.join(h.root, 'fake-docker.sh');
+  fs.writeFileSync(fake, `#!/bin/sh\ncase "$1" in\n  info) echo 29.9.3; exit 0;;\n  ps) printf 'abc123\\tmissing-run\\tmissing-project\\twb:999999:dead\\t0\\n'; exit 0;;\n  rm) echo 'permission denied' >&2; exit 1;;\n  inspect) echo 'permission denied' >&2; exit 1;;\n  *) exit 0;;\nesac\n`);
+  fs.chmodSync(fake, 0o755);
+  const cfg = { ...h.config, isolation: { ...(h.config.isolation || {}), container: { ...(h.config.isolation?.container || {}), dockerBin: fake } } };
+  try {
+    const res = await cleanupOrphanContainers({ config: cfg, store: h.store });
+    assert.equal(res.removed.length, 0);
+    assert.equal(res.failed.length, 1);
+    assert.match(String(res.failed[0].error), /CONTAINER_CLEANUP_FAILED|permission denied/);
+  } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+
+test('v3.5 inspect 无法确认消失时必须 failed（不能把权限错误当成不存在）', async () => {
+  const h = mk();
+  const fake = path.join(h.root, 'fake-docker2.sh');
+  fs.writeFileSync(fake, `#!/bin/sh\ncase "$1" in\n  info) echo 29.9.3; exit 0;;\n  ps) printf 'abc456\\tmissing-run\\tmissing-project\\twb:999999:dead\\t0\\n'; exit 0;;\n  rm) exit 0;;\n  inspect) echo 'permission denied' >&2; exit 1;;\n  *) exit 0;;\nesac\n`);
+  fs.chmodSync(fake, 0o755);
+  const cfg = { ...h.config, isolation: { ...(h.config.isolation || {}), container: { ...(h.config.isolation?.container || {}), dockerBin: fake } } };
+  try {
+    const res = await cleanupOrphanContainers({ config: cfg, store: h.store });
+    assert.equal(res.removed.length, 0);
+    assert.equal(res.failed.length, 1);
+    assert.match(String(res.failed[0].error), /UNCONFIRMED|permission denied/);
+  } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
+});

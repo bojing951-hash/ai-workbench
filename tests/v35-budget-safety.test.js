@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
+import { providerHasExecutableCostLimit, riskAcceptanceFor } from '../src/budget.js';
 
 function mk() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-budget-'));
@@ -93,5 +94,22 @@ test('v35 预算：实际用量超过预留但未越线，下一预留按实际�
     const next = reserve(h.store, c.id, 'after-high', 200);
     assert.equal(next.ok, false);
     assert.match(String(next.reason), /token-limit/);
+  } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+
+
+test('v35 风险准入：默认无边界 Provider 被拒绝，风险许可必须精确绑定契约', () => {
+  const h = mk();
+  try {
+    assert.equal(providerHasExecutableCostLimit({ client: 'claude', provider: 'glm', model: 'glm-5.3' }), false);
+    const base = contract(h.store);
+    assert.equal(riskAcceptanceFor(base, { client: 'claude', provider: 'glm', model: 'glm-5.3' }), null);
+    const accepted = { client: 'claude', provider: 'glm', model: 'glm-5.3', acceptedBy: 'user', acceptedAt: new Date().toISOString(), reason: 'user accepted unbounded risk for this frozen experiment', maxRiskTokens: 250000 };
+    const c2 = contract(h.store, { projectId: 'p2', provider: { ...base.provider_json, risk: { unbounded: [accepted] } } });
+    assert.ok(riskAcceptanceFor(c2, { client: 'claude', provider: 'glm', model: 'glm-5.3' }));
+    assert.equal(riskAcceptanceFor(c2, { client: 'claude', provider: 'anthropic', model: 'claude' }), null);
+    assert.equal(riskAcceptanceFor(c2, { client: 'claude', provider: 'openai', model: 'gpt' }), null);
+    // 环境变量不是授权来源：contract 没 risk 时仍为 null
+    assert.equal(riskAcceptanceFor(base, { client: 'claude', provider: 'glm', model: 'glm-5.3' }), null);
   } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
 });

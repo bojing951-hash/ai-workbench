@@ -333,6 +333,18 @@ async function main() {
     const orphanContainers = await cleanupOrphanContainers({ config: serveConfig, store, log: console.log });
     if (orphanContainers.removed.length) console.log(`[recover] 已清理 ${orphanContainers.removed.length} 个 Workbench 孤儿容器`);
     if (orphanContainers.skipped.length) console.log(`[recover] ${orphanContainers.skipped.length} 个容器仍由有效执行者持有，已保留`);
+    if (orphanContainers.failed?.length) {
+      console.error(`[recover] BLOCKED：${orphanContainers.failed.length} 个容器无法确认已退出；拒绝启动 Workbench/新 Agent：${JSON.stringify(orphanContainers.failed.slice(0, 5))}`);
+      store.close();
+      process.exitCode = 1;
+      return;
+    }
+    if (orphanContainers.error) {
+      console.error(`[recover] BLOCKED：容器状态探测失败，拒绝启动 Workbench/新 Agent：${orphanContainers.error}`);
+      store.close();
+      process.exitCode = 1;
+      return;
+    }
     const recovered = orchestrator.recoverOrphans();
     const recoveredLoops = loops.recover();
     if (recoveredLoops.recovered?.length) console.log(`[recover] ${recoveredLoops.recovered.length} 个研发循环已标记中断`);

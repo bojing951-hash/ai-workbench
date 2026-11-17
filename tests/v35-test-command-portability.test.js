@@ -139,3 +139,14 @@ test('v35 负向 F：冻结隐藏验收测试 FAIL 时整体 FAIL', async () => 
     assert.ok(!events.some((e) => e.type === 'test_command_fallback'));
   } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
 });
+
+test('v35 负向 E：原始 test 脚本含 lint/build 强制阶段时禁止回退', async () => {
+  const h = await buildProject({ scripts: { test: 'npm run lint && node --test tests/' }, files: { 'app.js': 'module.exports={ok:true};\n', 'tests/app.test.js': `const {test}=require('node:test');const assert=require('node:assert/strict');const app=require('../app.js');test('p',()=>{assert.equal(app.ok,true);assert.ok(true);});\n` } });
+  try {
+    const { EventBus } = await import('../src/bus.js'); const { Orchestrator } = await import('../src/orchestrator.js'); const events = []; const bus = new EventBus(); bus.subscribe((e) => events.push(e));
+    const o = new Orchestrator({ config: h.config, store: h.store, bus, deps: {} });
+    const project = { id: 'p', config_json: { require_real_tests: true, auto_test_setup: false, test_isolation: 'none', test_plan: { minTests: 1, trustedContractTest: 'tests/acceptance/workbench-contract.test.mjs' } } };
+    await assert.rejects(() => o.runProjectTest({ project, worktree: h.root, command: 'npm test', timeoutMs: 30_000, logPath: path.join(h.root, 't.log'), runId: 'r', taskId: 't' }), /测试/);
+    assert.ok(!events.some((e) => e.type === 'test_command_fallback'));
+  } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
+});

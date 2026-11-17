@@ -22,5 +22,7 @@
   "dockerFencing": "PASS",
   "checkpointIntegrity": "PASS",
   "independentReview": "PASS_WITH_DOCUMENTED_P1",
-  "historicalE2E": "FAILED"
+  "historicalE2E": "FAILED",
+  "budgetRiskGate": "PASS",
+  "githubCi": "PASS"
 }

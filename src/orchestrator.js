@@ -30,7 +30,7 @@ import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { deriveClausePlan } from './quality.js';
-import { assertModelBudget } from './budget.js';
+import { assertModelBudget, providerHasExecutableCostLimit, riskAcceptanceFor } from './budget.js';
 import { verifyContractBaseline, verifyTestBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount, classifyTestFailure } from './contract.js';
 import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
@@ -1137,9 +1137,16 @@ export class Orchestrator {
       // 仅当原命令确有测试文件、可信运行器真实通过时采用，绝不把退出码 0 当成测试证据。
       const failureClass = classifyTestFailure(res, command);
       const uncovered = (evidence.all || []).filter((f) => !f.meaningful && !String(f.file).includes('workbench-contract.test'));
-      // 只有明确是测试命令/运行器兼容性错误、且所有非冻结测试文件都被覆盖时，才允许可信回退。
-      // 产品断言失败、混合格式、遗漏文件一律保留 FAIL/BLOCKED，禁止用部分测试放行。
-      if (!evidence.ok && evidence.code === 'TEST_EXIT_NONZERO' && failureClass === 'runner_compatibility' && uncovered.length === 0 && Array.isArray(evidence.productTestFiles) && evidence.productTestFiles.length) {
+      // 原始 test 脚本若包含 lint/build/typecheck 等强制阶段，回退不能跳过它们。
+      let mandatoryPhase = false;
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(worktree, 'package.json'), 'utf8'));
+        const script = String(pkg.scripts?.test || '');
+        mandatoryPhase = /(?:&&|\|\||;|\b(?:lint|build|tsc|typecheck|check|coverage|audit)\b)/i.test(script);
+      } catch { /* no package */ }
+      // 只有明确是测试命令/运行器兼容性错误、且所有非冻结测试文件都被覆盖、且无强制阶段时，才允许可信回退。
+      // 产品断言失败、混合格式、遗漏文件、lint/build 一律保留 FAIL/BLOCKED。
+      if (!evidence.ok && evidence.code === 'TEST_EXIT_NONZERO' && !mandatoryPhase && failureClass === 'runner_compatibility' && uncovered.length === 0 && Array.isArray(evidence.productTestFiles) && evidence.productTestFiles.length) {
         const originalExit = res.code; const originalStdout = String(res.stdout || '').slice(-4000); const originalStderr = String(res.stderr || '').slice(-4000);
         try {
           const fallbackCmd = trustedProductTestCommand(worktree, evidence.productTestFiles, { nodeBin: this.containerTestRequested(project) ? 'node' : process.execPath });
@@ -1321,10 +1328,17 @@ export class Orchestrator {
         let agentReservation = null;
         try {
           const codingExperimentId = this.experimentIdForProject(project.id);
-          // 真实 Claude Code 只能在返回后知道实际 Token；没有调用中硬限额时，实验内默认 fail-closed，
-          // 不允许把“事后结算”冒充为可执行硬边界。显式授权风险后才可关闭此门。
-          if (codingExperimentId && this.deps.runAgent === runAgent && agentId === 'claude' && agentIdentity.provider === 'glm' && !this.config.budget.allowUnboundedProviderRisk) {
-            return this.failTask(run, task, 'BUDGET_RISK_UNBOUNDED：Claude Code/GLM 不支持调用中硬 Token 限额，实验预算无法保证单次调用不越线；已 fail-closed。若允许该风险，必须由用户显式设置 ALLOW_UNBOUNDED_PROVIDER_RISK=true 并重新授权。', 'blocked');
+          // 统一真实付费 Provider 风险准入：没有调用中可执行硬边界时，实验内默认 fail-closed。
+          // 唯一例外是冻结实验契约中按 client/provider/model 精确绑定的用户风险许可；
+          // 环境变量、单独配置开关、重启或切换模型都不能绕过。
+          const userPays = agentId !== 'custom' && agentIdentity.provider !== 'custom';
+          if (codingExperimentId && userPays && this.deps.runAgent === runAgent && !providerHasExecutableCostLimit({ client: agentId, provider: agentIdentity.provider, model: agentIdentity.model })) {
+            const exp = this.store.getExperimentContract(codingExperimentId);
+            const accepted = riskAcceptanceFor(exp, { client: agentId, provider: agentIdentity.provider, model: agentIdentity.model });
+            if (!accepted) {
+              return this.failTask(run, task, `BUDGET_RISK_UNBOUNDED：${agentId}/${agentIdentity.provider}/${agentIdentity.model || 'unknown'} 无调用中可执行费用硬边界，且冻结实验契约未包含匹配的用户风险许可；已 fail-closed，禁止启动付费调用。`, 'blocked');
+            }
+            this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'budget_risk_accepted', level: 'warn', message: `使用实验契约内用户风险许可启动调用：${accepted.reason}（仍不宣称绝对费用硬上限）`, data: accepted });
           }
           const remaining = this.budget().remainingTokens;
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);

@@ -172,11 +172,15 @@ export function inspectTestFiles(root) {
 /** 区分测试命令/运行器兼容性错误与产品断言失败；回退只允许前者。 */
 export function classifyTestFailure(result = {}, command = '') {
   const text = `${result.stdout || ''}\n${result.stderr || ''}`;
-  const runnerPattern = /Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|Cannot find package|command not found|ENOENT|ENOTDIR|not found|exit=127|spawn .* ENOENT|Unsupported|Unsupported engine/i;
+  // 只接受“测试入口/目录/命令本身不存在”的明确结构错误。
+  // 产品源码 import 失败、断言失败、混合 pass/fail 都绝不回退。
+  const runnerPattern = /Cannot find module\s+['"][^'"]*\/(?:tests?|test)\/?['"]|MODULE_NOT_FOUND[^\n]*\/(?:tests?|test)\b|Cannot find package\s+['"][^'"]+['"]|command not found|spawn[^\n]*ENOENT|exit=127|Unsupported engine/i;
+  // 真正的断言失败必须包含 AssertionError / not ok / 至少一个 pass；纯 runner 报错时 node 会输出
+  // 形如 "✖ tests ... fail 1" 的伪计数，它不能把兼容性错误误判为产品失败。
+  const realAssertion = /AssertionError|\bnot ok\b|\bpass\s+[1-9]/i;
   const assertionPattern = /AssertionError|\bnot ok\b|\bfail\s+[1-9]|# fail|\bpass\s+[1-9]|✖\s+/i;
-  if (runnerPattern.test(text) && !/\bpass\s+[1-9]/i.test(text)) return 'runner_compatibility';
+  if (runnerPattern.test(text) && !realAssertion.test(text)) return 'runner_compatibility';
   if (assertionPattern.test(text)) return 'product_assertion';
-  if (runnerPattern.test(text)) return 'runner_compatibility';
   return 'unknown';
 }
 
