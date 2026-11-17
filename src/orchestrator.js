@@ -1056,7 +1056,7 @@ export class Orchestrator {
     return env;
   }
 
-  async runProjectTest({ project, worktree, command, timeoutMs, logPath, signal = null, metadata = null }) {
+  async runProjectTest({ project, worktree, command, timeoutMs, logPath, signal = null, metadata = null, runId = '', taskId = '' }) {
     const runOnce = async (cmd, pathName) => {
       if (this.containerTestRequested(project)) {
         const caps = containerCapabilities(this.config);
@@ -1143,7 +1143,7 @@ export class Orchestrator {
           if (fallbackEvidence.ok) {
             res = fallbackRes; evidence = fallbackEvidence;
             res.testCommandFallback = fallbackCmd;
-            this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_command_fallback', level: 'warn', message: `原测试命令失败，已使用独立可信运行器实际执行产品测试：${fallbackCmd}`, data: { original: command, fallback: fallbackCmd, count: parseTestCount(fallbackRes.stdout, fallbackRes.stderr) } });
+            this.emit({ runId, projectId: project.id, taskId, type: 'test_command_fallback', level: 'warn', message: `原测试命令失败，已使用独立可信运行器实际执行产品测试：${fallbackCmd}`, data: { original: command, fallback: fallbackCmd, count: parseTestCount(fallbackRes.stdout, fallbackRes.stderr) } });
           }
         } catch { /* keep original failure */ }
       }
@@ -1325,7 +1325,7 @@ export class Orchestrator {
           // GLM 的全局豁免不适用于实验：实验内 GLM Coding 仍必须原子预留并受 GLM 分项上限约束。
           // 预留必须覆盖整个单任务上限，而不是固定 12k；否则单次 Coding 实际用量可能冲破实验上限。
           if (!agentIdentity.exempt || codingExperimentId) {
-            const reserveEstimate = codingExperimentId ? Math.max(12_000, perTaskTokens) : 12_000;
+            const reserveEstimate = Math.max(12_000, perTaskTokens);
             agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: reserveEstimate, label: 'Coding Agent', reserve: true, experimentId: codingExperimentId, experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global' });
           }
           const watchdog = await this.runAgentWithWatchdog({
@@ -1536,6 +1536,8 @@ export class Orchestrator {
           logPath: path.join(logDir, `attempt-${attemptNo}-test.log`),
           signal,
           metadata: { runId: run.id, taskId: task.id, projectId: project.id, owner: this.instanceId, fence: this.projectLeases.get(project.id)?.fence || 0 },
+          runId: run.id,
+          taskId: task.id,
         });
         if (signal.aborted) return { ok: false, reason: '运行被暂停/取消，测试检查点已保留' };
         lastTest = {
@@ -2741,6 +2743,8 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
         logPath: path.join(logDir, `verify-${Date.now()}-test.log`),
         signal: retrySignal,
         metadata: { runId: run.id, taskId: task.id, projectId: project.id, owner: this.instanceId, fence: this.projectLeases.get(project.id)?.fence || 0 },
+        runId: run.id,
+        taskId: task.id,
       });
       if (retrySignal.aborted) return { ok: false, reason: '运行被暂停/取消，验证检查点已保留' };
       const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null, setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed };

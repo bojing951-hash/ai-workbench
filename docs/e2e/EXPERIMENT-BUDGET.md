@@ -37,7 +37,7 @@ node scripts/e2e-authorize.mjs \
    - 检查状态、截止时间；
    - 检查调用次数；
    - 检查实验总 Token、总费用；
-   - 检查提前停止线、硬上限；
+   - 检查提前停止线、执行前上限；厂商实际调用可能先超一次再结算阻断，不承诺绝对硬封顶；
    - 检查 GLM / DSH 分项上限；
    - 检查全局预算（GLM 豁免和 DSH 专项按 scope 跳过全局）；
    - 插入带 experiment_id / experiment_scope / exempt_global 的预留；

@@ -1,6 +1,6 @@
 # 最终状态
 
-- 工程回归：**341 tests / 341 pass / 0 skipped / 0 fail**（Docker 可用环境）
+- 工程回归：**347 tests / 347 pass / 0 skipped / 0 fail**（Docker 可用环境）
 - Docker：PASS（真实容器测试 5/5）
 - 真实 E2E：**FAILED**
   - 真实 Claude Code/GLM 容器编码已开始并产出部分产品；

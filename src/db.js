@@ -1320,6 +1320,8 @@ export class Store {
   endExperiment(id, status = 'completed', reason = '') {
     const exp = this.getExperimentContract(id);
     if (!exp) return null;
+    // overspent/stop_loss 是审计事实，不能被成功收尾覆盖为 completed。
+    if (status === 'completed' && ['overspent', 'stop_loss_reached'].includes(exp.status)) return exp;
     return this.updateExperimentStatus(id, status, { endedAt: nowIso(), reason });
   }
 

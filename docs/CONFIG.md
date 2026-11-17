@@ -61,7 +61,7 @@
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `MAX_TOTAL_TOKENS` | `3000000` | 全局 token 硬上限 |
+| `MAX_TOTAL_TOKENS` | `3000000` | 全局 token 执行前上限；厂商调用后结算可能超一次，不能保证绝对硬封顶 |
 | `MAX_COST_CNY` | `30` | 全局估算成本上限（元） |
 | `MAX_TOKENS_PER_TASK` | `600000` | 单次 Agent 调用 token 上限 |
 | `MAX_ATTEMPTS` | `2` | 每个任务最大编码尝试次数（含测试/审计失败） |

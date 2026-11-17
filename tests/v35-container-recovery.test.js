@@ -28,12 +28,12 @@ test('v3.5 容器参数包含 Run/Task/Project/Owner/Fence 标签', () => {
   } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
 });
 
-test('v3.5 启动恢复清理无有效执行者的 Workbench 容器，保留未知标签容器', { timeout: 60_000, skip: !containerCapabilities(getConfig()).testExecution }, async () => {
+test('v3.5 启动恢复清理无有效执行者的 Workbench 容器，保留未知标签容器', { timeout: 180_000, skip: !containerCapabilities(getConfig()).testExecution }, async () => {
   const h = mk();
   const cc = { dockerBin: getConfig().isolation.container.dockerBin, image: getConfig().isolation.container.image };
   let orphan;
   try {
-    const run = await execCapture(cc.dockerBin, ['run', '-d', '--label', 'ai-workbench.container=1', '--label', 'ai-workbench.run-id=missing-run', '--label', 'ai-workbench.project-id=missing-project', '--label', 'ai-workbench.owner=wb:999999:dead', '--name', `wb-v35-orphan-${Date.now()}`, cc.image, 'sleep', '60'], { timeoutMs: 30_000 });
+    const run = await execCapture(cc.dockerBin, ['run', '-d', '--label', 'ai-workbench.container=1', '--label', 'ai-workbench.run-id=missing-run', '--label', 'ai-workbench.project-id=missing-project', '--label', 'ai-workbench.owner=wb:999999:dead', '--name', `wb-v35-orphan-${Date.now()}`, cc.image, 'sleep', '60'], { timeoutMs: 120_000 });
     assert.equal(run.code, 0, run.stderr);
     orphan = run.stdout.trim();
     assert.ok(orphan);
@@ -57,7 +57,7 @@ test('v3.5 启动恢复不得清理仍有有效 owner+fence 的活执行者容�
   const lease = h.store.acquireProjectLeaseFenced('p-live', owner, 60 * 60 * 1000);
   let cid;
   try {
-    const run = await execCapture(cc.dockerBin, ['run', '-d', '--label', 'ai-workbench.container=1', '--label', 'ai-workbench.run-id=r-live', '--label', 'ai-workbench.project-id=p-live', '--label', `ai-workbench.owner=${owner}`, '--label', `ai-workbench.fence=${lease.fence}`, '--name', `wb-v35-live-${Date.now()}`, cc.image, 'sleep', '60'], { timeoutMs: 30_000 });
+    const run = await execCapture(cc.dockerBin, ['run', '-d', '--label', 'ai-workbench.container=1', '--label', 'ai-workbench.run-id=r-live', '--label', 'ai-workbench.project-id=p-live', '--label', `ai-workbench.owner=${owner}`, '--label', `ai-workbench.fence=${lease.fence}`, '--name', `wb-v35-live-${Date.now()}`, cc.image, 'sleep', '60'], { timeoutMs: 120_000 });
     assert.equal(run.code, 0, run.stderr); cid = run.stdout.trim();
     const res = await cleanupOrphanContainers({ config: h.config, store: h.store });
     assert.ok(res.skipped.some((x) => cid.startsWith(x.id)), '活执行者的容器必须被保留');

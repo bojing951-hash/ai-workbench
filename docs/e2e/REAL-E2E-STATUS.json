@@ -13,5 +13,14 @@
   "finalSha": null,
   "accepted": false,
   "24h": "NOT_VERIFIED",
-  "newAuthorizationRequired": true
+  "newAuthorizationRequired": true,
+  "engineeringReady": "FAIL",
+  "engineeringFreeze": "BLOCKED",
+  "testExecution": "PASS",
+  "productQualityLoop": "PASS",
+  "supervisorRecovery": "PASS_CODING_UNKNOWN_OTHER_STAGES",
+  "dockerFencing": "PASS",
+  "checkpointIntegrity": "PASS",
+  "independentReview": "PASS_WITH_DOCUMENTED_P1",
+  "historicalE2E": "FAILED"
 }

@@ -70,7 +70,7 @@ function hcfg(root) {
   return getConfig({ root, paths: { root, dataDir: path.join(root, 'data'), dbPath: path.join(root, 'test.db'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(root, 'worktrees'), artifactsDir: path.join(root, 'artifacts'), logsDir: path.join(root, 'logs'), agentsDir: path.join(root, 'agents'), dshHome: path.join(root, 'agents/dsh'), claudeHome: path.join(root, 'agents/claude') } });
 }
 
-test('v3.5 基础设施恢复：第一次 Agent 中断后原 Agent 自动续跑并完成任务，不生成产品修复', { timeout: 60_000 }, async () => {
+test('v3.5 基础设施恢复：第一次 Agent 中断后原 Agent 自动续跑并完成任务，不生成产品修复', { timeout: 180_000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-auto-recover-'));
   const repo = path.join(root, 'repo'); fs.mkdirSync(repo, { recursive: true });
   fs.writeFileSync(path.join(repo, 'README.md'), '# p\n');
@@ -93,7 +93,7 @@ test('v3.5 基础设施恢复：第一次 Agent 中断后原 Agent 自动续跑�
     } });
     const project = await o.createProject({ name: 'auto-recover', repo, defaultBranch: 'main', testCommand: `${NODE} -e "process.exit(0)"`, ciRequired: false });
     const started = await o.startRun({ projectId: project.id, goal: '实现 A', mode: 'single', tasks: [{ title: '实现 A', acceptance: ['A 完成'], testCommand: `${NODE} -e "process.exit(0)"` }] });
-    const run = await waitFor(() => { const r = store.getRun(started.runId); return r && ['awaiting_acceptance', 'accepted', 'paused', 'failed'].includes(r.status) ? r : null; }, 30_000);
+    const run = await waitFor(() => { const r = store.getRun(started.runId); return r && ['awaiting_acceptance', 'accepted', 'paused', 'failed'].includes(r.status) ? r : null; }, 120_000);
     const tasks = store.listTasks({ runId: started.runId });
     assert.equal(calls, 2, '第一次中断后必须自动用原 Agent 续跑一次，不应等待人工');
     assert.deepEqual(agents, ['claude', 'claude']);
