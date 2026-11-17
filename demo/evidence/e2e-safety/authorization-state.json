@@ -1,6 +1,6 @@
 {
   "activeContracts": 0,
-  "authorized": false,
+  "authorized": true,
   "paidCalls": 0,
   "budgetUnchanged": true,
   "dockersAvailable": false,

@@ -1,6 +1,6 @@
 {
-  "status": "AUTHORIZATION_REQUIRED",
-  "approved": false,
+  "status": "APPROVED_ATTEMPT_CONSUMED",
+  "approved": true,
   "workbenchVersion": "3.3.0",
   "sourceCommit": "035f997",
   "project": "new isolated product, 3 features + up to 2 repairs",
@@ -70,5 +70,6 @@
     "modify other products",
     "external harness coding",
     "fake agents"
-  ]
+  ],
+  "realE2E": "FAILED"
 }

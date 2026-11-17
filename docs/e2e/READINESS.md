@@ -1,71 +1,49 @@
-# 真实零人工 E2E 验收前检查
+# 真实零人工 E2E 验收状态
 
-生成时间：2026-11-17T00:47Z（Asia/Hong_Kong 08:47）
+生成时间：2026-11-17T05:30Z（Asia/Hong_Kong 13:30）
 Workbench：v3.3.0
-Git：分支 `v3.3.0`，源码提交 `97540ba`
+Git：分支 `v3.3.0`，源码提交 `1ff8307`
 Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 
 ## 结论
 
-**AUTHORIZATION_REQUIRED**（工程安全控制已实现；Docker 与用户授权未满足）
+**REAL_E2E_FAILED**
 
-工程链路基本具备，但预算与 DSH 专项授权不具备；不得开始真实 E2E、不得发生新增付费调用。
+用户已于 2026-11-17 明确批准预算并授权安装 Docker。真实 E2E 已实际执行，但 Coding Agent 在 15 分钟无进展 watchdog 边界被中止，自动修复耗尽，产品未达到最终审计/验收。不是 PASS，也不是 BLOCKED；是真实的 FAILED。
 
 ## 运行状态
 
 | 项目 | 结果 |
 |---|---|
-| 服务 | `http://127.0.0.1:4477` health ok，v3.3.0 |
-| SQLite | `PRAGMA integrity_check=ok`，0 个 reserved/unknown 预留 |
-| Active Loop | 0 |
+| 服务 | v3.3.0 healthy |
+| SQLite | integrity ok |
+| Active Loop | 0 running；失败 Loop 已 paused |
 | Active project lease | 0 |
-| Supervisor | circuitOpen=false，43 次历史重启/崩溃，44 次恢复，最近心跳正常 |
-| 实验预算契约 | 0 个 active contract；代码已支持硬限制 |
-| 硬限制测试 | 16/16 PASS；完整套件 323/323/0/0 |
-| 历史 E2E | 存在 1 个 **paused** 旧项目（本地消费管理），未继续、不得复用其成果 |
+| Experiment | 2 个均 `failed`（实验 1/重试实验 2） |
+| 未结算预留 | 已全部转 UNKNOWN，不视为免费 |
+| Docker | 29.9.3，镜像 `ai-workbench-runtime:2.2` 可用 |
+| 容器测试 | `tests/container.test.js` 5/5 PASS（含真实容器执行） |
+| 全局预算 | max 3,620,000；remaining 121,011.8；费用 remaining ¥24.7544 |
+| 工程回归 | **323 tests / 323 pass / 0 skipped / 0 fail**（Docker 可用） |
 
-## Coding / Planner / Audit
+## 真实 E2E 结果
 
-| 角色 | 真实客户端 | 实际模型/Provider | 状态 |
-|---|---|---|---|
-| Chat + Planner | DeepSeek API | `deepseek-chat` / deepseek | 可用（但全局预算 0） |
-| Coding Agent | Claude Code 2.1.104 | GLM-5.3 / GLM（Anthropic 兼容端点） | CLI 可用；GLM 既有豁免 |
-| 独立审计 | DSH 0.2.2-rc.2 headless | `deepseek` / DeepSeek | CLI 可用；需新项目 DSH 专项授权 |
-| OpenAI | — | 无 Key | 不可用 |
+- Conversation：`conv_mwk6imxy5gfaz`
+- Project：`proj_mwk6j7n9bbd7f450`
+- Loop：`loop_mwk6j7rw263f3c67`
+- Chat：真实 DeepSeek，一次输入成功；
+- Coding：真实 Claude Code/GLM，在 Docker 容器内实际运行；
+- 已生成部分产品源码：`demo/evidence/e2e-attempt/product/`
+- 部分产品测试：25 tests / 24 pass / 1 fail
+- 无最终产品级 DSH PASS、无最终 Git SHA、无 accepted；
+- 失败原因：Coding Agent 产出较慢，15m watchdog 中止；auto-repair 2 次同样中止；第二次恢复遇到租约/并发容器清理问题。
 
-注意：DSH Coding 与 DSH Audit 同为 DeepSeek 模型族，若用 DSH 编码必须另选独立审计；本次推荐 **Claude Code/GLM 编码 + DSH/DeepSeek 审计**，编码族与审计族不同。
+详见 `REAL-E2E-ATTEMPT.md`。
 
-## 隔离环境
+## 启动新 E2E 需要
 
-- Node v24.13.1；
-- Git 2.50.1；
-- Docker **不可用**（`docker ENOENT`），镜像 `ai-workbench-runtime:2.2` 不可用；
-- 因此本地测试隔离可用，容器测试/容器 Agent 路径不可用；
-- 真实 E2E Docker 隔离可用；本地 sandbox 仍被拒绝 + 独立 Git worktree，可继续。
-
-## 预算现状
-
-- 全局 max tokens：3,000,000；
-- 已计入预算：3,495,479（已超 495,479）；
-- 剩余：0；
-- 全局预算费用：已用 ¥15.2375 / 上限 ¥30，剩余 ¥14.7625；
-- reserved：0；
-- confirmed GLM：19,917,352 tokens 合法豁免；
-- `glm@unknown`：1,479,128 tokens 不再豁免，已计入；
-- `deepseek@unknown`：18,287,609 tokens（含缓存权重后计入）；
-- 历史 DSH project_audit：990,781 tokens / ¥3.852（旧项目，不得算作新项目额度）。
-
-当前任何 DeepSeek Chat/Planner 付费预检都会 fail-closed；已实际验证返回 `BUDGET_CHAT_TOKENS_EXCEEDED`（剩余 0，保留 2000）。
-
-## 安全/可靠性
-
-- 无遗留 lease，无 running loop；
-- Fencing / pause-resume / 自动修复 / 产品验收代码测试通过；
-- 但真实 Agent/DSH E2E、SIGKILL 各阶段、24H 未执行；
-- 不能把离线 fake 模型结果当成真实 E2E。
-
-## 结论
-
-**BLOCKED → AUTHORIZATION_REQUIRED**
-
-实验契约、硬限制和隔离守卫的代码与测试已完成；没有用户授权，未创建实验，未发起付费调用。Docker 不可用，非隔离本地执行被代码拒绝。
+- **新的明确用户授权/新的 experiment contract**（旧契约 failed，不能复用）；
+- 仍需保留的预算余量：全局 121,011.8 tokens / ¥24.7544；GLM 约 2.65M tokens / ¥31 剩余；
+- Docker 已可用；
+- 建议放宽 watchdog（≥45 分钟）并修复 server 重启时容器回收/租约恢复后再重试；
+- 不自动合并、不部署。

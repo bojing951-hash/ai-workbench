@@ -4,7 +4,7 @@
   "version": "3.3.0",
   "health": true,
   "git": {
-    "head": "faf2911fa292477b44366887d09a70fb82a37f1d",
+    "head": "1ff8307",
     "branch": "v3.3.0"
   },
   "agents": [
@@ -262,7 +262,7 @@
   "experimentSafety": {
     "contractTable": true,
     "activeContracts": 0,
-    "authorized": false,
+    "authorized": true,
     "hardLimitsTested": true,
     "tests": 16,
     "fullTests": {
@@ -273,6 +273,7 @@
     },
     "noPaidCalls": false,
     "realE2E": "FAILED",
-    "dockerIsolation": "PASS"
+    "dockerIsolation": "PASS",
+    "authorizationStatus": "approved_failed"
   }
 }
