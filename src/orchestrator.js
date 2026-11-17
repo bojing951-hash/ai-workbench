@@ -241,6 +241,10 @@ export class Orchestrator {
     };
   }
 
+  experimentIdForProject(projectId) {
+    return this.store.getExperimentForProject?.(projectId)?.id || '';
+  }
+
   assertBudget(estimatedTokens = 8_000) {
     const totals = this.usage();
     assertBudgetAllowed(this.config, totals, { estimatedTokens, estimatedCostCny: 0.05 });
@@ -508,9 +512,26 @@ export class Orchestrator {
   // ============================================================
   // 运行创建
   // ============================================================
+  assertExperimentIsolation(project) {
+    const exp = this.store.getExperimentForProject?.(project.id);
+    if (!exp) return null;
+    const mode = String(exp.isolation_mode || '').toUpperCase();
+    if (mode === 'LOCAL_APPROVED') {
+      // 本地测试进程与 Workbench 同用户/同文件系统，无法阻止读取宿主未授权文件；不满足 E2E 安全边界。
+      throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', '实验契约要求本地执行，但本地无文件系统隔离边界（可读宿主文件）；必须使用容器隔离', { experimentId: exp.id });
+    }
+    if (mode === 'DOCKER_REQUIRED') {
+      const caps = containerCapabilities(this.config);
+      if (!caps.testExecution) throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验契约要求 Docker 隔离，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}；不静默降级`, { experimentId: exp.id });
+      return exp;
+    }
+    throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验契约隔离方案未获批准（${mode || 'EMPTY'}）；不静默降级到普通宿主执行`, { experimentId: exp.id });
+  }
+
   async startRun(input) {
     const project = this.store.getProject(input.projectId);
     if (!project) throw new PolicyError('PROJECT_NOT_FOUND', `项目不存在：${input.projectId}`);
+    this.assertExperimentIsolation(project);
     const goal = String(input.goal || '').trim();
     if (!goal) throw new PolicyError('GOAL_REQUIRED', '请填写开发目标');
     const mode = input.mode === 'plan' ? 'plan' : 'single';
@@ -525,7 +546,7 @@ export class Orchestrator {
     }
 
     this.assertBudget(5_000);
-    assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner' });
+    assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner', experimentId: this.experimentIdForProject(project.id) });
 
     const busy = this.store.activeRunForProject(project.id);
     if (busy) {
@@ -566,7 +587,7 @@ export class Orchestrator {
     let plannerReservation = null;
     try {
       // 原子预算预留：并发进程不能同时读到同一余额后越权调用。
-      plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 6000, label: 'Planner', reserve: true });
+      plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id) });
       planResult = await planTasks({
         config: this.config,
         project,
@@ -1178,7 +1199,7 @@ export class Orchestrator {
         let agentReservation = null;
         try {
           if (!agentIdentity.exempt) {
-            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: 12_000, label: 'Coding Agent', reserve: true });
+            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: 12_000, label: 'Coding Agent', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global' });
           }
           const remaining = this.budget().remainingTokens;
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
@@ -1392,8 +1413,9 @@ export class Orchestrator {
         let auditCommit = '';
         let provisionalCommit = null;
         try {
-          if (this.deps.runAudit === runAudit && auditResourceInfo && !auditResourceInfo.exempt && !this.isDshAuditProject(project)) {
-            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditResourceInfo.provider, model: auditResourceInfo.model || '', estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true });
+          if (this.deps.runAudit === runAudit && auditResourceInfo && ((!auditResourceInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
+            const mainAuditProvider = this.isDshAuditProject(project) ? 'deepseek' : auditResourceInfo.provider;
+            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: mainAuditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.isDshAuditProject(project) ? 'dsh' : 'global' });
           }
           const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
           const diffStat = await gitops.diffStat(worktree, baseCommit);
@@ -2381,8 +2403,9 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
     try { auditInfo = this.deps.runAudit === runAudit ? this.auditResourcePreflight(project, coderFamily) : { provider: 'fake', model: 'fake', exempt: true, estimate: 0 }; } catch (err) { return { ok: false, required: true, status: 'BLOCKED', reason: err.message, missing: expected }; }
     let audit;
     try {
-      if (this.deps.runAudit === runAudit && auditInfo && !auditInfo.exempt && !this.isDshAuditProject(project)) {
-        reservation = assertModelBudget({ config: this.config, store: this.store, provider: auditInfo.provider, model: auditInfo.model || '', estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true });
+      if (this.deps.runAudit === runAudit && auditInfo && ((!auditInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
+        const paProvider = this.isDshAuditProject(project) ? 'deepseek' : auditInfo.provider;
+        reservation = assertModelBudget({ config: this.config, store: this.store, provider: paProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditInfo.model || ''), estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.isDshAuditProject(project) ? 'dsh' : 'global' });
       }
       audit = await this.deps.runAudit({
         config: this.config, project,
@@ -2522,8 +2545,9 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
       let auditReservation = null;
       let audit;
       try {
-        if (this.deps.runAudit === runAudit && auditResourceInfo && !auditResourceInfo.exempt && !this.isDshAuditProject(project)) {
-          auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditResourceInfo.provider, model: auditResourceInfo.model || '', estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true });
+        if (this.deps.runAudit === runAudit && auditResourceInfo && ((!auditResourceInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
+          const auditProvider = this.isDshAuditProject(project) ? 'deepseek' : auditResourceInfo.provider;
+          auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.isDshAuditProject(project) ? 'dsh' : 'global' });
         }
         audit = await this.deps.runAudit({
           config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },

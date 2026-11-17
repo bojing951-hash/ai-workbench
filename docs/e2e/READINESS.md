@@ -7,7 +7,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 
 ## 结论
 
-**AUTHORIZATION_REQUIRED**
+**AUTHORIZATION_REQUIRED**（工程安全控制已实现；Docker 与用户授权未满足）
 
 工程链路基本具备，但预算与 DSH 专项授权不具备；不得开始真实 E2E、不得发生新增付费调用。
 
@@ -20,6 +20,8 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 | Active Loop | 0 |
 | Active project lease | 0 |
 | Supervisor | circuitOpen=false，43 次历史重启/崩溃，44 次恢复，最近心跳正常 |
+| 实验预算契约 | 0 个 active contract；代码已支持硬限制 |
+| 硬限制测试 | 9/9 PASS；完整套件 315/311/4/0 |
 | 历史 E2E | 存在 1 个 **paused** 旧项目（本地消费管理），未继续、不得复用其成果 |
 
 ## Coding / Planner / Audit
@@ -65,3 +67,5 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 ## 结论
 
 **BLOCKED → AUTHORIZATION_REQUIRED**
+
+实验契约、硬限制和隔离守卫的代码与测试已完成；没有用户授权，未创建实验，未发起付费调用。Docker 不可用，非隔离本地执行被代码拒绝。

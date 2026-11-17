@@ -36,7 +36,8 @@ function providerFor(config) {
 export async function chatTurn({ config, store, conversation, userMessage, project = null, budgetRequestKey = '', budgetReservationId = '' }) {
   const provider = providerFor(config);
   if (!provider) throw new PolicyError('CHAT_MODEL_UNAVAILABLE', '对话模型不可用：请在 .env 配置 DeepSeek/GLM/OpenAI API Key；未使用预设回复冒充 AI');
-  const budget = assertModelBudget({ config, store, provider: provider.name, model: provider.model, ...chatBudgetEstimate(provider.name, provider.model), label: '对话模型', reserve: true, requestKey: budgetRequestKey, reservationId: budgetReservationId });
+  const experiment = store.getExperimentForConversation?.(conversation.id) || (project ? store.getExperimentForProject?.(project.id) : null);
+  const budget = assertModelBudget({ config, store, provider: provider.name, model: provider.model, ...chatBudgetEstimate(provider.name, provider.model), label: '对话模型', reserve: true, requestKey: budgetRequestKey, reservationId: budgetReservationId, experimentId: experiment?.id || '', experimentScope: provider.name === 'glm' ? 'glm' : 'global' });
   const history = store.listConversationMessages(conversation.id).slice(-12).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 4000) }));
   // 最新用户消息已由 server 保存；从历史尾部去掉，避免模型收到重复内容。
   if (history.length && history[history.length - 1].role === 'user' && history[history.length - 1].content === userMessage) history.pop();
@@ -124,6 +125,8 @@ export async function startDevelopment({ config, store, orchestrator, loops, con
       publish: false,
     });
     // 先持久化项目关联：即使后续 commit/Loop 创建失败，重试也复用同一项目，不重复建项目。
+    const experiment = store.getExperimentForConversation?.(conversation.id);
+    if (experiment) store.linkExperimentProject?.(experiment.id, project.id);
     store.updateConversation(conversation.id, { project_id: project.id, title: conversation.title, goal: conversation.goal });
     await gitops.commitAll(localPath, 'chore: initialize chat product');
   }

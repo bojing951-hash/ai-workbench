@@ -4,6 +4,7 @@
  * 所有运行状态可恢复：runs / tasks / attempts / audits / events / actions。
  */
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { ensureDir, nowIso, readJson } from './util.js';
 
@@ -261,11 +262,42 @@ CREATE TABLE IF NOT EXISTS model_reservations (
   usage_known INTEGER DEFAULT 0,
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
-  settled_at TEXT DEFAULT ''
+  settled_at TEXT DEFAULT '',
+  experiment_id TEXT DEFAULT '',
+  experiment_scope TEXT DEFAULT 'global',
+  exempt_global INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS experiment_contracts (
+  id TEXT PRIMARY KEY,
+  project_id TEXT DEFAULT '',
+  conversation_id TEXT DEFAULT '',
+  authorized_by TEXT NOT NULL,
+  authorized_at TEXT NOT NULL,
+  authorization_source TEXT DEFAULT '',
+  authorization_text_hash TEXT NOT NULL,
+  contract_version TEXT NOT NULL,
+  contract_hash TEXT NOT NULL,
+  status TEXT DEFAULT 'authorized',
+  token_limit INTEGER DEFAULT 0,
+  cost_limit_cny REAL DEFAULT 0,
+  stop_loss_cny REAL DEFAULT 0,
+  call_limit INTEGER DEFAULT 0,
+  deadline_at TEXT DEFAULT '',
+  glm_token_limit INTEGER DEFAULT 0,
+  glm_cost_limit_cny REAL DEFAULT 0,
+  dsh_token_limit INTEGER DEFAULT 0,
+  dsh_cost_limit_cny REAL DEFAULT 0,
+  provider_json TEXT DEFAULT '{}',
+  isolation_mode TEXT DEFAULT '',
+  stop_conditions_json TEXT DEFAULT '[]',
+  ended_at TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id, seq);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_model_reservations_request ON model_reservations(request_key) WHERE request_key<>'';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_experiments_project_active ON experiment_contracts(project_id) WHERE project_id<>'' AND status IN ('authorized','running');
 CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON conversation_messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -366,6 +398,14 @@ export class Store {
         ['provider_source', "TEXT DEFAULT ''"],
         ['failure_class', "TEXT DEFAULT ''"],
       ],
+      experiment_contracts: [
+        ['authorization_source', "TEXT DEFAULT ''"],
+      ],
+      model_reservations: [
+        ['experiment_id', "TEXT DEFAULT ''"],
+        ['experiment_scope', "TEXT DEFAULT 'global'"],
+        ['exempt_global', 'INTEGER DEFAULT 0'],
+      ],
       audits: [
         ['budget_scope', "TEXT DEFAULT 'global'"],
         ['verification_status', "TEXT DEFAULT ''"],
@@ -375,6 +415,14 @@ export class Store {
         ['provider_known', 'INTEGER DEFAULT 0'],
         ['provider_source', "TEXT DEFAULT ''"],
         ['failure_class', "TEXT DEFAULT ''"],
+      ],
+      experiment_contracts: [
+        ['authorization_source', "TEXT DEFAULT ''"],
+      ],
+      model_reservations: [
+        ['experiment_id', "TEXT DEFAULT ''"],
+        ['experiment_scope', "TEXT DEFAULT 'global'"],
+        ['exempt_global', 'INTEGER DEFAULT 0'],
       ],
     };
     for (const [table, cols] of Object.entries(columns)) {
@@ -1147,7 +1195,80 @@ export class Store {
   }
 
   // ---------------- atomic model budget reservations ----------------
-  reserveModelBudget({ id, requestKey = '', provider = 'unknown', model = '', estimatedTokens = 0, estimatedCostCny = 0, maxTokens = 0, maxCostCny = 0, minReserveTokens = 0, cacheTokenWeight = 0.1, exemptProviders = ['glm'], ttlMs = 10 * 60 * 1000 } = {}) {
+  // ---------------- E2E 实验预算契约 ----------------
+  createExperimentContract(input = {}) {
+    const now = nowIso();
+    const required = ['authorizedBy','authorizationText','tokenLimit','costLimitCny','callLimit','deadlineAt'];
+    for (const k of required) if (!input[k]) throw new Error(`EXPERIMENT_FIELD_REQUIRED:${k}`);
+    const id = input.id || `exp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const version = String(input.contractVersion || 'e2e-budget-v1');
+    const payload = {
+      version, projectId: input.projectId || '', conversationId: input.conversationId || '',
+      authorizedBy: String(input.authorizedBy), authorizedAt: input.authorizedAt || now,
+      authorizationSource: String(input.authorizationSource || 'unknown'),
+      tokenLimit: Number(input.tokenLimit), costLimitCny: Number(input.costLimitCny),
+      stopLossCny: Number(input.stopLossCny || 0), callLimit: Number(input.callLimit),
+      deadlineAt: String(input.deadlineAt),
+      glmTokenLimit: Number(input.glmTokenLimit || 0), glmCostLimitCny: Number(input.glmCostLimitCny || 0),
+      dshTokenLimit: Number(input.dshTokenLimit || 0), dshCostLimitCny: Number(input.dshCostLimitCny || 0),
+      provider: input.provider || {}, isolationMode: String(input.isolationMode || 'BLOCKED_UNLESS_APPROVED'),
+      stopConditions: Array.isArray(input.stopConditions) ? input.stopConditions : [],
+    };
+    const contractHash = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const authorizationTextHash = crypto.createHash('sha256').update(String(input.authorizationText)).digest('hex');
+    this.db.prepare('INSERT INTO experiment_contracts (id,project_id,conversation_id,authorized_by,authorized_at,authorization_source,authorization_text_hash,contract_version,contract_hash,status,token_limit,cost_limit_cny,stop_loss_cny,call_limit,deadline_at,glm_token_limit,glm_cost_limit_cny,dsh_token_limit,dsh_cost_limit_cny,provider_json,isolation_mode,stop_conditions_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, payload.projectId, payload.conversationId, payload.authorizedBy, payload.authorizedAt, payload.authorizationSource, authorizationTextHash, version, contractHash, 'authorized',
+        payload.tokenLimit, payload.costLimitCny, payload.stopLossCny, payload.callLimit, payload.deadlineAt,
+        payload.glmTokenLimit, payload.glmCostLimitCny, payload.dshTokenLimit, payload.dshCostLimitCny,
+        JSON.stringify(payload.provider), payload.isolationMode, JSON.stringify(payload.stopConditions), now, now);
+    return this.getExperimentContract(id);
+  }
+
+  getExperimentContract(id) {
+    return parseRow(this.db.prepare('SELECT * FROM experiment_contracts WHERE id=?').get(id), { provider_json: {}, stop_conditions_json: [] });
+  }
+
+  getExperimentForProject(projectId) {
+    if (!projectId) return null;
+    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE project_id=? AND status IN ('authorized','running') ORDER BY created_at DESC LIMIT 1").get(projectId), { provider_json: {}, stop_conditions_json: [] });
+  }
+
+  getExperimentForConversation(conversationId) {
+    if (!conversationId) return null;
+    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE conversation_id=? AND status IN ('authorized','running') ORDER BY created_at DESC LIMIT 1").get(conversationId), { provider_json: {}, stop_conditions_json: [] });
+  }
+
+  listExperimentContracts(limit = 50) {
+    return this.db.prepare('SELECT * FROM experiment_contracts ORDER BY created_at DESC LIMIT ?').all(limit)
+      .map((r) => parseRow(r, { provider_json: {}, stop_conditions_json: [] }));
+  }
+
+  linkExperimentProject(experimentId, projectId) {
+    if (!experimentId || !projectId) return null;
+    this.db.prepare('UPDATE experiment_contracts SET project_id=?, updated_at=? WHERE id=?').run(projectId, nowIso(), experimentId);
+    return this.getExperimentContract(experimentId);
+  }
+
+  updateExperimentStatus(id, status, patch = {}) {
+    this.db.prepare('UPDATE experiment_contracts SET status=?, ended_at=?, updated_at=? WHERE id=?').run(status, patch.endedAt || (status === 'ended' ? nowIso() : ''), nowIso(), id);
+    return this.getExperimentContract(id);
+  }
+
+  experimentUsage(experimentId) {
+    if (!experimentId) return { calls: 0, tokens: 0, costCny: 0, byScope: {}, rows: [] };
+    const rows = this.db.prepare("SELECT experiment_scope scope, status, COUNT(*) calls, COALESCE(SUM(CASE WHEN status='settled' THEN actual_tokens ELSE estimated_tokens END),0) tokens, COALESCE(SUM(CASE WHEN status='settled' THEN actual_cost_cny ELSE estimated_cost_cny END),0) cost FROM model_reservations WHERE experiment_id=? AND status IN ('reserved','settled','unknown') GROUP BY experiment_scope,status").all(experimentId);
+    const byScope = {};
+    let calls = 0; let tokens = 0; let costCny = 0;
+    for (const r of rows) {
+      calls += Number(r.calls || 0); tokens += Number(r.tokens || 0); costCny += Number(r.cost || 0);
+      const s = r.scope || 'global';
+      if (!byScope[s]) byScope[s] = { calls: 0, tokens: 0, costCny: 0 };
+      byScope[s].calls += Number(r.calls || 0); byScope[s].tokens += Number(r.tokens || 0); byScope[s].costCny += Number(r.cost || 0);
+    }
+    return { calls, tokens, costCny, byScope, rows };
+  }
+
+  reserveModelBudget({ id, requestKey = '', provider = 'unknown', model = '', estimatedTokens = 0, estimatedCostCny = 0, maxTokens = 0, maxCostCny = 0, minReserveTokens = 0, cacheTokenWeight = 0.1, exemptProviders = ['glm'], ttlMs = 10 * 60 * 1000, experimentId = '', experimentScope = 'global', exemptGlobal = false } = {}) {
     const now = nowIso();
     const expires = new Date(Date.now() + ttlMs).toISOString();
     // TTL 结算在事务外先提交；即使随后额度检查失败回滚，不能把已过期预留重新变回 reserved。
@@ -1166,30 +1287,73 @@ export class Store {
         }
       }
       const exempt = new Set((exemptProviders || []).map((x) => String(x).toLowerCase()));
-      const rows = this.db.prepare("SELECT provider, provider_known, SUM(tokens_in) tin, SUM(tokens_out) tout, SUM(tokens_cache) tc, SUM(cost_cny) cost FROM llm_usage WHERE budget_scope<>'project_audit' GROUP BY provider, provider_known").all();
-      let usedTokens = 0; let usedCost = 0;
-      for (const r of rows) {
-        const name = String(r.provider || 'unknown').toLowerCase();
-        // 只豁免同一行 provider_known=1 的合法 GLM；unknown 行必须计入。
-        if (exempt.has(name) && Number(r.provider_known) === 1) continue;
-        usedTokens += Number(r.tin || 0) + Number(r.tout || 0) + Number(r.tc || 0) * Number(cacheTokenWeight || 0);
-        usedCost += Number(r.cost || 0);
+      let experiment = null;
+      let experimentUsage = { calls: 0, tokens: 0, costCny: 0, byScope: {} };
+      if (experimentId) {
+        experiment = this.getExperimentContract(experimentId);
+        if (!experiment || !['authorized', 'running'].includes(experiment.status)) {
+          this.db.exec('ROLLBACK');
+          return { ok: false, reason: 'experiment-not-authorized', experimentId };
+        }
+        if (experiment.deadline_at && Date.now() > Date.parse(experiment.deadline_at)) {
+          this.db.exec('ROLLBACK');
+          return { ok: false, reason: 'experiment-time-exceeded', experimentId, deadlineAt: experiment.deadline_at };
+        }
+        experimentUsage = this.experimentUsage(experimentId);
+        const projectedCalls = Number(experimentUsage.calls || 0) + 1;
+        if (Number(experiment.call_limit || 0) > 0 && projectedCalls > Number(experiment.call_limit)) {
+          this.db.exec('ROLLBACK');
+          return { ok: false, reason: 'experiment-call-limit', experimentId, calls: experimentUsage.calls, callLimit: experiment.call_limit };
+        }
+        const projectedTokens = Number(experimentUsage.tokens || 0) + Number(estimatedTokens || 0);
+        const projectedCost = Number(experimentUsage.costCny || 0) + Number(estimatedCostCny || 0);
+        const hardTokens = Number(experiment.token_limit || 0);
+        const hardCost = Number(experiment.cost_limit_cny || 0);
+        const stopLoss = Number(experiment.stop_loss_cny || 0);
+        if (hardTokens > 0 && projectedTokens > hardTokens) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-token-limit', experimentId, projectedTokens, hardTokens }; }
+        if (hardCost > 0 && projectedCost > hardCost) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-cost-hard-limit', experimentId, projectedCost, hardCost }; }
+        if (stopLoss > 0 && projectedCost >= stopLoss) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-stop-loss', experimentId, projectedCost, stopLoss }; }
+        if (experimentScope === 'glm') {
+          const gt = Number(experiment.glm_token_limit || 0); const gc = Number(experiment.glm_cost_limit_cny || 0);
+          const s = experimentUsage.byScope?.glm || { tokens: 0, costCny: 0 };
+          if (gt > 0 && Number(s.tokens || 0) + Number(estimatedTokens || 0) > gt) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-glm-token-limit', experimentId }; }
+          if (gc > 0 && Number(s.costCny || 0) + Number(estimatedCostCny || 0) > gc) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-glm-cost-limit', experimentId }; }
+        } else if (experimentScope === 'dsh') {
+          const dt = Number(experiment.dsh_token_limit || 0); const dc = Number(experiment.dsh_cost_limit_cny || 0);
+          const s = experimentUsage.byScope?.dsh || { tokens: 0, costCny: 0 };
+          if (dt > 0 && Number(s.tokens || 0) + Number(estimatedTokens || 0) > dt) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-dsh-token-limit', experimentId }; }
+          if (dc > 0 && Number(s.costCny || 0) + Number(estimatedCostCny || 0) > dc) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-dsh-cost-limit', experimentId }; }
+        }
       }
-      const reserved = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status IN ('reserved','unknown')").get();
-      const totalTokens = usedTokens + Number(reserved.t || 0) + Number(estimatedTokens || 0);
-      const totalCost = usedCost + Number(reserved.c || 0) + Number(estimatedCostCny || 0);
-      const remainingTokens = Number(maxTokens) - usedTokens - Number(reserved.t || 0);
-      const okTokens = maxTokens <= 0 || (remainingTokens >= Number(estimatedTokens || 0) && remainingTokens > Number(minReserveTokens || 0));
-      const okCost = maxCostCny <= 0 || totalCost <= Number(maxCostCny);
-      if (!okTokens || !okCost) {
-        this.db.exec('ROLLBACK');
-        return { ok: false, reason: 'budget-exceeded', usedTokens, usedCost, reservedTokens: Number(reserved.t || 0), reservedCostCny: Number(reserved.c || 0), estimatedTokens, estimatedCostCny };
+      const skipGlobal = !!experiment && (exemptGlobal || experimentScope === 'dsh');
+      let usedTokens = 0; let usedCost = 0; let reservedTokens = 0; let reservedCost = 0;
+      if (!skipGlobal) {
+        const rows = this.db.prepare("SELECT provider, provider_known, SUM(tokens_in) tin, SUM(tokens_out) tout, SUM(tokens_cache) tc, SUM(cost_cny) cost FROM llm_usage WHERE budget_scope<>'project_audit' GROUP BY provider, provider_known").all();
+        for (const r of rows) {
+          const name = String(r.provider || 'unknown').toLowerCase();
+          // 只豁免同一行 provider_known=1 的合法 GLM；unknown 行必须计入。
+          if (exempt.has(name) && Number(r.provider_known) === 1) continue;
+          usedTokens += Number(r.tin || 0) + Number(r.tout || 0) + Number(r.tc || 0) * Number(cacheTokenWeight || 0);
+          usedCost += Number(r.cost || 0);
+        }
+        const reserved = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status IN ('reserved','unknown') AND (experiment_id='' OR (exempt_global=0 AND experiment_scope<>'dsh'))").get();
+        reservedTokens = Number(reserved.t || 0); reservedCost = Number(reserved.c || 0);
+        const totalTokens = usedTokens + reservedTokens + Number(estimatedTokens || 0);
+        const totalCost = usedCost + reservedCost + Number(estimatedCostCny || 0);
+        const remainingTokens = Number(maxTokens) - usedTokens - reservedTokens;
+        const okTokens = maxTokens <= 0 || (remainingTokens >= Number(estimatedTokens || 0) && remainingTokens > Number(minReserveTokens || 0));
+        const okCost = maxCostCny <= 0 || totalCost <= Number(maxCostCny);
+        if (!okTokens || !okCost) {
+          this.db.exec('ROLLBACK');
+          return { ok: false, reason: 'budget-exceeded', usedTokens, usedCost, reservedTokens, reservedCostCny: reservedCost, estimatedTokens, estimatedCostCny, experimentId };
+        }
       }
       // retryExisting 仅用于排除旧行重复计入；新调用使用新 id/new requestKey，旧 UNKNOWN 保留。
-      this.db.prepare('INSERT INTO model_reservations (id,request_key,provider,model,estimated_tokens,estimated_cost_cny,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(id, effectiveRequestKey, provider, model, Number(estimatedTokens || 0), Number(estimatedCostCny || 0), 'reserved', now, expires);
+      this.db.prepare('INSERT INTO model_reservations (id,request_key,provider,model,estimated_tokens,estimated_cost_cny,status,created_at,expires_at,experiment_id,experiment_scope,exempt_global) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(id, effectiveRequestKey, provider, model, Number(estimatedTokens || 0), Number(estimatedCostCny || 0), 'reserved', now, expires, experimentId || '', experimentScope || 'global', exemptGlobal ? 1 : 0);
       this.db.exec('COMMIT');
-      return { ok: true, retryOf: retryExisting?.id || '', reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) };
+      if (experiment) this.updateExperimentStatus(experiment.id, 'running');
+      return { ok: true, retryOf: retryExisting?.id || '', experimentId, experimentUsage: experiment ? this.experimentUsage(experiment.id) : null, reservation: this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) };
     } catch (err) { try { this.db.exec('ROLLBACK'); } catch {} throw err; }
   }
 
@@ -1198,7 +1362,20 @@ export class Store {
     const status = usageKnown ? 'settled' : 'unknown';
     this.db.prepare("UPDATE model_reservations SET status=?, actual_tokens=?, actual_cost_cny=?, usage_known=?, settled_at=? WHERE id=? AND status IN ('reserved','unknown')")
       .run(status, Number(actualTokens || 0), Number(actualCostCny || 0), usageKnown ? 1 : 0, now, id);
-    return this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) || null;
+    const row = this.db.prepare('SELECT * FROM model_reservations WHERE id=?').get(id) || null;
+    if (row?.experiment_id) {
+      const exp = this.getExperimentContract(row.experiment_id);
+      if (exp && ['authorized', 'running'].includes(exp.status)) {
+        const u = this.experimentUsage(exp.id);
+        if ((Number(exp.cost_limit_cny || 0) > 0 && u.costCny > Number(exp.cost_limit_cny))
+          || (Number(exp.token_limit || 0) > 0 && u.tokens > Number(exp.token_limit))) {
+          this.updateExperimentStatus(exp.id, 'overspent');
+        } else if (Number(exp.stop_loss_cny || 0) > 0 && u.costCny >= Number(exp.stop_loss_cny)) {
+          this.updateExperimentStatus(exp.id, 'stop_loss_reached');
+        }
+      }
+    }
+    return row;
   }
 
   releaseModelReservation(id, { reason = 'released', usageKnown = false } = {}) {
@@ -1213,7 +1390,7 @@ export class Store {
   }
 
   reservedBudgetTotals() {
-    const row = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status IN ('reserved','unknown')").get();
+    const row = this.db.prepare("SELECT COALESCE(SUM(estimated_tokens),0) t, COALESCE(SUM(estimated_cost_cny),0) c FROM model_reservations WHERE status IN ('reserved','unknown') AND (experiment_id='' OR (exempt_global=0 AND experiment_scope<>'dsh'))").get();
     return { tokens: Number(row.t || 0), costCny: Number(row.c || 0) };
   }
 

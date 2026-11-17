@@ -400,7 +400,7 @@ export class LoopManager {
       } else {
         let plannerReservation = null;
         try {
-          plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner', reserve: true });
+          plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner', reserve: true, experimentId: this.orchestrator?.experimentIdForProject?.(project.id) || '' });
           const planned = await this.planNextTask({
             config: this.config, project, goal: loop.goal,
             history: loop.history_json || [],

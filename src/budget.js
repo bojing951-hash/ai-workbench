@@ -43,13 +43,15 @@ export function budgetSnapshot(store, config) {
   };
 }
 
-export function assertModelBudget({ config, store, provider, model = '', estimatedTokens = 2000, estimatedCostCny = 0.02, label = '模型调用', reserve = false, requestKey = '', reservationId = '' }) {
+export function assertModelBudget({ config, store, provider, model = '', estimatedTokens = 2000, estimatedCostCny = 0.02, label = '模型调用', reserve = false, requestKey = '', reservationId = '', experimentId = '', experimentScope = '' }) {
   const identity = resolveLlmIdentity({ config, provider });
   const estimate = Math.max(1, Number(estimatedTokens || 0));
   const estCost = Number(estimatedCostCny || 0) || estimateCostCny(identity.provider, model || identity.model, { input: Math.round(estimate * 0.75), output: Math.round(estimate * 0.25) });
   const snap = budgetSnapshot(store, config);
   const glmConfigured = !!(config?.llm?.glm?.apiKey && (config.llm.glm.baseUrl || config.llm.glm.model));
-  if (glmConfigured && isExemptIdentity(identity, config)) {
+  const identityExempt = !!(glmConfigured && isExemptIdentity(identity, config));
+  const scope = experimentScope || (identityExempt ? 'glm' : 'global');
+  if (identityExempt && !experimentId) {
     return { identity, exempt: true, snapshot: snap, estimatedTokens: estimate, estimatedCostCny: estCost, reservation: null };
   }
   if (reserve) {
@@ -60,16 +62,29 @@ export function assertModelBudget({ config, store, provider, model = '', estimat
       maxTokens: config.budget.maxTotalTokens, maxCostCny: config.budget.maxCostCny,
       minReserveTokens: config.budget.minReserveTokens, cacheTokenWeight: config.budget.cacheTokenWeight,
       exemptProviders: config.budget.exemptProviders || ['glm'], ttlMs: Number(config.budget.reservationTtlMs || 10 * 60 * 1000),
+      experimentId, experimentScope: scope, exemptGlobal: identityExempt,
     });
     if (!result.ok) {
-      throw new PolicyError('BUDGET_CHAT_TOKENS_EXCEEDED', `${label}预算不足（预留失败）：可用额度不足以覆盖本次调用；请授权或降低用量`, result);
+      const isExperimentBlock = /^experiment-/.test(String(result.reason || ''));
+      const code = isExperimentBlock ? 'EXPERIMENT_BUDGET_BLOCKED' : 'BUDGET_CHAT_TOKENS_EXCEEDED';
+      throw new PolicyError(code, `${label}${isExperimentBlock ? `实验硬限制阻止（${result.reason}）` : '预算不足（预留失败）'}：可用额度不足以覆盖本次调用；请授权或降低用量`, result);
     }
     if (result.existing) {
       // settled 不能再次执行付费调用；reserved 并发重复也不能再发一次。
       const status = result.reservation?.status || 'existing';
       throw new PolicyError('MODEL_CALL_DUPLICATE', `${label} 的 requestKey 已存在（${status}），拒绝重复付费调用`, { reservation: result.reservation });
     }
-    return { identity, exempt: false, snapshot: budgetSnapshot(store, config), estimatedTokens: estimate, estimatedCostCny: estCost, reservation: result.reservation };
+    return { identity, exempt: identityExempt, snapshot: budgetSnapshot(store, config), estimatedTokens: estimate, estimatedCostCny: estCost, reservation: result.reservation, experimentId: result.experimentId || experimentId };
+  }
+  if (experimentId) {
+    const experiment = store.getExperimentContract(experimentId);
+    if (!experiment || !['authorized', 'running'].includes(experiment.status)) throw new PolicyError('EXPERIMENT_BUDGET_BLOCKED', `${label}: 没有有效的实验授权契约`, { experimentId });
+    if (experiment.deadline_at && Date.now() > Date.parse(experiment.deadline_at)) throw new PolicyError('EXPERIMENT_BUDGET_BLOCKED', `${label}: 实验已超过截止时间`, { experimentId });
+    const u = store.experimentUsage(experimentId);
+    if (Number(experiment.call_limit || 0) > 0 && Number(u.calls || 0) >= Number(experiment.call_limit)) throw new PolicyError('EXPERIMENT_BUDGET_BLOCKED', `${label}: 实验调用次数已达上限 ${experiment.call_limit}`, { experimentId });
+    if (Number(experiment.token_limit || 0) > 0 && Number(u.tokens || 0) + estimate > Number(experiment.token_limit)) throw new PolicyError('EXPERIMENT_BUDGET_BLOCKED', `${label}: 实验 Token 达上限`, { experimentId });
+    if (Number(experiment.cost_limit_cny || 0) > 0 && Number(u.costCny || 0) + estCost > Number(experiment.cost_limit_cny)) throw new PolicyError('EXPERIMENT_BUDGET_BLOCKED', `${label}: 实验费用达硬上限`, { experimentId });
+    if (Number(experiment.stop_loss_cny || 0) > 0 && Number(u.costCny || 0) + estCost >= Number(experiment.stop_loss_cny)) throw new PolicyError('EXPERIMENT_BUDGET_BLOCKED', `${label}: 实验费用达到提前停止线`, { experimentId });
   }
   const reserveTokens = Number(config.budget.minReserveTokens || 0);
   if (snap.remainingTokens < estimate || snap.remainingTokens <= reserveTokens) {
