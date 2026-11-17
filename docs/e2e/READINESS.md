@@ -2,7 +2,7 @@
 
 生成时间：2026-11-17T00:47Z（Asia/Hong_Kong 08:47）
 Workbench：v3.3.0
-Git：分支 `v3.3.0`，源码提交 `2bbf76e`，文档提交 `3fba725`
+Git：分支 `v3.3.0`，源码提交 `035f997`
 Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 
 ## 结论

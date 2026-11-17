@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-11-17T00:47:38.362Z",
+  "generatedAt": "2026-11-17T02:05:02.416159Z",
   "worktree": "/Users/cast/Downloads/开发工作台",
   "version": "3.3.0",
   "health": true,
   "git": {
-    "head": "3fba725635a52753497ac620e07341351bed8f18",
+    "head": "035f997526970686aff9ea1299a51616b60aeb81",
     "branch": "v3.3.0"
   },
   "agents": [
@@ -57,7 +57,7 @@
   },
   "container": {
     "docker": false,
-    "dockerReason": "spawnSync docker ENOENT",
+    "dockerReason": "docker ENOENT; podman/colima/nerdctl/lima also missing",
     "image": "ai-workbench-runtime:2.2",
     "imageAvailable": false,
     "testExecution": false,
@@ -65,11 +65,20 @@
   },
   "budget": {
     "maxTokens": 3000000,
+    "usedTokens": 41525730,
     "usedBudgetTokens": 3495479,
-    "remainingTokens": 0,
-    "usedBudgetCostCny": 15.2375,
-    "remainingCostCny": 14.762513046399999,
-    "reservedTokens": 0,
+    "projectAudit": {
+      "tokensIn": 564080,
+      "tokensOut": 426701,
+      "tokensCache": 0,
+      "tokens": 990781,
+      "costCny": 3.8522379168
+    },
+    "cacheTokenWeight": 0.1,
+    "glmUnlimited": true,
+    "exemptProviders": [
+      "glm"
+    ],
     "glm": {
       "tokensIn": 1372957,
       "tokensOut": 508363,
@@ -129,13 +138,97 @@
         "baseProvider": "glm"
       }
     },
-    "projectAudit": {
-      "tokensIn": 564080,
-      "tokensOut": 426701,
-      "tokensCache": 0,
-      "tokens": 990781,
-      "costCny": 3.8522379168
-    }
+    "maxCostCny": 30,
+    "usedCostCny": 140.6181,
+    "usedBudgetCostCny": 15.2375,
+    "reservedTokens": 0,
+    "reservedCostCny": 0,
+    "remainingTokens": 0,
+    "remainingCostCny": 14.762513046399999,
+    "tokensPercent": 100,
+    "costPercent": 50.8,
+    "breakdown": {
+      "tokensIn": 2523307,
+      "tokensOut": 951034,
+      "tokensCache": 37060608,
+      "tokens": 40534949,
+      "costCny": 136.7658440736,
+      "byProvider": {
+        "deepseek@unknown": {
+          "tokensIn": 751923,
+          "tokensOut": 280646,
+          "tokensCache": 17255040,
+          "tokens": 18287609,
+          "costCny": 5.8432179456,
+          "known": false,
+          "baseProvider": "deepseek"
+        },
+        "deepseek": {
+          "tokensIn": 138749,
+          "tokensOut": 25903,
+          "tokensCache": 686208,
+          "tokens": 850860,
+          "costCny": 0.4971365280000001,
+          "known": true,
+          "baseProvider": "deepseek"
+        },
+        "glm@unknown": {
+          "tokensIn": 259678,
+          "tokensOut": 136122,
+          "tokensCache": 1083328,
+          "tokens": 1479128,
+          "costCny": 8.89713248,
+          "known": false,
+          "baseProvider": "glm"
+        },
+        "glm": {
+          "tokensIn": 1372957,
+          "tokensOut": 508363,
+          "tokensCache": 18036032,
+          "tokens": 19917352,
+          "costCny": 121.52835712,
+          "known": true,
+          "baseProvider": "glm"
+        }
+      },
+      "projectAudit": {
+        "tokensIn": 564080,
+        "tokensOut": 426701,
+        "tokensCache": 0,
+        "tokens": 990781,
+        "costCny": 3.8522379168
+      },
+      "budgetTokens": 3495478.5999999996,
+      "budgetCostCny": 15.237486953600001,
+      "glmUnlimited": true,
+      "exemptProviders": [
+        "glm"
+      ],
+      "glm": {
+        "tokensIn": 1372957,
+        "tokensOut": 508363,
+        "tokensCache": 18036032,
+        "tokens": 19917352,
+        "costCny": 121.52835712,
+        "known": true,
+        "baseProvider": "glm"
+      },
+      "nonGlm": {
+        "tokensIn": 1150350,
+        "tokensOut": 442671,
+        "tokensCache": 19024576,
+        "costCny": 15.237486953600001,
+        "names": [
+          "deepseek@unknown",
+          "deepseek",
+          "glm@unknown"
+        ],
+        "tokens": 20617597
+      },
+      "cacheTokenWeight": 0.1
+    },
+    "note": "仅当实际模型供应商被识别为 GLM 时豁免工作台 token/费用上限；未知供应商不豁免；其余模型仍受原预算（缓存按权重折算）约束",
+    "identityPolicy": "provider identity: glm(exempt) / deepseek / openai / anthropic / unknown(not exempt)"
   },
   "db": {
     "integrity": "ok",
@@ -165,5 +258,18 @@
     "status": "paused",
     "goal": "面向普通上班族的本地网页应用：记录收入与支出（金额、分类、日期、备注），查看收支汇总与分类趋势，并按优先级给出消费决策参考（如超预算、大额支出、结余预警）；数据仅保存在浏览器本地，不接入账户、支付或云端上传。",
     "stop_reason": "第 1 轮运行 run_mwj87v1a35b91f38 状态为 paused：任务「搭建本地消费记录单页应用骨架并实现收支记录的增删改查与本地持久化」未通过：任务执行异常：预计消耗 10000 tokens 超过剩余预算 8654.200000000186"
+  },
+  "experimentSafety": {
+    "contractTable": true,
+    "activeContracts": 0,
+    "authorized": false,
+    "hardLimitsTested": true,
+    "fullTests": {
+      "total": 315,
+      "pass": 311,
+      "skipped": 4,
+      "fail": 0
+    },
+    "noPaidCalls": true
   }
 }

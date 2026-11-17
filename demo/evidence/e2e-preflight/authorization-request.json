@@ -2,20 +2,73 @@
   "status": "AUTHORIZATION_REQUIRED",
   "approved": false,
   "workbenchVersion": "3.3.0",
-  "sourceCommit": "2bbf76e",
+  "sourceCommit": "035f997",
   "project": "new isolated product, 3 features + up to 2 repairs",
   "models": {
-    "chat": {"provider": "deepseek", "model": "deepseek-chat", "maxCalls": 2},
-    "planner": {"provider": "deepseek", "model": "deepseek-chat", "maxCalls": 4},
-    "coding": {"client": "Claude Code 2.1.104", "provider": "glm", "model": "glm-5.3", "maxCalls": 8},
-    "audit": {"client": "DSH 0.2.2-rc.2", "provider": "deepseek", "model": "deepseek", "maxCalls": 10}
+    "chat": {
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "maxCalls": 2
+    },
+    "planner": {
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "maxCalls": 4
+    },
+    "coding": {
+      "client": "Claude Code 2.1.104",
+      "provider": "glm",
+      "model": "glm-5.3",
+      "maxCalls": 8
+    },
+    "audit": {
+      "client": "DSH 0.2.2-rc.2",
+      "provider": "deepseek",
+      "model": "deepseek",
+      "maxCalls": 10
+    }
   },
   "budget": {
-    "global": {"currentMaxTokens": 3000000, "usedBudgetTokens": 3495479, "overBy": 495479, "requestedNewMaxTokens": 3620000, "newE2ETokens": 120000, "currentMaxCostCny": 30, "requestedNewMaxCostCny": 40, "e2eCostCapCny": 10},
-    "glmCoding": {"hardTokens": 4000000, "hardCostCny": 40},
-    "dshProjectAudit": {"hardTokens": 2000000, "hardCostCny": 30}
+    "global": {
+      "currentMaxTokens": 3000000,
+      "usedBudgetTokens": 3495479,
+      "overBy": 495479,
+      "requestedNewMaxTokens": 3620000,
+      "newE2ETokens": 120000,
+      "currentMaxCostCny": 30,
+      "requestedNewMaxCostCny": 40,
+      "e2eCostCapCny": 10
+    },
+    "glmCoding": {
+      "hardTokens": 4000000,
+      "hardCostCny": 40
+    },
+    "dshProjectAudit": {
+      "hardTokens": 2000000,
+      "hardCostCny": 30
+    }
   },
-  "limits": {"maxModelCalls": 50, "maxE2EHours": 6, "totalHardCostCny": 80, "stopLossCny": 72},
-  "stopConditions": ["product acceptance PASS", "cost stop", "call limit", "budget exhausted", "6h", "unrecoverable BLOCKED", "user cancel"],
-  "forbidden": ["merge main", "deploy", "modify frozen contract", "modify other products", "external harness coding", "fake agents"]
+  "limits": {
+    "maxModelCalls": 50,
+    "maxE2EHours": 6,
+    "totalHardCostCny": 80,
+    "stopLossCny": 72
+  },
+  "stopConditions": [
+    "product acceptance PASS",
+    "cost stop",
+    "call limit",
+    "budget exhausted",
+    "6h",
+    "unrecoverable BLOCKED",
+    "user cancel"
+  ],
+  "forbidden": [
+    "merge main",
+    "deploy",
+    "modify frozen contract",
+    "modify other products",
+    "external harness coding",
+    "fake agents"
+  ]
 }
