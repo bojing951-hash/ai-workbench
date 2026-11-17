@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-11-17T02:05:02.416159Z",
+  "generatedAt": "2026-11-17T02:28:56.793327Z",
   "worktree": "/Users/cast/Downloads/开发工作台",
   "version": "3.3.0",
   "health": true,
   "git": {
-    "head": "035f997526970686aff9ea1299a51616b60aeb81",
+    "head": "c76099e956882274f83b8be8209c8070e56c4006",
     "branch": "v3.3.0"
   },
   "agents": [
@@ -264,6 +264,7 @@
     "activeContracts": 0,
     "authorized": false,
     "hardLimitsTested": true,
+    "tests": 11,
     "fullTests": {
       "total": 317,
       "pass": 313,

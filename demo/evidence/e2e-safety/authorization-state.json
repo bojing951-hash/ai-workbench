@@ -1,0 +1,13 @@
+{
+  "activeContracts": 0,
+  "authorized": false,
+  "paidCalls": 0,
+  "budgetUnchanged": true,
+  "dockersAvailable": false,
+  "fullTests": {
+    "total": 317,
+    "pass": 313,
+    "skipped": 4,
+    "fail": 0
+  }
+}
