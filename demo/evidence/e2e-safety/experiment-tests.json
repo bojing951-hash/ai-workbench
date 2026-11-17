@@ -1,11 +1,11 @@
 {
   "testFile": "tests/v34-experiment-budget.test.js",
-  "tests": 9,
-  "pass": 9,
+  "tests": 10,
+  "pass": 10,
   "fail": 0,
   "fullSuite": {
-    "total": 315,
-    "pass": 311,
+    "total": 316,
+    "pass": 312,
     "skipped": 4,
     "fail": 0,
     "log": "demo/evidence/e2e-safety/tests.log"

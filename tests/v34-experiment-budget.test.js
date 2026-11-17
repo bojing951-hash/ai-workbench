@@ -19,7 +19,7 @@ function mk() {
 }
 function contract(store, patch = {}) {
   return store.createExperimentContract({
-    projectId: 'p-exp', authorizedBy: 'user:test', authorizationText: 'I_AUTHORIZE_E2E_BUDGET_V1',
+    projectId: 'p-exp', authorizedBy: 'user:test', authorizationSource: 'user_cli_tty', authorizationText: 'I_AUTHORIZE_E2E_BUDGET_V1',
     tokenLimit: 10_000, costLimitCny: 80, stopLossCny: 72, callLimit: 50,
     deadlineAt: new Date(Date.now() + 3600_000).toISOString(),
     glmTokenLimit: 4_000_000, glmCostLimitCny: 40, dshTokenLimit: 2_000_000, dshCostLimitCny: 30,
@@ -50,7 +50,7 @@ test('v3.4 实验：Token 上限、未知用量历史占额、费用止损和调
     assert.equal(reserve(store, exp2, 'd', 100, 0.2).ok, true);
     const stop = reserve(store, exp2, 'e', 100, 0.3);
     assert.equal(stop.ok, false); assert.equal(stop.reason, 'experiment-stop-loss');
-    const exp3 = contract(store, { projectId: '', conversationId: 'c3', tokenLimit: 100_000, costLimitCny: 10, stopLossCny: 0, callLimit: 2 });
+    const exp3 = contract(store, { projectId: '', conversationId: 'c3', tokenLimit: 100_000, costLimitCny: 10, stopLossCny: 0.5, callLimit: 2 });
     assert.equal(reserve(store, exp3, 'f', 100, 0.1).ok, true);
     assert.equal(reserve(store, exp3, 'g', 100, 0.1).ok, true);
     const call = reserve(store, exp3, 'h', 100, 0.1);
@@ -156,4 +156,21 @@ test('v3.4 实验：真实 SIGKILL 后实验占用不重置，重启恢复保留
       assert.equal(reopened.listModelReservations().find((x) => x.id === 'crash-exp').status, 'reserved');
     } finally { reopened.close(); }
   } finally { try { store.close(); } catch {} fs.rmSync(root,{recursive:true,force:true}); }
+});
+
+test('v3.4 实验：settle 实际越线后 stop/overspent 状态仍被解析，后续调用与隔离门不失效', async () => {
+  const { root, config, store } = mk();
+  try {
+    const exp = contract(store, { tokenLimit: 100_000, costLimitCny: 10, stopLossCny: 0.5, callLimit: 50, isolationMode: 'DOCKER_REQUIRED' });
+    const r = store.reserveModelBudget({ id: 'over-1', requestKey: 'over-1', provider: 'deepseek', estimatedTokens: 100, estimatedCostCny: 0.3, maxTokens: 10_000_000, maxCostCny: 1000, minReserveTokens: 0, experimentId: exp.id });
+    store.settleModelReservation(r.reservation.id, { actualTokens: 100, actualCostCny: 0.9, usageKnown: true });
+    const stopped = store.getExperimentForProject('p-exp');
+    assert.equal(stopped.status, 'stop_loss_reached', '实际越线后必须落状态');
+    const next = store.reserveModelBudget({ id: 'over-2', requestKey: 'over-2', provider: 'deepseek', estimatedTokens: 100, estimatedCostCny: 0.1, maxTokens: 10_000_000, maxCostCny: 1000, minReserveTokens: 0, experimentId: stopped.id });
+    assert.equal(next.ok, false, 'stop 后仍必须拒绝新调用（不能因 status 不在 authorized/running 就失去契约）');
+    const { EventBus } = await import('../src/bus.js');
+    const { Orchestrator } = await import('../src/orchestrator.js');
+    const o = new Orchestrator({ config, store, bus: new EventBus(), deps: { chooseAgent: async () => 'claude', checkAgents: async () => [] } });
+    await assert.rejects(o.startRun({ projectId: 'p-exp', goal: 'x', mode: 'single', tasks: [] }), /ISOLATION|Docker|隔离/);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

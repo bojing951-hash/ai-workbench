@@ -265,8 +265,8 @@
     "authorized": false,
     "hardLimitsTested": true,
     "fullTests": {
-      "total": 315,
-      "pass": 311,
+      "total": 316,
+      "pass": 312,
       "skipped": 4,
       "fail": 0
     },

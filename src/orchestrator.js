@@ -245,6 +245,11 @@ export class Orchestrator {
     return this.store.getExperimentForProject?.(projectId)?.id || '';
   }
 
+  experimentScopeForProvider(project, provider) {
+    if (this.isDshAuditProject(project)) return 'dsh';
+    return String(provider || '').toLowerCase() === 'glm' ? 'glm' : 'global';
+  }
+
   assertBudget(estimatedTokens = 8_000) {
     const totals = this.usage();
     assertBudgetAllowed(this.config, totals, { estimatedTokens, estimatedCostCny: 0.05 });
@@ -522,7 +527,11 @@ export class Orchestrator {
     }
     if (mode === 'DOCKER_REQUIRED') {
       const caps = containerCapabilities(this.config);
-      if (!caps.testExecution) throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验契约要求 Docker 隔离，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}；不静默降级`, { experimentId: exp.id });
+      if (!caps.testExecution || !caps.agentExecution) throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验契约要求 Docker 隔离，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}；不静默降级`, { experimentId: exp.id });
+      const pcfg = project.config_json || {};
+      if (String(pcfg.agent_isolation || '').toLowerCase() !== 'container' || String(pcfg.test_isolation || '').toLowerCase() !== 'container') {
+        throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', '实验契约要求 Docker，但项目未强制 agent_isolation=container 且 test_isolation=container；不允许宿主执行', { experimentId: exp.id });
+      }
       return exp;
     }
     throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验契约隔离方案未获批准（${mode || 'EMPTY'}）；不静默降级到普通宿主执行`, { experimentId: exp.id });
@@ -1198,13 +1207,24 @@ export class Orchestrator {
         let agentResult;
         let agentReservation = null;
         try {
-          if (!agentIdentity.exempt) {
-            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: 12_000, label: 'Coding Agent', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global' });
+          const codingExperimentId = this.experimentIdForProject(project.id);
+          // GLM 的全局豁免不适用于实验：实验内 GLM Coding 仍必须原子预留并受 GLM 分项上限约束。
+          if (!agentIdentity.exempt || codingExperimentId) {
+            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: 12_000, label: 'Coding Agent', reserve: true, experimentId: codingExperimentId, experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global' });
           }
           const remaining = this.budget().remainingTokens;
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
           const perTaskCap = projectTaskCap > 0 ? projectTaskCap : this.config.budget.maxTokensPerTask;
-          const perTaskTokens = agentIdentity.exempt ? 0 : Math.min(perTaskCap, Math.max(15_000, remaining - 25_000));
+          let experimentTokenRemaining = Infinity;
+          if (codingExperimentId) {
+            const exp = this.store.getExperimentContract(codingExperimentId);
+            const eu = this.store.experimentUsage(codingExperimentId);
+            if (agentIdentity.provider === 'glm') experimentTokenRemaining = Number(exp?.glm_token_limit || 0) > 0 ? Number(exp.glm_token_limit) - Number(eu.byScope?.glm?.tokens || 0) : Infinity;
+            else experimentTokenRemaining = Number(exp?.token_limit || 0) > 0 ? Number(exp.token_limit) - Number(eu.tokens || 0) : Infinity;
+          }
+          const perTaskTokens = codingExperimentId
+            ? Math.max(0, Math.min(perTaskCap, experimentTokenRemaining))
+            : (agentIdentity.exempt ? 0 : Math.min(perTaskCap, Math.max(15_000, remaining - 25_000)));
           const watchdog = await this.runAgentWithWatchdog({
             agentId,
             worktree,
@@ -1415,7 +1435,7 @@ export class Orchestrator {
         try {
           if (this.deps.runAudit === runAudit && auditResourceInfo && ((!auditResourceInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
             const mainAuditProvider = this.isDshAuditProject(project) ? 'deepseek' : auditResourceInfo.provider;
-            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: mainAuditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.isDshAuditProject(project) ? 'dsh' : 'global' });
+            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: mainAuditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, mainAuditProvider) });
           }
           const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
           const diffStat = await gitops.diffStat(worktree, baseCommit);
@@ -2195,6 +2215,8 @@ export class Orchestrator {
     }
     // 幂等也要先验证当前执行者拥有写租约，跨进程不能借幂等读取绕过 Fencing。
     this.ensureControlLease(run.project_id);
+    const resumeProjectGate = this.store.getProject(run.project_id);
+    if (resumeProjectGate) this.assertExperimentIsolation(resumeProjectGate);
     if ([RunStatus.RUNNING, RunStatus.QUEUED, RunStatus.AWAITING_ACCEPTANCE].includes(run.status)) return run;
     try {
     this.assertBudget(5_000);
@@ -2405,7 +2427,7 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
     try {
       if (this.deps.runAudit === runAudit && auditInfo && ((!auditInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
         const paProvider = this.isDshAuditProject(project) ? 'deepseek' : auditInfo.provider;
-        reservation = assertModelBudget({ config: this.config, store: this.store, provider: paProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditInfo.model || ''), estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.isDshAuditProject(project) ? 'dsh' : 'global' });
+        reservation = assertModelBudget({ config: this.config, store: this.store, provider: paProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditInfo.model || ''), estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, paProvider) });
       }
       audit = await this.deps.runAudit({
         config: this.config, project,
@@ -2459,6 +2481,7 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
     const run = this.store.getRun(task.run_id);
     const project = this.store.getProject(task.project_id);
     if (!run || !project) throw new PolicyError('RUN_NOT_FOUND', '运行或项目不存在');
+    this.assertExperimentIsolation(project);
     if (!this._verificationLocks) this._verificationLocks = new Set();
     if (this._verificationLocks.has(task.id)) throw new PolicyError('VERIFICATION_IN_PROGRESS', '该任务已有验证重试在进行中，拒绝并发重复验证（防止审计/提交竞态）');
     // 原 Run 仍在本进程执行时不得启动“仅验证重试”：否则会覆盖 processRun 的 controller/running，
@@ -2547,7 +2570,7 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
       try {
         if (this.deps.runAudit === runAudit && auditResourceInfo && ((!auditResourceInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
           const auditProvider = this.isDshAuditProject(project) ? 'deepseek' : auditResourceInfo.provider;
-          auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.isDshAuditProject(project) ? 'dsh' : 'global' });
+          auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, auditProvider) });
         }
         audit = await this.deps.runAudit({
           config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },

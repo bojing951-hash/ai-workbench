@@ -63,7 +63,7 @@ node scripts/e2e-authorize.mjs \
 
 ## 测试证据
 
-`tests/v34-experiment-budget.test.js` 9 tests：
+`tests/v34-experiment-budget.test.js` 10 tests：
 
 - 无授权/无效契约阻止预留；
 - Token、费用、止损、调用次数上限；

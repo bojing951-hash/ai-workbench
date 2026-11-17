@@ -48,3 +48,9 @@ node scripts/e2e-authorize.mjs --project-id <id> --authorized-by "<name>" \
 2. 确认 Docker 隔离可用；
 3. 创建新隔离 Project + Conversation 并绑定契约；
 4. 才能启动真实 E2E。
+
+## 授权实现边界（重要）
+
+- 授权命令要求真实 TTY + 终端内逐字输入确认语，并在数据库中记录 `authorization_source=user_cli_tty`；
+- 这不是密码学意义上的用户签名；能直接访问 SQLite 或伪造 PTY 的恶意本地进程理论上仍可伪造。正式 E2E 的安全边界依赖：用户在本机 TTY 执行授权 + 操作员在启动前核对 `experiment_contracts` 记录；
+- 当前 `experiment_contracts=0`，没有有效授权。

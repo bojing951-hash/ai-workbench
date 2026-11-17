@@ -271,6 +271,8 @@ export class LoopManager {
       if (!loop || loop.status !== 'running') return;
       const project = this.store.getProject(loop.project_id);
       if (!project) throw new PolicyError('PROJECT_NOT_FOUND', '循环项目不存在');
+      // 实验隔离必须在 Loop 的任何 Planner 模型调用之前生效。
+      this.orchestrator?.assertExperimentIsolation?.(project);
 
       // 1) 等待当前运行结束
       if (loop.current_run_id) {

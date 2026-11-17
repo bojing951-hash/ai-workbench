@@ -1198,14 +1198,19 @@ export class Store {
   // ---------------- E2E 实验预算契约 ----------------
   createExperimentContract(input = {}) {
     const now = nowIso();
-    const required = ['authorizedBy','authorizationText','tokenLimit','costLimitCny','callLimit','deadlineAt'];
+    const required = ['authorizedBy','authorizationText','authorizationSource','tokenLimit','costLimitCny','stopLossCny','callLimit','deadlineAt'];
     for (const k of required) if (!input[k]) throw new Error(`EXPERIMENT_FIELD_REQUIRED:${k}`);
+    if (String(input.authorizationSource) !== 'user_cli_tty') throw new Error('EXPERIMENT_AUTHORIZATION_SOURCE_INVALID: 只能由用户 TTY 授权脚本创建');
+    for (const k of ['tokenLimit','costLimitCny','stopLossCny','callLimit']) {
+      if (!Number.isFinite(Number(input[k])) || Number(input[k]) <= 0) throw new Error(`EXPERIMENT_LIMIT_INVALID:${k}`);
+    }
+    if (!Number.isFinite(Date.parse(String(input.deadlineAt)))) throw new Error('EXPERIMENT_DEADLINE_INVALID');
     const id = input.id || `exp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const version = String(input.contractVersion || 'e2e-budget-v1');
     const payload = {
       version, projectId: input.projectId || '', conversationId: input.conversationId || '',
       authorizedBy: String(input.authorizedBy), authorizedAt: input.authorizedAt || now,
-      authorizationSource: String(input.authorizationSource || 'unknown'),
+      authorizationSource: String(input.authorizationSource),
       tokenLimit: Number(input.tokenLimit), costLimitCny: Number(input.costLimitCny),
       stopLossCny: Number(input.stopLossCny || 0), callLimit: Number(input.callLimit),
       deadlineAt: String(input.deadlineAt),
@@ -1230,12 +1235,12 @@ export class Store {
 
   getExperimentForProject(projectId) {
     if (!projectId) return null;
-    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE project_id=? AND status IN ('authorized','running') ORDER BY created_at DESC LIMIT 1").get(projectId), { provider_json: {}, stop_conditions_json: [] });
+    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE project_id=? AND status IN ('authorized','running','stop_loss_reached','overspent') ORDER BY created_at DESC LIMIT 1").get(projectId), { provider_json: {}, stop_conditions_json: [] });
   }
 
   getExperimentForConversation(conversationId) {
     if (!conversationId) return null;
-    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE conversation_id=? AND status IN ('authorized','running') ORDER BY created_at DESC LIMIT 1").get(conversationId), { provider_json: {}, stop_conditions_json: [] });
+    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE conversation_id=? AND status IN ('authorized','running','stop_loss_reached','overspent') ORDER BY created_at DESC LIMIT 1").get(conversationId), { provider_json: {}, stop_conditions_json: [] });
   }
 
   listExperimentContracts(limit = 50) {

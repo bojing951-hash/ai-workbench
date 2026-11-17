@@ -5,6 +5,7 @@
  * 该脚本只写入 experiment_contracts，不触发任何模型调用。
  */
 import process from 'node:process';
+import readline from 'node:readline/promises';
 import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
 
@@ -16,8 +17,11 @@ if (!process.stdin.isTTY) {
   process.exit(2);
 }
 const expected = 'I_AUTHORIZE_E2E_BUDGET_V1';
-if (val('--confirm') !== expected) {
-  console.error(`AUTHORIZATION_REQUIRED: 必须显式提供 --confirm ${expected}`);
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const typed = (await rl.question(`请在终端逐字输入授权确认语 ${expected}\n> `)).trim();
+rl.close();
+if (typed !== expected) {
+  console.error('AUTHORIZATION_REQUIRED: 终端确认语不匹配');
   process.exit(3);
 }
 const projectId = val('--project-id');
@@ -33,7 +37,7 @@ try {
   const contract = store.createExperimentContract({
     projectId, conversationId, authorizedBy,
     authorizationSource: 'user_cli_tty',
-    authorizationText: `I authorize AI Workbench E2E budget ${expected} project=${projectId} conversation=${conversationId} at=${new Date(now).toISOString()}`,
+    authorizationText: `${expected} project=${projectId} conversation=${conversationId} at=${new Date(now).toISOString()} tokenLimit=${val('--token-limit', '3620000')} costLimit=${val('--cost-limit', '80')} stopLoss=${val('--stop-loss', '72')} callLimit=${val('--call-limit', '50')} deadlineHours=${hours} glmTokens=${val('--glm-tokens', '4000000')} glmCost=${val('--glm-cost', '40')} dshTokens=${val('--dsh-tokens', '2000000')} dshCost=${val('--dsh-cost', '30')} isolation=${val('--isolation', 'BLOCKED_UNLESS_APPROVED')}`,
     contractVersion: val('--contract-version', 'e2e-budget-v1'),
     tokenLimit: Number(val('--token-limit', '3620000')),
     costLimitCny: Number(val('--cost-limit', '80')),
