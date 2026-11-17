@@ -30,7 +30,7 @@ import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { deriveClausePlan } from './quality.js';
-import { assertModelBudget, evaluateProviderRiskGate } from './budget.js';
+import { assertModelBudget, evaluateProviderRiskGate, resolveCodingReservation } from './budget.js';
 import { verifyContractBaseline, verifyTestBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount, classifyTestFailure } from './contract.js';
 import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
@@ -1256,8 +1256,8 @@ export class Orchestrator {
       this.store.updateTask(task.id, { status: TaskStatus.PREPARING, worktree_path: worktree, branch, base_commit: baseCommit });
       // 若上次已生成检查点但 Worktree 不存在/被重建，先校验并恢复所有未提交文件。
       const savedCheckpoint = task.verification_json?.checkpoint || this.store.getTask(task.id)?.verification_json?.checkpoint;
-      if (savedCheckpoint?.archive) {
-        try { this.verifyAndRestoreCheckpoint(savedCheckpoint, worktree); this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'checkpoint_restored', message: `已从检查点恢复 ${savedCheckpoint.files || 0} 个文件（manifest ${String(savedCheckpoint.manifestHash || '').slice(0, 12)}）`, data: savedCheckpoint }); }
+      if (savedCheckpoint?.archive && !reusable) {
+        try { await this.verifyAndRestoreCheckpoint(savedCheckpoint, worktree); this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'checkpoint_restored', message: `已从检查点恢复 ${savedCheckpoint.files || 0} 个文件（manifest ${String(savedCheckpoint.manifestHash || '').slice(0, 12)}）`, data: savedCheckpoint }); }
         catch (err) { return this.failTask(run, task, `检查点损坏，拒绝继续：${err.message}`, 'blocked'); }
       }
       this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'worktree_ready', message: `工作副本就绪：${branch}`, data: { worktree, baseCommit, planBranch } });
@@ -1354,10 +1354,15 @@ export class Orchestrator {
           const perTaskTokens = codingExperimentId
             ? Math.max(0, Math.min(perTaskCap, experimentTokenRemaining))
             : (agentIdentity.exempt ? 0 : Math.min(perTaskCap, Math.max(15_000, remaining - 25_000)));
+          const perCallMax = codingExperimentId ? Number(this.store.getExperimentContract(codingExperimentId)?.per_call_max_tokens || 0) : 0;
+          const codingReservation = resolveCodingReservation({ perTaskTokens, perCallMaxTokens: perCallMax });
+          if (codingExperimentId && !codingReservation.ok) {
+            return this.failTask(run, task, `BUDGET_BLOCKED：剩余额度 ${perTaskTokens} / 单次预留上限 ${perCallMax} 不足，拒绝启动 Coding 调用`, 'blocked');
+          }
           // GLM 的全局豁免不适用于实验：实验内 GLM Coding 仍必须原子预留并受 GLM 分项上限约束。
-          // 预留必须覆盖整个单任务上限，而不是固定 12k；否则单次 Coding 实际用量可能冲破实验上限。
+          // 预留同时受单任务剩余额度和实验 per-call 上限约束。
           if (!agentIdentity.exempt || codingExperimentId) {
-            const reserveEstimate = Math.max(12_000, perTaskTokens);
+            const reserveEstimate = codingExperimentId ? codingReservation.tokens : Math.max(12_000, codingReservation.tokens);
             agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: reserveEstimate, label: 'Coding Agent', reserve: true, experimentId: codingExperimentId, experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global' });
           }
           const watchdog = await this.runAgentWithWatchdog({
@@ -2401,28 +2406,40 @@ export class Orchestrator {
     const finalDir = path.join(base, `checkpoint-${Date.now().toString(36)}`);
     ensureDir(tmpDir);
     const manifest = [];
+    const rootResolved = path.resolve(worktree);
     const walk = (dir, rel = '') => {
       for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
         if (ent.name === '.git' || ent.name === 'node_modules' || ent.name === '.workbench') continue;
         const abs = path.join(dir, ent.name); const r = rel ? `${rel}/${ent.name}` : ent.name;
         if (ent.isDirectory()) { walk(abs, r); continue; }
-        if (!ent.isFile()) continue;
+        const stEntry = fs.lstatSync(abs);
+        if (stEntry.isSymbolicLink()) {
+          const link = fs.readlinkSync(abs);
+          const resolved = path.resolve(path.dirname(abs), link);
+          if (path.isAbsolute(link) || !(resolved === rootResolved || resolved.startsWith(rootResolved + path.sep))) {
+            throw new PolicyError('CHECKPOINT_SYMLINK_UNSAFE', `检查点拒绝越界符号链接：${r} -> ${link}`);
+          }
+          manifest.push({ type: 'symlink', path: r, target: link, mode: stEntry.mode & 0o777 });
+          continue;
+        }
+        if (!stEntry.isFile()) continue;
         const buf = fs.readFileSync(abs);
-        manifest.push({ path: r, size: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex') });
+        manifest.push({ type: 'file', path: r, size: buf.length, mode: stEntry.mode & 0o777, sha256: crypto.createHash('sha256').update(buf).digest('hex') });
         fs.mkdirSync(path.dirname(path.join(tmpDir, r)), { recursive: true });
-        fs.writeFileSync(path.join(tmpDir, r), buf);
+        fs.writeFileSync(path.join(tmpDir, r), buf, { mode: stEntry.mode & 0o777 });
       }
     };
-    try { walk(worktree); } catch (err) { fs.rmSync(tmpDir, { recursive: true, force: true }); throw new PolicyError('CHECKPOINT_CAPTURE_FAILED', `工作副本检查点保存失败：${err.message}`); }
-    let head = ''; let tree = ''; let branch = task.branch || '';
+    try { walk(worktree); } catch (err) { fs.rmSync(tmpDir, { recursive: true, force: true }); throw err instanceof PolicyError ? err : new PolicyError('CHECKPOINT_CAPTURE_FAILED', `工作副本检查点保存失败：${err.message}`); }
+    let head = ''; let tree = ''; let branch = task.branch || ''; let indexTree = '';
     try { head = await gitops.currentHead(worktree); tree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim(); branch = (await gitops.git(worktree, ['branch', '--show-current'], { allowFail: true })).stdout.trim() || branch; } catch { /* best effort */ }
-    const meta = { version: 1, runId: run.id, taskId: task.id, projectId: project.id, attempt: task.attempt || 0, sessionId: task.session_id || '', branch, head, tree, worktree, files: manifest.length, manifestHash: crypto.createHash('sha256').update(JSON.stringify(manifest)).digest('hex'), createdAt: nowIso() };
+    try { indexTree = (await gitops.git(worktree, ['write-tree'], { allowFail: true })).stdout.trim(); } catch { /* best effort */ }
+    const meta = { version: 2, runId: run.id, taskId: task.id, projectId: project.id, attempt: task.attempt || 0, sessionId: task.session_id || '', branch, head, tree, indexTree, worktree, files: manifest.length, manifestHash: crypto.createHash('sha256').update(JSON.stringify(manifest)).digest('hex'), createdAt: nowIso() };
     fs.writeFileSync(path.join(tmpDir, 'checkpoint.json'), JSON.stringify({ ...meta, manifest }, null, 2));
     fs.renameSync(tmpDir, finalDir);
     return { ...meta, archive: finalDir, manifestFile: path.join(finalDir, 'checkpoint.json') };
   }
 
-  verifyAndRestoreCheckpoint(meta, targetWorktree) {
+  async verifyAndRestoreCheckpoint(meta, targetWorktree) {
     if (!meta?.archive || !fs.existsSync(meta.manifestFile)) throw new PolicyError('CHECKPOINT_MISSING', '恢复检查点不存在');
     let parsed;
     try { parsed = JSON.parse(fs.readFileSync(meta.manifestFile, 'utf8')); } catch { throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 无法解析'); }
@@ -2430,15 +2447,37 @@ export class Orchestrator {
     const manifestHash = crypto.createHash('sha256').update(JSON.stringify(parsed.manifest)).digest('hex');
     if (manifestHash !== meta.manifestHash) throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 哈希不匹配');
     ensureDir(targetWorktree);
+    const rootResolved = path.resolve(targetWorktree);
+    const safePath = (rel) => {
+      const norm = String(rel || '').replaceAll('\\', '/');
+      if (!norm || path.isAbsolute(norm) || norm.split('/').includes('..') || norm.includes('\0')) throw new PolicyError('CHECKPOINT_PATH_TRAVERSAL', `检查点路径非法：${rel}`);
+      const dest = path.resolve(rootResolved, norm);
+      if (!(dest === rootResolved || dest.startsWith(rootResolved + path.sep))) throw new PolicyError('CHECKPOINT_PATH_TRAVERSAL', `检查点路径越界：${rel}`);
+      return dest;
+    };
     for (const f of parsed.manifest) {
+      const dest = safePath(f.path);
+      if (f.type === 'symlink') {
+        const target = String(f.target || '');
+        const resolved = path.resolve(path.dirname(dest), target);
+        if (path.isAbsolute(target) || !(resolved === rootResolved || resolved.startsWith(rootResolved + path.sep))) throw new PolicyError('CHECKPOINT_SYMLINK_UNSAFE', `符号链接越界：${f.path} -> ${target}`);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        try { fs.rmSync(dest, { force: true }); } catch { /* ignore */ }
+        fs.symlinkSync(target, dest);
+        continue;
+      }
       const src = path.join(meta.archive, f.path);
       const buf = fs.readFileSync(src);
       if (crypto.createHash('sha256').update(buf).digest('hex') !== f.sha256) throw new PolicyError('CHECKPOINT_CORRUPT', `检查点文件哈希不匹配：${f.path}`);
-      const dest = path.join(targetWorktree, f.path);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.writeFileSync(dest, buf);
+      fs.writeFileSync(dest, buf, { mode: f.mode || 0o644 });
+      if (f.mode) try { fs.chmodSync(dest, f.mode); } catch { /* ignore */ }
     }
-    return { files: parsed.manifest.length, manifestHash };
+    if (parsed.indexTree && fs.existsSync(path.join(targetWorktree, '.git'))) {
+      const idx = await gitops.git(targetWorktree, ['read-tree', parsed.indexTree], { allowFail: true });
+      if (idx.code !== 0) throw new PolicyError('CHECKPOINT_INDEX_RESTORE_FAILED', `Git index 恢复失败：${idx.stderr || idx.stdout}`);
+    }
+    return { files: parsed.manifest.length, manifestHash, indexTree: parsed.indexTree || '' };
   }
 
   async resumeRun(runId, { retryFailed = false, authorizeBudget = false } = {}) {

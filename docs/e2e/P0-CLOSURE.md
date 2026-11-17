@@ -52,7 +52,7 @@
 - 该许可不是硬上限，只是把“无法保证调用在授权风险内结束”的配置显式接受。
 - Coding 预留改为 `max(12k, perTaskTokens)`；`overspent/stop_loss_reached` 不会被 completed 覆盖。
 - 测试回退只允许 `runner_compatibility`，产品断言失败/混合 FAIL/遗漏测试文件/隐藏契约 FAIL 全部保持失败（负向 B/C/D/F）。
-- 最终全量：**355 tests / 355 pass / 0 skipped / 0 fail**。
+- 最终全量：**356 tests / 356 pass / 0 skipped / 0 fail**。
 
 残余 P1：Supervisor Testing/Auditing/Committing 注入、Commit 后崩溃幂等恢复、宿主 Agent 孤儿进程清理仍未完全验证。
 
@@ -78,7 +78,7 @@
 - 回退不得跳过原 package.json test 的 lint/build/typecheck 等阶段；
 - 原始退出码/stdout/stderr、文件清单、命令完整保留。
 
-最终全量：**355 tests / 355 pass / 0 skipped / 0 fail**。
+最终全量：**356 tests / 356 pass / 0 skipped / 0 fail**。
 
 ## 独立复审后的补强
 
@@ -86,4 +86,12 @@
 - 风险许可门先验证实验契约哈希，再读取 `provider_json.risk.unbounded`；篡改契约许可失效；
 - 授权脚本新增 TTY 风险许可参数（client/provider/model/reason/acceptedBy/maxRiskTokens）；
 - 测试回退负向 E 现在包含可执行 lint 阶段，确保 mandatory-phase 守卫真实生效；
-- 最终全量仍为 355/355/0。
+- 最终全量仍为 356/356/0。
+
+## 最终追加：预算语义、Checkpoint 与 Docker 清理
+
+- 预算预留统一按 `min(单任务剩余额度, 实验 per_call_max_tokens)`，per-call 上限只约束预留申请，不冒充真实执行硬上限；
+- 实验内无有效风险许可的真实 Provider 仍 BLOCKED；
+- Checkpoint v2：文件 mode、安全相对符号链接、Git index tree、路径穿越阻断；恢复仅在 Worktree 重新创建时执行，复用有效 Worktree 时不再用旧归档覆盖；
+- Docker 清理 failed[] 在运行时 infra 恢复与启动两处均 fail-closed；
+- 全量最终：356/356/0。

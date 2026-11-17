@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
-import { providerHasExecutableCostLimit, riskAcceptanceFor, evaluateProviderRiskGate } from '../src/budget.js';
+import { providerHasExecutableCostLimit, riskAcceptanceFor, evaluateProviderRiskGate, resolveCodingReservation } from '../src/budget.js';
 
 function mk() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-budget-'));
@@ -120,4 +120,18 @@ test('v35 风险准入：默认无边界 Provider 被拒绝，风险许可必须
     // 环境变量不是授权来源：contract 没 risk 时仍为 null
     assert.equal(riskAcceptanceFor(base, { client: 'claude', provider: 'glm', model: 'glm-5.3' }), null);
   } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
+});
+
+
+test('v35 预算语义：单任务额度与 per-call 上限取最小值，不允许冲突绕过', () => {
+  const a = resolveCodingReservation({ perTaskTokens: 600_000, perCallMaxTokens: 20_000 });
+  assert.equal(a.ok, true); assert.equal(a.tokens, 20_000);
+  const b = resolveCodingReservation({ perTaskTokens: 10_000, perCallMaxTokens: 20_000 });
+  assert.equal(b.ok, true); assert.equal(b.tokens, 10_000);
+  const c = resolveCodingReservation({ perTaskTokens: 0, perCallMaxTokens: 20_000 });
+  assert.equal(c.ok, false);
+  const d = resolveCodingReservation({ perTaskTokens: 600_000, perCallMaxTokens: 0 });
+  assert.equal(d.tokens, 600_000);
+  const e = resolveCodingReservation({ perTaskTokens: 600_000, perCallMaxTokens: 5_000 });
+  assert.equal(e.tokens, 5_000);
 });

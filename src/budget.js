@@ -166,3 +166,16 @@ export function evaluateProviderRiskGate({ store, experimentId, binding = {} } =
   if (!accepted) return { ok: false, code: 'BUDGET_RISK_UNBOUNDED' };
   return { ok: true, mode: 'contract-risk-accepted', acceptance: accepted, experiment: exp };
 }
+
+/**
+ * 单次 Coding 调用的确定性预留算法：
+ * - perTaskTokens 是任务剩余可用额度；
+ * - perCallMaxTokens 是实验契约对单次预留的硬上限；
+ * - 预留必须同时满足两者，不能把 per-call 限制用于真实执行硬封顶。
+ */
+export function resolveCodingReservation({ perTaskTokens = 0, perCallMaxTokens = 0 } = {}) {
+  const taskCap = Math.max(0, Number(perTaskTokens || 0));
+  const callCap = Math.max(0, Number(perCallMaxTokens || 0));
+  const tokens = callCap > 0 ? Math.min(taskCap, callCap) : taskCap;
+  return { ok: Number.isFinite(tokens) && tokens > 0, tokens, perTaskTokens: taskCap, perCallMaxTokens: callCap, reason: tokens > 0 ? '' : 'no-remaining-budget' };
+}

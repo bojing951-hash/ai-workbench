@@ -22,6 +22,8 @@ test('v3.5 Checkpoint：tracked/untracked/staged/unstaged 全部保存并可校�
   fs.writeFileSync(path.join(wt, 'staged.js'), 'staged content\n'); git(['add', 'staged.js'], wt);
   fs.writeFileSync(path.join(wt, 'untracked.js'), 'untracked content\n');
   fs.mkdirSync(path.join(wt, 'dir'), { recursive: true }); fs.writeFileSync(path.join(wt, 'dir', 'nested.txt'), 'nested\n');
+  fs.writeFileSync(path.join(wt, 'exec.sh'), '#!/bin/sh\necho hi\n'); fs.chmodSync(path.join(wt, 'exec.sh'), 0o755);
+  fs.symlinkSync('tracked.js', path.join(wt, 'safe-link.js'));
   const dataDir = path.join(root, 'data');
   const config = getConfig({ root, paths: { root, dataDir, dbPath: path.join(dataDir, 'test.db'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(dataDir, 'worktrees'), artifactsDir: path.join(dataDir, 'artifacts'), logsDir: path.join(dataDir, 'logs'), agentsDir: path.join(dataDir, 'agents'), dshHome: path.join(dataDir, 'agents/dsh'), claudeHome: path.join(dataDir, 'agents/claude') } });
   const store = openStore(config.paths.dbPath);
@@ -33,12 +35,14 @@ test('v3.5 Checkpoint：tracked/untracked/staged/unstaged 全部保存并可校�
     assert.ok(meta.archive && fs.existsSync(meta.manifestFile));
     assert.ok(meta.files >= 4, `files=${meta.files}`);
     const restored = path.join(root, 'restored'); fs.mkdirSync(restored);
-    const v = o.verifyAndRestoreCheckpoint(meta, restored);
+    const v = await o.verifyAndRestoreCheckpoint(meta, restored);
     assert.equal(v.manifestHash, meta.manifestHash);
     assert.equal(fs.readFileSync(path.join(restored, 'tracked.js'), 'utf8'), 'v2 tracked change\n');
     assert.equal(fs.readFileSync(path.join(restored, 'staged.js'), 'utf8'), 'staged content\n');
     assert.equal(fs.readFileSync(path.join(restored, 'untracked.js'), 'utf8'), 'untracked content\n');
     assert.equal(fs.readFileSync(path.join(restored, 'dir', 'nested.txt'), 'utf8'), 'nested\n');
+    assert.equal(fs.statSync(path.join(restored, 'exec.sh')).mode & 0o777, 0o755);
+    assert.equal(fs.readlinkSync(path.join(restored, 'safe-link.js')), 'tracked.js');
     // listTasks 必须解析 verification_json.checkpoint，恢复路径才能读取归档。
     store.createProject({ id: 'p-ckpt', name: 'ckpt', localPath: repo, defaultBranch: 'main' });
     store.createRun({ id: 'r-ckpt', projectId: 'p-ckpt', planId: 'pl-ckpt', goal: 'g', mode: 'single', status: 'paused' });
@@ -50,6 +54,6 @@ test('v3.5 Checkpoint：tracked/untracked/staged/unstaged 全部保存并可校�
     assert.equal(parsed.verification_json.keep_field, 42);
     // 篡改归档 -> 必须拒绝，不得静默恢复
     const target = path.join(meta.archive, 'untracked.js'); fs.writeFileSync(target, 'tampered\n');
-    assert.throws(() => o.verifyAndRestoreCheckpoint(meta, path.join(root, 'restored2')), /CHECKPOINT_CORRUPT|哈希/);
+    await assert.rejects(() => o.verifyAndRestoreCheckpoint(meta, path.join(root, 'restored2')), /CHECKPOINT_CORRUPT|哈希/);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
