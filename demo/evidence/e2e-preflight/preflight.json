@@ -4,7 +4,7 @@
   "version": "3.3.0",
   "health": true,
   "git": {
-    "head": "7db5fc7",
+    "head": "a285b0d",
     "branch": "v3.3.0"
   },
   "agents": [
