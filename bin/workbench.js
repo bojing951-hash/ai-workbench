@@ -344,8 +344,9 @@ async function main() {
       const resumedRuns = autoRuns.filter((x) => x.resumed).length;
       if (resumedRuns) console.log(`[recover] ${resumedRuns} 个 supervised 运行已自动续跑`);
       const interruptedLoops = store.listLoops({ status: 'interrupted' });
+      const pausedInfraLoops = store.listLoops({ status: 'paused' }).filter((lp) => /Docker|docker|镜像|隔离|基础设施|infrastructure/i.test(String(lp.stop_reason || '')));
       let loopResumed = 0;
-      for (const lp of interruptedLoops) {
+      for (const lp of [...interruptedLoops, ...pausedInfraLoops]) {
         const pj = store.getProject(lp.project_id);
         if (!pj?.config_json?.supervisor_managed) continue;
         try { await loops.resume(lp.id, { retryCurrent: true }); loopResumed += 1; } catch (err) { console.log(`[recover] 循环 ${lp.id} 自动恢复失败：${err.message}`); }

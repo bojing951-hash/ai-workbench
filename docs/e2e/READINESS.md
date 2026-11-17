@@ -24,7 +24,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 | Docker | 29.9.3，镜像 `ai-workbench-runtime:2.2` 可用 |
 | 容器测试 | `tests/container.test.js` 5/5 PASS（含真实容器执行） |
 | 全局预算 | max 3,620,000；remaining 121,011.8；费用 remaining ¥24.7544 |
-| 工程回归 | **338 tests / 338 pass / 0 skipped / 0 fail**（Docker 可用） |
+| 工程回归 | **340 tests / 340 pass / 0 skipped / 0 fail**（Docker 可用） |
 
 ## 真实 E2E 结果
 
@@ -47,3 +47,16 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 - Docker 已可用；
 - 建议放宽 watchdog（≥45 分钟）并修复 server 重启时容器回收/租约恢复后再重试；
 - 不自动合并、不部署。
+
+## 第二次真实 E2E 重试（2026-11-17 20:38Z–21:25Z）
+
+- 结论：**FAILED / BUDGET_OVERSPENT**；
+- 新 contract `exp_mwkohd4momlwqc` 限额 1,940,000 tokens / ¥22.65 / 12 calls；
+- 实际 12 calls / **2,856,734 tokens / ¥25.4897**；
+- 实验 Token 超限约 47%，费用超限约 12.5%；状态 `overspent` 后已终止；
+- Coding 因单任务 token 预算（942,159 > 169,441）暂停；
+- 未完成 DSH 产品审计、最终 Git 交付、accepted；
+- 真实执行暴露并修复了 4 个 Workbench 测试/隔离缺陷，但本轮未能产出 PASS；
+- 当前无有效实验授权，旧实验均 failed；
+- 全局已用约 6,355,722 tokens / ¥40.7353，剩余约 1,143,266 tokens / ¥14.5103；
+- 24H 未开始。

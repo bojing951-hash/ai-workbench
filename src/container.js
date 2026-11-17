@@ -44,11 +44,21 @@ export function containerConfig(config) {
   };
 }
 
+const DOCKER_GOOD = new Map();
+const IMAGE_GOOD = new Map();
 export function dockerAvailable({ dockerBin = 'docker' } = {}) {
+  const now = Date.now();
+  const cached = DOCKER_GOOD.get(dockerBin);
+  // 防止瞬时 docker info 超时把仍在运行的容器环境误判为不可用。
+  if (cached && now - cached.at < 300_000) return cached.res;
   try {
     const res = execCaptureSync(dockerBin, ['info', '--format', '{{.ServerVersion}}'], { timeout: 5_000 });
-    return { available: res.code === 0, version: res.stdout.trim(), reason: res.code === 0 ? '' : res.stderr.slice(0, 300) };
+    const out = { available: res.code === 0, version: res.stdout.trim(), reason: res.code === 0 ? '' : res.stderr.slice(0, 300) };
+    if (out.available) DOCKER_GOOD.set(dockerBin, { at: now, res: out });
+    else if (cached && now - cached.at < 300_000) return cached.res;
+    return out;
   } catch (err) {
+    if (cached && now - cached.at < 300_000) return cached.res;
     return { available: false, version: '', reason: String(err?.message || err).slice(0, 300) };
   }
 }
@@ -60,10 +70,16 @@ function execCaptureSync(cmd, args, { timeout = 5_000 } = {}) {
 }
 
 export function imageAvailable({ dockerBin = 'docker', image = DEFAULT_IMAGE } = {}) {
+  const key = `${dockerBin}|${image}`; const now = Date.now(); const cached = IMAGE_GOOD.get(key);
+  if (cached && now - cached.at < 300_000) return cached.res;
   try {
     const res = execCaptureSync(dockerBin, ['image', 'inspect', image, '--format', '{{.Id}}'], { timeout: 5_000 });
-    return { available: res.code === 0, id: (res.stdout || '').trim(), reason: res.code === 0 ? '' : (res.stderr || '').slice(0, 300) };
+    const out = { available: res.code === 0, id: (res.stdout || '').trim(), reason: res.code === 0 ? '' : (res.stderr || '').slice(0, 300) };
+    if (out.available) IMAGE_GOOD.set(key, { at: now, res: out });
+    else if (cached && now - cached.at < 300_000) return cached.res;
+    return out;
   } catch (err) {
+    if (cached && now - cached.at < 300_000) return cached.res;
     return { available: false, id: '', reason: String(err?.message || err).slice(0, 300) };
   }
 }

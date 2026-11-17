@@ -16,6 +16,6 @@
 
 ## 最终验证
 
-- 全量：**338 tests / 338 pass / 0 skipped / 0 fail**（Docker 29.9.3，真实容器测试）。
+- 全量：**340 tests / 340 pass / 0 skipped / 0 fail**（Docker 29.9.3，真实容器测试）。
 - 新增：watchdog 5、container recovery 3、infra recovery 3、worktree recovery 1。
 - 未运行新的真实付费 E2E；旧实验仍 failed，新 E2E 需要新授权。

@@ -1,0 +1,405 @@
+/* 本地消费记录小站 —— 纯本地样式，无任何外部资源引用 */
+
+:root {
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-text: #1f2430;
+  --color-text-muted: #667085;
+  --color-border: #d9dee7;
+  --color-primary: #2563eb;
+  --color-primary-dark: #1d4ed8;
+  --color-danger: #b42318;
+  --color-income: #067647;
+  --color-expense: #b42318;
+  --color-head-bg: #f0f3f8;
+  --color-warning-bg: #fef3c7;
+  --color-warning-text: #92400e;
+  --color-danger-bg: #fee4e2;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.6;
+}
+
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+/* ---------- 头部 / 底部 ---------- */
+
+.app-header h1 {
+  margin: 8px 0 4px;
+  font-size: 1.5rem;
+}
+
+.app-subtitle {
+  margin: 0 0 16px;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.app-footer {
+  margin-top: 16px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* ---------- 布局：移动优先，宽屏两列 ---------- */
+
+.app-main {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 820px) {
+  .app-main {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #records-section,
+  #alerts-section {
+    grid-column: 1 / -1;
+  }
+}
+
+.app-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.app-section h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+}
+
+.app-section h3 {
+  margin: 16px 0 8px;
+  font-size: 1rem;
+}
+
+.section-hint {
+  margin: -4px 0 12px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+/* ---------- 表单 ---------- */
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+input[type="text"],
+select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 1rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+  border-color: var(--color-primary);
+}
+
+.error-message {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 0.85rem;
+}
+
+.error-message:empty {
+  display: none;
+}
+
+.form-message {
+  margin: 8px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.form-message:empty {
+  display: none;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- 按钮 ---------- */
+
+.btn {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--color-head-bg);
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: var(--color-primary-dark);
+}
+
+.btn-ghost {
+  background: transparent;
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 0.85rem;
+}
+
+/* ---------- 汇总看板 ---------- */
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.summary-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summary-label {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.summary-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.value-income {
+  color: var(--color-income);
+}
+
+.value-expense {
+  color: var(--color-expense);
+}
+
+.balance-negative {
+  color: var(--color-danger);
+}
+
+.category-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.category-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.category-item:last-child {
+  border-bottom: none;
+}
+
+.category-name {
+  font-weight: 600;
+}
+
+.category-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.empty-placeholder {
+  color: var(--color-text-muted);
+}
+
+/* ---------- 记录列表与筛选 ---------- */
+
+.filter-bar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+@media (min-width: 640px) {
+  .filter-bar {
+    grid-template-columns: 1fr 1fr auto;
+    align-items: end;
+  }
+
+  .filter-bar .error-message {
+    grid-column: 1 / -1;
+  }
+
+  .filter-bar .form-field {
+    margin-bottom: 0;
+  }
+}
+
+.filter-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.92rem;
+  word-break: break-word;
+}
+
+th {
+  background: var(--color-head-bg);
+  white-space: nowrap;
+}
+
+.amount-cell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.amount-income {
+  color: var(--color-income);
+}
+
+.amount-expense {
+  color: var(--color-expense);
+}
+
+.date-cell {
+  white-space: nowrap;
+}
+
+.actions-cell {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.actions-cell .btn {
+  margin-left: 4px;
+}
+
+.empty-row td {
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* ---------- 预警与阈值设置 ---------- */
+
+.alerts-box {
+  margin-bottom: 8px;
+}
+
+.alerts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.alert-item {
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 0.92rem;
+}
+
+.alert-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+.alert-danger {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+/* ---------- 窄屏微调 ---------- */
+
+@media (max-width: 480px) {
+  .container {
+    padding: 12px;
+  }
+
+  .app-section {
+    padding: 12px;
+  }
+
+  th,
+  td {
+    padding: 6px 8px;
+    font-size: 0.85rem;
+  }
+}

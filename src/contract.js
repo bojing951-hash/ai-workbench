@@ -149,10 +149,13 @@ export function inspectTestFiles(root) {
     const assignedFromProduct = [...code.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/g)]
       .filter((m) => importedNames.includes(m[2])).map((m) => m[1]);
     const referencesProduct = /(?:from|require\s*\()\s*['"](?:\.{1,2}\/)|(?:from|require\s*\()\s*['"][^'"]*\/(?:src|app|lib|components|server)\//.test(code)
+      // 允许真实测试通过 path.join(__dirname, '..', 'app.js') 等方式引用产品入口。
+      || /require\s*\(\s*path\.(?:join|resolve)\([^)]*['"][^'"]+\.(?:js|mjs|cjs)['"][^)]*\)\s*\)/.test(code)
       || /\b(fetch\s*\(|page\.goto\s*\(|request\.(get|post|put|delete)\s*\()/.test(code);
     const assertionCode = code.replace(/import\s+[^;]+?\s+from\s+['"][^'"]+['"];?/g, '').replace(/(?:const|let|var)\s+[^=]+?=\s*require\s*\(\s*['"][^'"]+['"]\s*\);?/g, '');
     const assertLines = assertionCode.split('\n').filter((line) => /\b(assert|expect|should)\b/.test(line));
-    const referencedSymbols = [...new Set([...importedNames, ...assignedFromProduct])].filter(Boolean);
+    const requireAssigned = [...code.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(/g)].map((m) => m[1]);
+    const referencedSymbols = [...new Set([...importedNames, ...assignedFromProduct, ...requireAssigned])].filter(Boolean);
     const symbolAssertion = referencedSymbols.length
       ? assertLines.some((line) => referencedSymbols.some((name) => new RegExp(`\\b${name.replace(/[^A-Za-z0-9_$]/g, '')}\\b`).test(line)))
       : assertLines.some((line) => /\b(fetch|page|request)\b/.test(line));
@@ -166,7 +169,7 @@ export function inspectTestFiles(root) {
 }
 
 /** 独立于 Agent test script 的可信测试运行器；拒绝未覆盖/未引用产品代码的测试。 */
-export function trustedProductTestCommand(root, productFiles) {
+export function trustedProductTestCommand(root, productFiles, { nodeBin = 'node' } = {}) {
   if (!productFiles.length) throw new PolicyError('TEST_PLAN_NO_PRODUCT_TESTS', '没有产品测试文件');
   const js = productFiles.filter((f) => /\.(test|spec)\.(js|mjs|cjs)$/.test(f));
   const ts = productFiles.filter((f) => /\.(test|spec)\.(ts|tsx)$/.test(f));
@@ -174,7 +177,7 @@ export function trustedProductTestCommand(root, productFiles) {
   const go = productFiles.some((f) => /_test\.go$/.test(f));
   const rs = productFiles.some((f) => /\.rs$/.test(f));
   if (ts.length && !js.length) throw new PolicyError('TEST_RUNNER_UNSUPPORTED', 'TypeScript 测试缺少可信的独立运行器（请使用可执行构建产物或 JS 测试）');
-  if (js.length) return `${JSON.stringify(process.execPath)} --test ${js.map((f) => JSON.stringify(f)).join(' ')}`;
+  if (js.length) return `${JSON.stringify(nodeBin)} --test ${js.map((f) => JSON.stringify(f)).join(' ')}`;
   if (py.length) return `python3 -m pytest -q ${py.map((f) => JSON.stringify(f)).join(' ')}`;
   if (go) return 'go test ./...';
   if (rs) return 'cargo test';
@@ -203,11 +206,11 @@ export function validateTestEvidence({ project, worktree, command, result }) {
   const plan = cfg.test_plan || {};
   const minTests = Math.max(1, Number(plan.minTests || plan.min_tests || 1));
   if (!inspected.product.length) return { ok: false, code: 'TEST_PLAN_NO_PRODUCT_TESTS', reason: '没有找到除隐藏契约测试外的产品测试文件；不能宣布真实测试通过', ...inspected };
-  if (result?.code !== 0) return { ok: false, code: 'TEST_EXIT_NONZERO', reason: `实际测试退出码 ${result.code}`, ...inspected };
+  if (result?.code !== 0) return { ok: false, code: 'TEST_EXIT_NONZERO', reason: `实际测试退出码 ${result.code}`, productTestFiles: inspected.product.map((f) => f.file), ...inspected };
   const count = parseTestCount(result.stdout || '', result.stderr || '');
-  if (!count) return { ok: false, code: 'TEST_OUTPUT_NO_COUNT', reason: '测试命令退出 0 但没有可解析的实际测试执行数量；不能仅凭 shell 退出码宣布合格', testCount: 0, ...inspected };
+  if (!count) return { ok: false, code: 'TEST_OUTPUT_NO_COUNT', reason: '测试命令退出 0 但没有可解析的实际测试执行数量；不能仅凭 shell 退出码宣布合格', testCount: 0, productTestFiles: inspected.product.map((f) => f.file), ...inspected };
   const effectiveCount = count;
-  if (effectiveCount < minTests) return { ok: false, code: 'TEST_COUNT_TOO_LOW', reason: `实际有效测试数 ${effectiveCount} < 最小要求 ${minTests}`, testCount: effectiveCount, ...inspected };
+  if (effectiveCount < minTests) return { ok: false, code: 'TEST_COUNT_TOO_LOW', reason: `实际有效测试数 ${effectiveCount} < 最小要求 ${minTests}`, testCount: effectiveCount, productTestFiles: inspected.product.map((f) => f.file), ...inspected };
   return { ok: true, testCount: effectiveCount, productTestFiles: inspected.product.map((f) => f.file), trustedTestFiles: inspected.files.filter((f) => f.includes('workbench-contract.test')), ...inspected };
 }
 

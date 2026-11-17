@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "title": "本地消费记录小站",
+  "goal": "面向个人用户的纯前端本地消费记账小站，无需后端与网络请求，数据保存在浏览器 localStorage。功能包含：收入/支出记录的增删改查（金额、日期、分类、备注校验，支持时间范围筛选）；汇总看板（总收入、总支出、结余、分类统计，金额统一两位小数）；消费预警（月度预算超支、单笔大额、结余低于下限，阈值可设置，空数据或无设置时不误报）。页面响应式，日期格式 YYYY-MM-DD，非法输入给出明确错误提示。",
+  "acceptance": [
+    "自动化测试覆盖记录增删改查、时间范围筛选、汇总统计与三类预警，且全部通过",
+    "所有金额显示与计算均为两位小数，日期统一为 YYYY-MM-DD，非法金额/日期/分类/备注输入时显示明确错误且不写入数据",
+    "空数据或未设置预算/阈值时，看板显示零值且不产生任何预警提示",
+    "页面为响应式纯本地实现，运行期无任何网络 API 请求（可通过静态检查或请求拦截验证）",
+    "静态结构测试通过：页面包含记录表单、记录列表、汇总看板、预警与阈值设置区域"
+  ],
+  "minTests": 5,
+  "requireActualTests": true,
+  "forbidTrivialCommand": true,
+  "trustedContractTest": "tests/acceptance/workbench-contract.test.mjs",
+  "testCommand": "auto-detect-by-stack",
+  "notes": [
+    "Coding Agent 必须实现产品行为并使用真实测试框架编写测试。",
+    "Workbench 只接受实际执行且包含断言的测试；退出码 0 本身不等于合格。",
+    "tests/acceptance/** 为可信隐藏契约测试，Coding Agent 不得修改。"
+  ]
+}

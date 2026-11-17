@@ -1,0 +1,17 @@
+{
+  "status": "FAILED",
+  "authorization": "CONSUMED",
+  "budgetSafety": "FAIL",
+  "realE2E": "FAIL",
+  "retryExperiment": "exp_mwkohd4momlwqc",
+  "retryStatus": "overspent",
+  "retryTokens": 2856734,
+  "retryCostCny": 25.4897253504,
+  "retryLimitTokens": 1940000,
+  "retryLimitCostCny": 22.65,
+  "finalAudit": false,
+  "finalSha": null,
+  "accepted": false,
+  "24h": "NOT_VERIFIED",
+  "newAuthorizationRequired": true
+}

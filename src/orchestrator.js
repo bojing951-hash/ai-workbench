@@ -1097,7 +1097,8 @@ export class Orchestrator {
     if (project?.config_json?.require_real_tests) {
       const trustedRel = project.config_json?.test_plan?.trustedContractTest || 'tests/acceptance/workbench-contract.test.mjs';
       const trustedLog = `${logPath}.trusted-contract.log`;
-      const trusted = await runOnce(`${JSON.stringify(process.execPath)} --test ${JSON.stringify(trustedRel)}`, trustedLog);
+      const trustedBin = this.containerTestRequested(project) ? 'node' : process.execPath;
+      const trusted = await runOnce(`${JSON.stringify(trustedBin)} --test ${JSON.stringify(trustedRel)}`, trustedLog);
       if (trusted.code !== 0) throw new PolicyError('TRUSTED_CONTRACT_TEST_FAILED', `隐藏契约测试未通过（exit=${trusted.code}）：${(trusted.stderr || trusted.stdout || '').slice(-2000)}`);
     }
     let res;
@@ -1131,11 +1132,25 @@ export class Orchestrator {
       }
     }
     if (project?.config_json?.require_real_tests) {
-      const evidence = validateTestEvidence({ project, worktree, command, result: res });
+      let evidence = validateTestEvidence({ project, worktree, command, result: res });
+      // 测试命令本身可能是不可移植的包脚本（例如 node --test tests/），但产品测试可由独立可信运行器实际执行。
+      // 仅当原命令确有测试文件、可信运行器真实通过时采用，绝不把退出码 0 当成测试证据。
+      if (!evidence.ok && evidence.code === 'TEST_EXIT_NONZERO' && Array.isArray(evidence.productTestFiles) && evidence.productTestFiles.length) {
+        try {
+          const fallbackCmd = trustedProductTestCommand(worktree, evidence.productTestFiles, { nodeBin: this.containerTestRequested(project) ? 'node' : process.execPath });
+          const fallbackRes = await runOnce(fallbackCmd, `${logPath}.trusted-fallback.log`);
+          const fallbackEvidence = validateTestEvidence({ project, worktree, command: fallbackCmd, result: fallbackRes });
+          if (fallbackEvidence.ok) {
+            res = fallbackRes; evidence = fallbackEvidence;
+            res.testCommandFallback = fallbackCmd;
+            this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'test_command_fallback', level: 'warn', message: `原测试命令失败，已使用独立可信运行器实际执行产品测试：${fallbackCmd}`, data: { original: command, fallback: fallbackCmd, count: parseTestCount(fallbackRes.stdout, fallbackRes.stderr) } });
+          }
+        } catch { /* keep original failure */ }
+      }
       res.realTestEvidence = evidence;
       if (!evidence.ok) throw new PolicyError(evidence.code || 'TEST_EVIDENCE_INVALID', `${evidence.reason}；真实测试未成立，不能进入审计/交付`);
       // 独立可信运行器：不信任 Agent 的 test script 输出；直接执行发现到的产品测试文件。
-      const trustedCommand = trustedProductTestCommand(worktree, evidence.productTestFiles || []);
+      const trustedCommand = trustedProductTestCommand(worktree, evidence.productTestFiles || [], { nodeBin: this.containerTestRequested(project) ? 'node' : process.execPath });
       const trustedLog = `${logPath}.trusted-product.log`;
       const trustedRes = await runOnce(trustedCommand, trustedLog);
       const trustedCount = parseTestCount(trustedRes.stdout || '', trustedRes.stderr || '');
@@ -1294,10 +1309,6 @@ export class Orchestrator {
         let agentReservation = null;
         try {
           const codingExperimentId = this.experimentIdForProject(project.id);
-          // GLM 的全局豁免不适用于实验：实验内 GLM Coding 仍必须原子预留并受 GLM 分项上限约束。
-          if (!agentIdentity.exempt || codingExperimentId) {
-            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: 12_000, label: 'Coding Agent', reserve: true, experimentId: codingExperimentId, experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global' });
-          }
           const remaining = this.budget().remainingTokens;
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
           const perTaskCap = projectTaskCap > 0 ? projectTaskCap : this.config.budget.maxTokensPerTask;
@@ -1311,6 +1322,12 @@ export class Orchestrator {
           const perTaskTokens = codingExperimentId
             ? Math.max(0, Math.min(perTaskCap, experimentTokenRemaining))
             : (agentIdentity.exempt ? 0 : Math.min(perTaskCap, Math.max(15_000, remaining - 25_000)));
+          // GLM 的全局豁免不适用于实验：实验内 GLM Coding 仍必须原子预留并受 GLM 分项上限约束。
+          // 预留必须覆盖整个单任务上限，而不是固定 12k；否则单次 Coding 实际用量可能冲破实验上限。
+          if (!agentIdentity.exempt || codingExperimentId) {
+            const reserveEstimate = codingExperimentId ? Math.max(12_000, perTaskTokens) : 12_000;
+            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: reserveEstimate, label: 'Coding Agent', reserve: true, experimentId: codingExperimentId, experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global' });
+          }
           const watchdog = await this.runAgentWithWatchdog({
             agentId,
             worktree,

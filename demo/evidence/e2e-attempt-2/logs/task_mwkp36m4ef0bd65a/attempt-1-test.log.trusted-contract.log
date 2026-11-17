@@ -1,0 +1,45 @@
+
+# 2026-11-17T13:01:13.008Z exec: /Applications/Docker.app/Contents/Resources/bin/docker run --rm -i --name ai-workbench.container-1794920473007-5c35c4 --label ai-workbench.container=1 --label ai-workbench.run-id=run_mwkp36m00feb7cc7 --label ai-workbench.task-id=task_mwkp36m4ef0bd65a --label ai-workbench.project-id=proj_mwkoho03f9af18df --label ai-workbench.owner=wb:38467:mwkntb4g:nr2f5anr --label ai-workbench.fence=5 --network none --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m --tmpfs /run:rw,nosuid,nodev,size=64m --pids-limit 512 --memory 2g --cpus 2 --user 501:20 --workdir /workspace -v /Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1:/workspace:rw --env-file /var/folders/9f/db_l8h8s5tz45287qy9v7ml40000gn/T/wb-container-env-dNGEnQ/env --entrypoint sh ai-workbench-runtime:2.2 -c mkdir -p "$HOME" && "node" --test "tests/acceptance/workbench-contract.test.mjs"
+# cwd: /Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1
+✔ Workbench contract files are present and non-empty (2.532084ms)
+✔ product has a real test suite separate from the trusted contract test (1.665292ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 98.643209
+
+# exit=0 signal= duration=379ms
+
+# 2026-11-17T13:04:01.814Z exec: /Applications/Docker.app/Contents/Resources/bin/docker run --rm -i --name ai-workbench.container-1794920641814-2d33f9 --label ai-workbench.container=1 --label ai-workbench.run-id=run_mwkp36m00feb7cc7 --label ai-workbench.task-id=task_mwkp36m4ef0bd65a --label ai-workbench.project-id=proj_mwkoho03f9af18df --label ai-workbench.owner=wb:43137:mwkpd6jm:u3czj0rj --label ai-workbench.fence=8 --network none --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m --tmpfs /run:rw,nosuid,nodev,size=64m --pids-limit 512 --memory 2g --cpus 2 --user 501:20 --workdir /workspace -v /Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1:/workspace:rw --env-file /var/folders/9f/db_l8h8s5tz45287qy9v7ml40000gn/T/wb-container-env-gcMFOQ/env --entrypoint sh ai-workbench-runtime:2.2 -c mkdir -p "$HOME" && "node" --test "tests/acceptance/workbench-contract.test.mjs"
+# cwd: /Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1
+✔ Workbench contract files are present and non-empty (5.318042ms)
+✔ product has a real test suite separate from the trusted contract test (3.330208ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 118.491666
+
+# exit=0 signal= duration=574ms
+
+# 2026-11-17T13:05:49.225Z exec: /Applications/Docker.app/Contents/Resources/bin/docker run --rm -i --name ai-workbench.container-1794920749225-e2a83b --label ai-workbench.container=1 --label ai-workbench.run-id=run_mwkp36m00feb7cc7 --label ai-workbench.task-id=task_mwkp36m4ef0bd65a --label ai-workbench.project-id=proj_mwkoho03f9af18df --label ai-workbench.owner=wb:43503:mwkpfofw:s8i2xisd --label ai-workbench.fence=11 --network none --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m --tmpfs /run:rw,nosuid,nodev,size=64m --pids-limit 512 --memory 2g --cpus 2 --user 501:20 --workdir /workspace -v /Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1:/workspace:rw --env-file /var/folders/9f/db_l8h8s5tz45287qy9v7ml40000gn/T/wb-container-env-4jEfil/env --entrypoint sh ai-workbench-runtime:2.2 -c mkdir -p "$HOME" && "node" --test "tests/acceptance/workbench-contract.test.mjs"
+# cwd: /Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1
+✔ Workbench contract files are present and non-empty (2.395041ms)
+✔ product has a real test suite separate from the trusted contract test (1.856583ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 65.646541
+
+# exit=0 signal= duration=356ms
