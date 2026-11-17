@@ -174,3 +174,22 @@ test('v3.4 实验：settle 实际越线后 stop/overspent 状态仍被解析，�
     await assert.rejects(o.startRun({ projectId: 'p-exp', goal: 'x', mode: 'single', tasks: [] }), /ISOLATION|Docker|隔离/);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('v3.4 隔离：执行值必须是 docker 而非 container；容器请求标志与契约门一致', async () => {
+  const { root, config, store } = mk();
+  try {
+    store.createProject({ id: 'p-docker', name: 'docker', localPath: root, defaultBranch: 'main', config: { agent_isolation: 'docker', test_isolation: 'docker' } });
+    const { EventBus } = await import('../src/bus.js');
+    const { Orchestrator } = await import('../src/orchestrator.js');
+    const o = new Orchestrator({ config, store, bus: new EventBus(), deps: {} });
+    const p = store.getProject('p-docker');
+    assert.equal(o.agentContainerRequested(p), true);
+    assert.equal(o.containerTestRequested(p), true);
+    store.createProject({ id: 'p-container', name: 'container', localPath: root, defaultBranch: 'main', config: { agent_isolation: 'container', test_isolation: 'container' } });
+    const wrong = store.getProject('p-container');
+    assert.equal(o.agentContainerRequested(wrong), false, 'container 不是执行器识别的值');
+    const exp = contract(store, { projectId: 'p-container', isolationMode: 'DOCKER_REQUIRED' });
+    await assert.rejects(o.startRun({ projectId: wrong.id, goal: 'x', mode: 'single', tasks: [] }), /EXPERIMENT_ISOLATION_BLOCKED|Docker|docker|隔离/);
+    assert.equal(store.getExperimentContract(exp.id).status, 'authorized');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});

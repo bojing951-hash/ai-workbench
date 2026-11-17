@@ -529,8 +529,8 @@ export class Orchestrator {
       const caps = containerCapabilities(this.config);
       if (!caps.testExecution || !caps.agentExecution) throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验契约要求 Docker 隔离，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}；不静默降级`, { experimentId: exp.id });
       const pcfg = project.config_json || {};
-      if (String(pcfg.agent_isolation || '').toLowerCase() !== 'container' || String(pcfg.test_isolation || '').toLowerCase() !== 'container') {
-        throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', '实验契约要求 Docker，但项目未强制 agent_isolation=container 且 test_isolation=container；不允许宿主执行', { experimentId: exp.id });
+      if (String(pcfg.agent_isolation || '').toLowerCase() !== 'docker' || String(pcfg.test_isolation || '').toLowerCase() !== 'docker') {
+        throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', '实验契约要求 Docker，但项目未强制 agent_isolation=docker 且 test_isolation=docker；不允许宿主执行', { experimentId: exp.id });
       }
       return exp;
     }

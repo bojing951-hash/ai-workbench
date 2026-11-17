@@ -19,7 +19,7 @@
 - 费用上限与提前停止线；
 - 调用次数；
 - 运行时间；
-- 隔离方案（Docker required / 其他）；
+- 隔离方案（Docker required / 其他）；Docker 方案要求项目 `agent_isolation=docker` 且 `test_isolation=docker`；
 - 停止条件；
 - 契约版本和 SHA-256 hash。
 
