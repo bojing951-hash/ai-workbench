@@ -1056,14 +1056,14 @@ export class Orchestrator {
     return env;
   }
 
-  async runProjectTest({ project, worktree, command, timeoutMs, logPath, signal = null }) {
+  async runProjectTest({ project, worktree, command, timeoutMs, logPath, signal = null, metadata = null }) {
     const runOnce = async (cmd, pathName) => {
       if (this.containerTestRequested(project)) {
         const caps = containerCapabilities(this.config);
         if (!caps.testExecution) {
           throw new PolicyError('CONTAINER_UNAVAILABLE', `项目要求容器测试，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}（fail-closed，不降级）`);
         }
-        return runTestInContainer({ config: this.config, worktree, command: cmd, env: this.containerTestEnv(project), timeoutMs, logPath: pathName, signal });
+        return runTestInContainer({ config: this.config, worktree, command: cmd, env: this.containerTestEnv(project), timeoutMs, logPath: pathName, signal, metadata });
       }
       const sandbox = tmpHomeFor(this.config, `local-${newId('run')}`, newId('task'));
       return execShell(cmd, {
@@ -1518,6 +1518,7 @@ export class Orchestrator {
           timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
           logPath: path.join(logDir, `attempt-${attemptNo}-test.log`),
           signal,
+          metadata: { runId: run.id, taskId: task.id, projectId: project.id, owner: this.instanceId, fence: this.projectLeases.get(project.id)?.fence || 0 },
         });
         if (signal.aborted) return { ok: false, reason: '运行被暂停/取消，测试检查点已保留' };
         lastTest = {
@@ -2722,6 +2723,7 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
         timeoutMs: Number(project.config_json?.test_timeout_ms || this.config.policy.testTimeoutMs),
         logPath: path.join(logDir, `verify-${Date.now()}-test.log`),
         signal: retrySignal,
+        metadata: { runId: run.id, taskId: task.id, projectId: project.id, owner: this.instanceId, fence: this.projectLeases.get(project.id)?.fence || 0 },
       });
       if (retrySignal.aborted) return { ok: false, reason: '运行被暂停/取消，验证检查点已保留' };
       const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null, setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed };

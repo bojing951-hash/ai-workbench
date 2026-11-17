@@ -193,6 +193,7 @@ export async function runTestInContainer({
       pidsLimit: cc.pidsLimit,
       envFile: tmp.file,
       mounts: Array.isArray(mounts) ? mounts : [],
+      labels: metadata ? { 'ai-workbench.run-id': metadata.runId, 'ai-workbench.task-id': metadata.taskId, 'ai-workbench.project-id': metadata.projectId, 'ai-workbench.owner': metadata.owner, 'ai-workbench.fence': metadata.fence } : {},
     });
   } catch (err) {
     cleanupEnvFile(tmp);
@@ -339,7 +340,7 @@ export async function cleanupOrphanContainers({ config, store, log = () => {} } 
     }
     if (keep) { skipped.push({ id, runId, projectId, owner }); continue; }
     try {
-      await execCapture(bin, ['rm', '-f', id], { env: safeDockerEnv(), timeoutMs: 20_000 });
+      await removeContainerVerified(bin, id);
       removed.push({ id, runId, projectId, owner });
       log(`[container-recover] 已清理孤儿容器 ${id} run=${runId || '—'} project=${projectId || '—'}`);
     } catch (err) {

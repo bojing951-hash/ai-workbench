@@ -39,6 +39,15 @@ test('v3.5 Checkpoint：tracked/untracked/staged/unstaged 全部保存并可校�
     assert.equal(fs.readFileSync(path.join(restored, 'staged.js'), 'utf8'), 'staged content\n');
     assert.equal(fs.readFileSync(path.join(restored, 'untracked.js'), 'utf8'), 'untracked content\n');
     assert.equal(fs.readFileSync(path.join(restored, 'dir', 'nested.txt'), 'utf8'), 'nested\n');
+    // listTasks 必须解析 verification_json.checkpoint，恢复路径才能读取归档。
+    store.createProject({ id: 'p-ckpt', name: 'ckpt', localPath: repo, defaultBranch: 'main' });
+    store.createRun({ id: 'r-ckpt', projectId: 'p-ckpt', planId: 'pl-ckpt', goal: 'g', mode: 'single', status: 'paused' });
+    store.createPlan({ id: 'pl-ckpt', projectId: 'p-ckpt', runId: 'r-ckpt', goal: 'g', title: 't', tasks: [] });
+    store.createTasks([{ id: 't-ckpt', projectId: 'p-ckpt', planId: 'pl-ckpt', runId: 'r-ckpt', seq: 1, title: 't', acceptance: ['a'], status: 'blocked' }]);
+    store.updateTask('t-ckpt', { worktree_path: wt, branch: 'wb/t1', session_id: 'sess-1', verification_json: { checkpoint: meta, keep_field: 42 } });
+    const parsed = store.listTasks({ runId: 'r-ckpt' })[0];
+    assert.equal(parsed.verification_json.checkpoint.archive, meta.archive);
+    assert.equal(parsed.verification_json.keep_field, 42);
     // 篡改归档 -> 必须拒绝，不得静默恢复
     const target = path.join(meta.archive, 'untracked.js'); fs.writeFileSync(target, 'tampered\n');
     assert.throws(() => o.verifyAndRestoreCheckpoint(meta, path.join(root, 'restored2')), /CHECKPOINT_CORRUPT|哈希/);

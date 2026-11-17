@@ -910,7 +910,7 @@ export class Store {
       params.push(status);
     }
     const sql = `SELECT * FROM tasks ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY seq ASC`;
-    return this.db.prepare(sql).all(...params).map((r) => parseRow(r, { acceptance_json: [], result_json: {} }));
+    return this.db.prepare(sql).all(...params).map((r) => parseRow(r, { acceptance_json: [], result_json: {}, verification_json: {} }));
   }
 
   updateTask(id, patch) {
