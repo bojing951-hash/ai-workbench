@@ -74,7 +74,7 @@
 
 ## 回归
 
-- 本地全量（Docker 可用）：见 `demo/evidence/e2e-safety/tests.log`；目标 331/331/0。
+- 本地全量（Docker 可用）：见 `demo/evidence/e2e-safety/tests.log`；目标 333/333/0。
 - Docker 容器测试：通过。
 - 独立审查：待审。
 - 新真实 E2E：**AUTHORIZATION_REQUIRED**（旧实验已 FAILED，不能复用）。

@@ -46,3 +46,25 @@ test('v3.5 启动恢复清理无有效执行者的 Workbench 容器，保留未�
     h.store.close(); fs.rmSync(h.root, { recursive: true, force: true });
   }
 });
+
+test('v3.5 启动恢复不得清理仍有有效 owner+fence 的活执行者容器', { timeout: 60_000, skip: !containerCapabilities(getConfig()).testExecution }, async () => {
+  const h = mk();
+  const cfg = getConfig();
+  const cc = { dockerBin: cfg.isolation.container.dockerBin, image: cfg.isolation.container.image };
+  const owner = `wb:${process.pid}:live`;
+  h.store.createProject({ id: 'p-live', name: 'live', localPath: h.root, defaultBranch: 'main' });
+  h.store.createRun({ id: 'r-live', projectId: 'p-live', planId: 'pl-live', goal: 'g', mode: 'single', status: 'running' });
+  const lease = h.store.acquireProjectLeaseFenced('p-live', owner, 60 * 60 * 1000);
+  let cid;
+  try {
+    const run = await execCapture(cc.dockerBin, ['run', '-d', '--label', 'ai-workbench.container=1', '--label', 'ai-workbench.run-id=r-live', '--label', 'ai-workbench.project-id=p-live', '--label', `ai-workbench.owner=${owner}`, '--label', `ai-workbench.fence=${lease.fence}`, '--name', `wb-v35-live-${Date.now()}`, cc.image, 'sleep', '60'], { timeoutMs: 30_000 });
+    assert.equal(run.code, 0, run.stderr); cid = run.stdout.trim();
+    const res = await cleanupOrphanContainers({ config: h.config, store: h.store });
+    assert.ok(res.skipped.some((x) => cid.startsWith(x.id)), '活执行者的容器必须被保留');
+    const check = await execCapture(cc.dockerBin, ['inspect', cid], { timeoutMs: 10_000 });
+    assert.equal(check.code, 0, '活容器不得被删除');
+  } finally {
+    if (cid) { try { await execCapture(cc.dockerBin, ['rm', '-f', cid], { timeoutMs: 10_000 }); } catch { /* ignore */ } }
+    h.store.close(); fs.rmSync(h.root, { recursive: true, force: true });
+  }
+});

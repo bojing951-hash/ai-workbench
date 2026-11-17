@@ -44,3 +44,28 @@ test('v3.5 基础设施失败：Agent stalled -> BLOCKED/暂停，不生成产�
     assert.match(tasks[0].blocked_reason, /基础设施|infrastructure/);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('v3.5 基础设施失败：Loop 的 maybeAutoRepair 不得生成产品修复任务', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-loop-infra-'));
+  const store = openStore(path.join(root, 'test.db'));
+  try {
+    store.createProject({ id: 'p-infra-loop', name: 'infra', localPath: root, defaultBranch: 'main' });
+    store.createRun({ id: 'r-infra-loop', projectId: 'p-infra-loop', planId: 'pl-infra-loop', goal: 'g', mode: 'single', status: 'paused', stopReason: '基础设施/预算中断（infrastructure_timeout）：Claude Code 执行超时' });
+    store.createPlan({ id: 'pl-infra-loop', projectId: 'p-infra-loop', runId: 'r-infra-loop', goal: 'g', title: 't', tasks: [] });
+    store.createTasks([{ id: 't-infra-loop', projectId: 'p-infra-loop', planId: 'pl-infra-loop', runId: 'r-infra-loop', seq: 1, title: '实现', acceptance: ['A'], status: 'blocked', blocked_reason: '基础设施/预算中断（infrastructure_timeout）：Claude Code 执行超时' }]);
+    store.createLoop({ id: 'l-infra-loop', projectId: 'p-infra-loop', goal: 'g', mode: 'queue', status: 'running', maxRounds: 3 });
+    const { LoopManager } = await import('../src/loop.js');
+    const { EventBus } = await import('../src/bus.js');
+    let repaired = 0;
+    const lm = new LoopManager({ config: hcfg(root), store, bus: new EventBus(), orchestrator: { prepareAutoRepair: async () => { repaired += 1; return { ok: true }; }, auditResourcePreflight: () => {}, ensureControlLease: () => {}, releaseProjectLease: () => {} } });
+    const loop = store.getLoop('l-infra-loop'); const run = store.getRun('r-infra-loop');
+    const result = await lm.maybeAutoRepair(loop, store.getProject('p-infra-loop'), run);
+    assert.equal(result, false);
+    assert.equal(repaired, 0, '基础设施失败不得调用 prepareAutoRepair');
+    assert.equal(store.getLoop('l-infra-loop').queue_json.length, 0);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+function hcfg(root) {
+  return getConfig({ root, paths: { root, dataDir: path.join(root, 'data'), dbPath: path.join(root, 'test.db'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(root, 'worktrees'), artifactsDir: path.join(root, 'artifacts'), logsDir: path.join(root, 'logs'), agentsDir: path.join(root, 'agents'), dshHome: path.join(root, 'agents/dsh'), claudeHome: path.join(root, 'agents/claude') } });
+}

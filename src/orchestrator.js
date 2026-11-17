@@ -1307,7 +1307,7 @@ export class Orchestrator {
               prompt,
               cwd: worktree,
               sessionId,
-              timeoutMs: agentId === 'claude' ? this.config.agents.claude.timeoutMs : this.config.agents.dsh.timeoutMs,
+              timeoutMs: agentId === 'claude' ? Math.max(Number(this.config.agents.claude.timeoutMs || 0), Number(this.config.agents.containerStallTimeoutMs || 0) + 60_000) : this.config.agents.dsh.timeoutMs,
               maxTokens: perTaskTokens,
               identity: agentIdentity,
               container: agentContainer,

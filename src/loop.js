@@ -27,6 +27,8 @@ function lastAttemptFamily(loop, store) {
 
 function classifyLoopFailure(evidence = []) {
   const text = evidence.join(' ');
+  // 基础设施失败必须优先于 timeout/audit/test 关键词，绝不能进入产品 Auto Repair。
+  if (/基础设施|infrastructure_|CONTAINER_UNAVAILABLE|lease|租约|Docker|docker|ECONN|ETIMEDOUT|SIGKILL|权限策略|permission/i.test(text)) return 'infrastructure';
   if (/没有可用的 Coding Agent|Coding Agent.*配置|AGENT_UNAVAILABLE|没有可用.*Agent/i.test(text)) return 'agent_unavailable';
   if (/exit=127|command not found|not found|npm ci|依赖|node_modules/i.test(text)) return 'dependency_or_environment';
   if (/超时|timeout|max_turns|max turns|轮次/i.test(text)) return 'agent_or_audit_timeout';
@@ -641,7 +643,7 @@ export class LoopManager {
     if (!failureEvidence.length) return false;
     // 只有可归因到代码/测试/审计/环境失败才自动修；纯权限/预算等策略阻塞不生成产品修复任务。
     const failureClass = classifyLoopFailure(failureEvidence);
-    if (failureClass === 'unknown' || failureClass === 'agent_unavailable') {
+    if (['unknown', 'agent_unavailable', 'infrastructure'].includes(failureClass)) {
       this.emit(loop, 'auto_repair_skipped', '失败没有可执行的产品/测试/审计/环境证据（可能是授权/预算策略阻塞），保留 BLOCKED，不生成修复任务', 'warn', { runId: run.id, taskId: task.id });
       return false;
     }

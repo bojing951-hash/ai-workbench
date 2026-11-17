@@ -123,7 +123,7 @@ function summarize(store, project, tasks, attempts, audits, events) {
   const failureClasses = {};
   for (const a of attempts) if (a.failure_class) failureClasses[a.failure_class] = (failureClasses[a.failure_class] || 0) + 1;
   const agentFailed = events.filter((e) => e.type === 'agent_failed').length;
-  const stalled = (failureClasses.stalled || 0) + (failureClasses.agent_timeout || 0) + (failureClasses.agent_aborted || 0);
+  const stalled = (failureClasses.stalled || 0) + (failureClasses.agent_timeout || 0) + (failureClasses.agent_aborted || 0) + (failureClasses.infrastructure_stalled || 0) + (failureClasses.infrastructure_timeout || 0) + (failureClasses.infrastructure_aborted || 0);
   const starts = events.map((e) => Date.parse(e.created_at)).filter(Number.isFinite);
   const fallbackStart = project.created_at || new Date().toISOString();
   const fallbackEnd = project.updated_at || fallbackStart;

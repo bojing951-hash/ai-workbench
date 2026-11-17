@@ -304,7 +304,7 @@ export async function cleanupOrphanContainers({ config, store, log = () => {} } 
   if (!dockerAvailable({ dockerBin: bin }).available) return { checked: 0, removed: [], skipped: [] };
   let out = '';
   try {
-    const res = await execCapture(bin, ['ps', '-a', '--filter', `label=${RUN_LABEL}=1`, '--format', '{{.ID}}	{{.Label "ai-workbench.run-id"}}	{{.Label "ai-workbench.project-id"}}	{{.Label "ai-workbench.owner"}}'], { env: safeDockerEnv(), timeoutMs: 15_000 });
+    const res = await execCapture(bin, ['ps', '-a', '--filter', `label=${RUN_LABEL}=1`, '--format', '{{.ID}}	{{.Label "ai-workbench.run-id"}}	{{.Label "ai-workbench.project-id"}}	{{.Label "ai-workbench.owner"}}	{{.Label "ai-workbench.fence"}}'], { env: safeDockerEnv(), timeoutMs: 15_000 });
     if (res.code !== 0) return { checked: 0, removed: [], skipped: [], error: (res.stderr || '').slice(0, 300) };
     out = res.stdout;
     if (!String(out || '').trim()) {
