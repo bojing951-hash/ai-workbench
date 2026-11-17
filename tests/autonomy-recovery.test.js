@@ -30,9 +30,9 @@ test('Agent 失败分类：stalled/timeout/budget/no-output/infrastructure', () 
   const config = tempConfig(); const store = openStore(config.paths.dbPath);
   try {
     const o = new Orchestrator({ config, store, bus: new EventBus(), deps: { runAgent: async () => ({}), chooseAgent: async () => 'dsh', runAudit: async () => ({}), checkAgents: async () => [] } });
-    assert.equal(o.classifyAgentFailure({ stalled: true }), 'stalled');
-    assert.equal(o.classifyAgentFailure({ timedOut: true }), 'agent_timeout');
-    assert.equal(o.classifyAgentFailure({ aborted: true }), 'agent_aborted');
+    assert.equal(o.classifyAgentFailure({ stalled: true }), 'infrastructure_stalled');
+    assert.equal(o.classifyAgentFailure({ timedOut: true }), 'infrastructure_timeout');
+    assert.equal(o.classifyAgentFailure({ aborted: true }), 'infrastructure_aborted');
     assert.equal(o.classifyAgentFailure({ error: 'Agent 超出单任务 token 预算' }), 'budget');
     assert.equal(o.classifyAgentFailure({ error: '未返回可解析的 JSON 结果' }), 'agent_no_output');
     assert.equal(o.classifyAgentFailure({ error: '权限策略拒绝执行' }), 'infrastructure');

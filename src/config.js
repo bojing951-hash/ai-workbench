@@ -98,6 +98,7 @@ export function buildConfig(overrides = {}) {
       // 自主恢复：主 Agent 失败/无进展时按顺序切换已配置且可用的 Agent
       fallback: (env.AGENT_FALLBACK || 'dsh,claude').split(',').map((x) => x.trim()).filter(Boolean),
       stallTimeoutMs: int(env.AGENT_STALL_TIMEOUT_MS, 180_000),
+      containerStallTimeoutMs: int(env.CONTAINER_AGENT_STALL_TIMEOUT_MS, 2_700_000),
       dsh: {
         bin: str(env.DSH_BIN, defaultDshBin()),
         provider: str(env.DSH_PROVIDER, ''),

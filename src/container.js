@@ -78,6 +78,7 @@ export function buildDockerArgs({
   stdin = false,
   entrypoint = 'sh',
   commandArgs = null,
+  labels = {},
 } = {}) {
   if (!worktree || !path.isAbsolute(worktree)) throw new PolicyError('CONTAINER_WORKTREE_INVALID', '容器执行需要绝对 worktree 路径');
   const mountTargets = [
@@ -95,7 +96,8 @@ export function buildDockerArgs({
   const dockerArgs = [
     'run', '--rm', '-i',
     '--name', name || `${RUN_LABEL}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    '--label', RUN_LABEL,
+    '--label', `${RUN_LABEL}=1`,
+    ...Object.entries(labels || {}).flatMap(([k, v]) => (v === undefined || v === null || v === '' ? [] : ['--label', `${k}=${String(v).replace(/[\r\n]/g, ' ').slice(0, 256)}`])),
     '--network', network,
     '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges:true',
@@ -160,6 +162,7 @@ export async function runTestInContainer({
   signal = null,
   image = '',
   mounts = [],
+  metadata = null,
 } = {}) {
   const cc = containerConfig(config);
   const bin = cc.dockerBin;
@@ -239,6 +242,7 @@ export async function runAgentInContainer({
   stdin = null,
   image = '',
   network = '',
+  metadata = null,
 } = {}) {
   const cc = containerConfig(config);
   const bin = cc.dockerBin;
@@ -253,6 +257,7 @@ export async function runAgentInContainer({
       mounts: [{ source: agentHome, target: '/config', mode: 'rw' }],
       network: network || cc.networkAgent,
       memory: cc.memory, cpus: cc.cpus, pidsLimit: cc.pidsLimit, envFile: tmp.file,
+      labels: metadata ? { 'ai-workbench.run-id': metadata.runId, 'ai-workbench.task-id': metadata.taskId, 'ai-workbench.project-id': metadata.projectId, 'ai-workbench.owner': metadata.owner, 'ai-workbench.fence': metadata.fence } : {},
     });
   } catch (err) { cleanupEnvFile(tmp); throw err; }
   const name = args[args.indexOf('--name') + 1];
@@ -286,4 +291,48 @@ export function containerCapabilities(config) {
     security: ['--network none(test)', '--cap-drop ALL', 'no-new-privileges', 'read-only rootfs', 'tmpfs /tmp /run', 'minimal worktree mount', 'no docker.sock', 'non-root host uid', 'pids/memory/cpu limits', '--rm + timeout cleanup'],
     note: docker.available && image.available ? 'Docker 容器执行可用（测试/Claude Agent）' : 'Docker 或运行时镜像不可用：容器执行 BLOCKED，不得降级',
   };
+}
+
+
+/**
+ * 启动恢复：只清理确认属于 Workbench 且失去有效执行权的容器。
+ * 标签由 buildDockerArgs 注入；无标签旧容器视为历史孤儿（Workbench label 仍存在）。
+ */
+export async function cleanupOrphanContainers({ config, store, log = () => {} } = {}) {
+  const cc = containerConfig(config);
+  const bin = cc.dockerBin;
+  if (!dockerAvailable({ dockerBin: bin }).available) return { checked: 0, removed: [], skipped: [] };
+  let out = '';
+  try {
+    const res = await execCapture(bin, ['ps', '-a', '--filter', `label=${RUN_LABEL}=1`, '--format', '{{.ID}}	{{.Label "ai-workbench.run-id"}}	{{.Label "ai-workbench.project-id"}}	{{.Label "ai-workbench.owner"}}'], { env: safeDockerEnv(), timeoutMs: 15_000 });
+    if (res.code !== 0) return { checked: 0, removed: [], skipped: [], error: (res.stderr || '').slice(0, 300) };
+    out = res.stdout;
+    if (!String(out || '').trim()) {
+      const byName = await execCapture(bin, ['ps', '-a', '--filter', `name=${RUN_LABEL}`, '--format', '{{.ID}}\t{{.Label "ai-workbench.run-id"}}\t{{.Label "ai-workbench.project-id"}}\t{{.Label "ai-workbench.owner"}}\t{{.Label "ai-workbench.fence"}}'], { env: safeDockerEnv(), timeoutMs: 15_000 });
+      out = byName.stdout;
+    }
+  } catch (err) {
+    return { checked: 0, removed: [], skipped: [], error: String(err?.message || err) };
+  }
+  const removed = []; const skipped = [];
+  for (const raw of String(out || '').split('\n').map((x) => x.trim()).filter(Boolean)) {
+    const [id, runId, projectId, owner, fence] = raw.split('\t');
+    if (!id) continue;
+    let keep = false;
+    if (runId && projectId) {
+      const run = store?.getRun?.(runId);
+      const lease = store?.getProjectLease?.(projectId);
+      const ownerAlive = (() => { const m = String(owner || '').match(/wb:(\d+):/); if (!m) return false; try { process.kill(Number(m[1]), 0); return true; } catch (err) { return err.code !== 'ESRCH'; } })();
+      if (run && ['running', 'queued'].includes(run.status) && lease?.write_owner === owner && Number(lease.lease_fence || 0) === Number(fence || 0) && lease.lease_expires_at > new Date().toISOString() && ownerAlive) keep = true;
+    }
+    if (keep) { skipped.push({ id, runId, projectId, owner }); continue; }
+    try {
+      await execCapture(bin, ['rm', '-f', id], { env: safeDockerEnv(), timeoutMs: 20_000 });
+      removed.push({ id, runId, projectId, owner });
+      log(`[container-recover] 已清理孤儿容器 ${id} run=${runId || '—'} project=${projectId || '—'}`);
+    } catch (err) {
+      skipped.push({ id, runId, projectId, owner, error: String(err?.message || err) });
+    }
+  }
+  return { checked: String(out || '').split('\n').filter(Boolean).length, removed, skipped };
 }

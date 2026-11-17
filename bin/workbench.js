@@ -29,7 +29,7 @@ import { Orchestrator } from '../src/orchestrator.js';
 import { startServer } from '../src/server.js';
 import { LoopManager } from '../src/loop.js';
 import { detectIsolationCapabilities } from '../src/isolation.js';
-import { containerCapabilities } from '../src/container.js';
+import { containerCapabilities, cleanupOrphanContainers } from '../src/container.js';
 import { checkAllAgents } from '../src/agents/index.js';
 import { auditProviderStatus } from '../src/auditors/index.js';
 import { formatCny, formatTokens } from '../src/pricing.js';
@@ -330,6 +330,9 @@ async function main() {
         port: args.port ? Number(args.port) : config.server.port,
       },
     };
+    const orphanContainers = await cleanupOrphanContainers({ config: serveConfig, store, log: console.log });
+    if (orphanContainers.removed.length) console.log(`[recover] 已清理 ${orphanContainers.removed.length} 个 Workbench 孤儿容器`);
+    if (orphanContainers.skipped.length) console.log(`[recover] ${orphanContainers.skipped.length} 个容器仍由有效执行者持有，已保留`);
     const recovered = orchestrator.recoverOrphans();
     const recoveredLoops = loops.recover();
     if (recoveredLoops.recovered?.length) console.log(`[recover] ${recoveredLoops.recovered.length} 个研发循环已标记中断，可在界面恢复`);

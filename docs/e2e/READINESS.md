@@ -7,7 +7,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 
 ## 结论
 
-**REAL_E2E_FAILED**
+**REAL_E2E_FAILED / RELIABILITY_REMEDIATED_NOT_RETRIED**
 
 用户已于 2026-11-17 明确批准预算并授权安装 Docker。真实 E2E 已实际执行，但 Coding Agent 在 15 分钟无进展 watchdog 边界被中止，自动修复耗尽，产品未达到最终审计/验收。不是 PASS，也不是 BLOCKED；是真实的 FAILED。
 
@@ -24,7 +24,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 | Docker | 29.9.3，镜像 `ai-workbench-runtime:2.2` 可用 |
 | 容器测试 | `tests/container.test.js` 5/5 PASS（含真实容器执行） |
 | 全局预算 | max 3,620,000；remaining 121,011.8；费用 remaining ¥24.7544 |
-| 工程回归 | **323 tests / 323 pass / 0 skipped / 0 fail**（Docker 可用） |
+| 工程回归 | **331 tests / 331 pass / 0 skipped / 0 fail**（Docker 可用） |
 
 ## 真实 E2E 结果
 

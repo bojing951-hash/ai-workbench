@@ -1,0 +1,20 @@
+--- demo/evidence/e2e-attempt/product/js/store.js	2026-11-17 12:46:38
++++ demo/evidence/product-regression/product/js/store.js	2026-11-17 14:01:52
+@@ -292,6 +292,7 @@
+   function evaluateAlerts(records, range, settings) {
+     var options = settings || {};
+     var summary = computeSummary(records, range);
++    var inRange = filterRecords(records, range);
+     var alerts = [];
+ 
+     if (options.monthlyBudget > 0 && summary.expense > options.monthlyBudget) {
+@@ -317,7 +318,8 @@
+       }
+     }
+ 
+-    if (options.balanceFloor > 0 && summary.balance < options.balanceFloor) {
++    // 本期没有任何记录时不触发结余预警（空数据不等于“结余低于下限”）。
++    if (options.balanceFloor > 0 && inRange.length > 0 && summary.balance < options.balanceFloor) {
+       alerts.push({
+         type: 'floor',
+         message: '结余低于下限：本期结余 ' + formatMoney(summary.balance)

@@ -107,6 +107,7 @@ export async function run(ctx) {
       config, worktree: cwd, agentHome: cc.home, cliArgs: args, env: containerEnv,
       timeoutMs: timeoutMs || cc.timeoutMs, stdin: prompt, logPath, signal,
       network: ctx.container.network || '',
+      metadata: ctx.container.metadata || null,
     });
   } else {
     res = await execCapture(cc.bin, args, {

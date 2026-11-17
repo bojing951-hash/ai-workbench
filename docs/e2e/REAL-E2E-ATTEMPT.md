@@ -47,3 +47,14 @@
 这是**真实 E2E FAILED**。失败原因已定位为 coding watchdog 窗口过短（15 分钟）及恢复期间的租约/容器并发清理问题，不是伪造的 PASS。
 
 **再次真实 E2E 需要新的明确用户授权**（新的 experiment contract；不能复用已 failed 的契约）。
+
+## 失败后整改（2026-11-17）
+
+已针对本次失败完成：
+- Agent 活动/内容进度指纹；
+- 容器 Agent 有界 45 分钟 watchdog；
+- 基础设施失败与产品修复分离；
+- Docker 容器 labels、启动孤儿回收、owner/fence 校验；
+- 失败产品隔离副本修复（25/25 tests）。
+
+**没有启动新的付费 E2E。** 旧 experiment 仍为 failed；新真实 E2E 需要新的明确授权。

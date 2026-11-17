@@ -14,6 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { nowIso, newId, ensureDir, truncate, tailLines, safeFilename, parseList } from './util.js';
 import {
   PolicyError, RunStatus, TaskStatus, assertBudgetAllowed, assertProjectBudget, assertRunWallClock,
@@ -915,13 +916,17 @@ export class Orchestrator {
   // ============================================================
   classifyAgentFailure(agentResult = {}) {
     const err = String(agentResult.error || '');
-    if (agentResult.stalled) return 'stalled';
-    if (agentResult.timedOut) return 'agent_timeout';
-    if (agentResult.aborted) return 'agent_aborted';
+    if (agentResult.stalled) return 'infrastructure_stalled';
+    if (agentResult.timedOut) return 'infrastructure_timeout';
+    if (agentResult.aborted) return 'infrastructure_aborted';
     if (/token 预算|超出单任务 token|budget/i.test(err)) return 'budget';
+    if (/CONTAINER|docker|socket|ENOENT|ECONN|ETIMEDOUT|EAI_AGAIN|network|SIGKILL|lease|租约|权限|permission|ISOLATION/i.test(err)) return 'infrastructure';
     if (/未返回可解析|未正常完成|连续未产生|no changes|结构化结果/i.test(err)) return 'agent_no_output';
-    if (/权限|permission|ISOLATION|CONTAINER_UNAVAILABLE/i.test(err)) return 'infrastructure';
     return 'agent_error';
+  }
+
+  isInfrastructureFailure(failureClass, agentResult = {}) {
+    return String(failureClass).startsWith('infrastructure') || /CONTAINER|docker|socket|ECONN|ETIMEDOUT|network|SIGKILL|lease|租约|permission|ISOLATION/i.test(String(agentResult.error || ''));
   }
 
   async resolveAgentCandidates(project, task) {
@@ -946,15 +951,33 @@ export class Orchestrator {
 
   async worktreeProgressSignal(worktree) {
     try {
+      const files = [];
+      const walk = (dir, rel = '') => {
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const ent of entries) {
+          if (files.length >= 2000) return;
+          if (ent.name === '.git' || ent.name === 'node_modules' || ent.name === '.workbench') continue;
+          const abs = path.join(dir, ent.name);
+          const r = rel ? `${rel}/${ent.name}` : ent.name;
+          if (ent.isDirectory()) { walk(abs, r); continue; }
+          if (!ent.isFile()) continue;
+          let st;
+          try { st = fs.statSync(abs); } catch { continue; }
+          // 未跟踪文件同样进入指纹；内容变化即使 Git diff 行数不变也会被发现。
+          let digest = '';
+          if (st.size <= 2 * 1024 * 1024) {
+            try { digest = crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex').slice(0, 24); } catch { /* ignore */ }
+          }
+          files.push(`${r}	${st.size}	${Math.trunc(st.mtimeMs)}	${digest}`);
+        }
+      };
+      walk(worktree);
+      files.sort();
+      const treeHash = crypto.createHash('sha256').update(files.join(String.fromCharCode(10))).digest('hex').slice(0, 32);
       const status = await gitops.statusPorcelain(worktree);
-      const numstat = await gitops.git(worktree, ['diff', '--numstat'], { allowFail: true });
       const changed = String(status || '').split('\n').filter(Boolean).length;
-      let lines = 0;
-      for (const line of String(numstat?.stdout || '').split('\n').filter(Boolean)) {
-        const parts = line.split('\t');
-        lines += Number(parts[0] || 0) + Number(parts[1] || 0);
-      }
-      return `${changed}:${lines}`;
+      return `${changed}:${files.length}:${treeHash}`;
     } catch {
       return 'unknown';
     }
@@ -971,12 +994,14 @@ export class Orchestrator {
       if (parentSignal.aborted) onParentAbort();
       else parentSignal.addEventListener('abort', onParentAbort, { once: true });
     }
-    const threshold = Math.max(1_000, Number(stallTimeoutMs || this.config.agents.stallTimeoutMs || 180_000));
+    const configuredThreshold = Math.max(1_000, Number(stallTimeoutMs || this.config.agents.stallTimeoutMs || 180_000));
+    // 容器内 Claude Code 可能长时间等待模型响应且不产生 Git diff；使用有界容器阈值，不无限延长。
+    const threshold = ctx.container ? Math.max(configuredThreshold, Number(this.config.agents.containerStallTimeoutMs || 2_700_000)) : configuredThreshold;
     let lastSignal = await this.worktreeProgressSignal(worktree);
     let lastProgressAt = Date.now();
     let eventCount = 0;
     let stalled = false;
-    const intervalMs = Math.max(5_000, Math.floor(threshold / 4));
+    const intervalMs = Math.max(5_000, Math.min(30_000, Math.floor(threshold / 10)));
     const timer = setInterval(async () => {
       if (local.signal.aborted) return;
       const current = await this.worktreeProgressSignal(worktree);
@@ -1247,7 +1272,7 @@ export class Orchestrator {
           if (!caps.agentExecution) {
             return this.failTask(run, task, `项目要求容器 Agent，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}（fail-closed，不降级）`, 'blocked');
           }
-          agentContainer = { network: project.config_json?.container_agent_network || this.config.isolation?.container?.networkAgent || 'bridge' };
+          agentContainer = { network: project.config_json?.container_agent_network || this.config.isolation?.container?.networkAgent || 'bridge', metadata: { runId: run.id, taskId: task.id, projectId: project.id, owner: this.instanceId, fence: this.projectLeases.get(project.id)?.fence || 0 } };
         }
         const release = await this.agentSemaphore.acquire();
         let agentResult;
@@ -1350,7 +1375,22 @@ export class Orchestrator {
 
         if (!agentResult.ok) {
           const failureClass = this.classifyAgentFailure(agentResult);
-          const canSwitch = ['stalled', 'agent_timeout', 'agent_aborted', 'agent_no_output', 'infrastructure', 'agent_error', 'budget'].includes(failureClass);
+          const infra = this.isInfrastructureFailure(failureClass, agentResult);
+          if (infra || failureClass === 'budget') {
+            const reason = `基础设施/预算中断（${failureClass}）：${agentResult.error || 'Agent 未完成'}`;
+            try {
+              this.writeArtifact({
+                runId: run.id, taskId: task.id, kind: 'agent-checkpoint',
+                filename: `attempt-${attemptNo}-${agentId}-abort.json`,
+                content: { failureClass, error: agentResult.error || '', sessionId: agentResult.sessionId || sessionId, usage, durationMs: agentResult.durationMs || 0, worktree, logPath: agentResult.logPath || '', stalled: !!agentResult.stalled, at: nowIso() },
+              });
+            } catch { /* evidence best effort */ }
+            this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason, session_id: agentResult.sessionId || sessionId });
+            this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason, current_task_id: task.id });
+            this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'infrastructure_failure', level: 'error', message: reason, data: { failureClass, sessionId: agentResult.sessionId || sessionId, worktree, logPath: agentResult.logPath || '' } });
+            return { ok: false, reason, infrastructure: true };
+          }
+          const canSwitch = ['agent_no_output', 'agent_error'].includes(failureClass);
           if (canSwitch) {
             const previous = agentId;
             let nextAgent = '';
