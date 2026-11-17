@@ -74,8 +74,25 @@
 
 ## 回归
 
-- 本地全量（Docker 可用）：见 `demo/evidence/e2e-safety/tests.log`；目标 337/337/0。
+- 本地全量（Docker 可用）：见 `demo/evidence/e2e-safety/tests.log`；目标 338/338/0。
 - Docker 容器测试：通过。
 - 独立审查：待审。
 - 新真实 E2E：**AUTHORIZATION_REQUIRED**（旧实验已 FAILED，不能复用）。
 - 24H：**NOT_VERIFIED**。
+
+## 真实 Workbench Server SIGKILL（v3.5）
+
+新增 `tests/v35-workbench-server-sigkill.test.js`：
+
+- 真实启动 `bin/workbench.js serve`；
+- 独立 SQLite、真实 Git 仓库、真实 Worktree；
+- 零付费 `custom` Coding Agent 写入真实未提交代码；
+- 对 Coding 中的 Workbench Server 做真实进程组 SIGKILL；
+- 重启 Server，启动清理、`recoverOrphans`、`recoverSupervisedRuns`；
+- 自动恢复原 Run/Task/Worktree/Session；
+- 原 Agent 继续编码；
+- 真实测试、mock 独立审计（零厂商费用）、Git Commit；
+- 最终 `awaiting_acceptance`；
+- 不人工 Resume、不重复 Run/Task、不重复付费。
+
+结果：**PASS**（1/1）。Testing/Auditing/Committing 阶段故障注入仍为 UNKNOWN。
