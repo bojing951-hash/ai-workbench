@@ -1205,7 +1205,7 @@ export class Store {
       if (!Number.isFinite(Number(input[k])) || Number(input[k]) <= 0) throw new Error(`EXPERIMENT_LIMIT_INVALID:${k}`);
     }
     for (const k of ['glmTokenLimit','glmCostLimitCny','dshTokenLimit','dshCostLimitCny']) {
-      if (Number(input[k] || 0) < 0) throw new Error(`EXPERIMENT_LIMIT_INVALID:${k}`);
+      if (!Number.isFinite(Number(input[k] ?? 0)) || Number(input[k] ?? 0) < 0) throw new Error(`EXPERIMENT_LIMIT_INVALID:${k}`);
     }
     if (!Number.isFinite(Date.parse(String(input.deadlineAt)))) throw new Error('EXPERIMENT_DEADLINE_INVALID');
     const id = input.id || `exp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;

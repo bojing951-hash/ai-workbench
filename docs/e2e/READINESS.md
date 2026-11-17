@@ -21,7 +21,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 | Active project lease | 0 |
 | Supervisor | circuitOpen=false，43 次历史重启/崩溃，44 次恢复，最近心跳正常 |
 | 实验预算契约 | 0 个 active contract；代码已支持硬限制 |
-| 硬限制测试 | 9/9 PASS；完整套件 317/313/4/0 |
+| 硬限制测试 | 11/11 PASS；完整套件 317/313/4/0 |
 | 历史 E2E | 存在 1 个 **paused** 旧项目（本地消费管理），未继续、不得复用其成果 |
 
 ## Coding / Planner / Audit
