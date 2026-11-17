@@ -1153,6 +1153,7 @@ export class Orchestrator {
     const runShort = run.id.slice(-6);
     const planBranch = `wb/plan-${runShort}`;
     const maxAttempts = Number(task.max_attempts || this.config.budget.maxAttempts);
+    const maxInfraRecoveries = Math.max(0, Math.min(3, Number(project.config_json?.infra_recovery_max ?? 2)));
     const protectedPaths = protectPathsForProject(project, this.config);
     const sandboxHome = tmpHomeFor(this.config, run.id, task.id);
     let sessionId = task.session_id || '';
@@ -1208,10 +1209,16 @@ export class Orchestrator {
       }
       const base = await this.ensurePlanBranch(project, planBranch);
       const branch = `wb/r${runShort}/t${task.seq}`;
-      await gitops.git(project.local_path, ['branch', '-D', branch], { allowFail: true });
-      const worktree = path.join(this.config.paths.worktreesDir, project.id, run.id, `task-${task.seq}`);
-      await gitops.createWorktree(project.local_path, worktree, branch, base);
-      const baseCommit = await gitops.currentHead(worktree);
+      let worktree = task.worktree_path || path.join(this.config.paths.worktreesDir, project.id, run.id, `task-${task.seq}`);
+      let baseCommit = task.base_commit || '';
+      const reusable = (() => { try { return fs.existsSync(worktree) && fs.existsSync(path.join(worktree, '.git')); } catch { return false; } })();
+      if (!reusable) {
+        await gitops.git(project.local_path, ['branch', '-D', branch], { allowFail: true });
+        await gitops.createWorktree(project.local_path, worktree, branch, base);
+        baseCommit = await gitops.currentHead(worktree);
+      } else if (!baseCommit) {
+        baseCommit = await gitops.currentHead(worktree);
+      }
       this.store.updateTask(task.id, { status: TaskStatus.PREPARING, worktree_path: worktree, branch, base_commit: baseCommit });
       this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'worktree_ready', message: `工作副本就绪：${branch}`, data: { worktree, baseCommit, planBranch } });
 
@@ -1221,7 +1228,9 @@ export class Orchestrator {
       }
       let candidateIndex = 0;
       let agentSwitches = 0;
-      for (let attemptNo = 1; attemptNo <= maxAttempts; attemptNo++) {
+      let productAttempts = 0;
+      for (let attemptNo = 1; attemptNo <= maxAttempts + maxInfraRecoveries; attemptNo++) {
+        if (productAttempts >= maxAttempts) break;
         if (signal.aborted) throw new PolicyError('RUN_ABORTED', '运行已被取消');
         const currentRun = this.store.getRun(run.id) || run;
         assertRunWallClock(currentRun, this.config.budget.runWallClockMs);
@@ -1378,18 +1387,46 @@ export class Orchestrator {
           const infra = this.isInfrastructureFailure(failureClass, agentResult);
           if (infra || failureClass === 'budget') {
             const reason = `基础设施/预算中断（${failureClass}）：${agentResult.error || 'Agent 未完成'}`;
+            const currentTask = this.store.getTask(task.id) || task;
+            const prevVerification = currentTask.verification_json && typeof currentTask.verification_json === 'object' ? currentTask.verification_json : {};
+            const infraCount = Number(prevVerification.infra_recovery_count || 0);
+            let checkpointHead = ''; let checkpointTree = '';
+            try { checkpointHead = (await gitops.currentHead(worktree)) || ''; checkpointTree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim(); } catch { /* best effort */ }
+            const checkpoint = { failureClass, error: agentResult.error || '', sessionId: agentResult.sessionId || sessionId, usage, durationMs: agentResult.durationMs || 0, worktree, head: checkpointHead, tree: checkpointTree, runId: run.id, taskId: task.id, attemptNo, logPath: agentResult.logPath || '', stalled: !!agentResult.stalled, at: nowIso() };
             try {
               this.writeArtifact({
                 runId: run.id, taskId: task.id, kind: 'agent-checkpoint',
-                filename: `attempt-${attemptNo}-${agentId}-abort.json`,
-                content: { failureClass, error: agentResult.error || '', sessionId: agentResult.sessionId || sessionId, usage, durationMs: agentResult.durationMs || 0, worktree, logPath: agentResult.logPath || '', stalled: !!agentResult.stalled, at: nowIso() },
+                filename: `attempt-${attemptNo}-${agentId}-abort.json`, content: checkpoint,
               });
             } catch { /* evidence best effort */ }
-            this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason, session_id: agentResult.sessionId || sessionId });
+            this.store.updateTask(task.id, { status: TaskStatus.CODING, blocked_reason: reason, session_id: agentResult.sessionId || sessionId, verification_json: { ...prevVerification, infra_recovery_count: infraCount, checkpoint } });
+            // 可恢复基础设施故障：保留同一任务/工作副本/Session，清理失效容器后由原授权 Agent 自动续跑。
+            if (failureClass !== 'budget' && infraCount < maxInfraRecoveries) {
+              const next = infraCount + 1;
+              this.store.updateTask(task.id, { status: TaskStatus.QUEUED, blocked_reason: '', verification_json: { ...prevVerification, infra_recovery_count: next, checkpoint: { ...checkpoint, recoveryAt: nowIso() } } });
+              this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'infrastructure_recovery', level: 'warn', message: `基础设施故障自动恢复 ${next}/${maxInfraRecoveries}：保留工作副本和 Session，使用原授权 Agent 续跑`, data: { failureClass, next, maxInfraRecoveries, worktree, sessionId: agentResult.sessionId || sessionId } });
+              let cleanupOk = true;
+              try {
+                const { cleanupOrphanContainers } = await import('./container.js');
+                const cleanup = await cleanupOrphanContainers({ config: this.config, store: this.store, log: (m) => this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'container_recovery', message: m }) });
+                if (cleanup?.error) throw new Error(cleanup.error);
+              } catch (e) { cleanupOk = false; this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'container_recovery_failed', level: 'warn', message: `容器清理失败，停止自动恢复：${e.message}` }); }
+              if (!cleanupOk) {
+                const blocked = `${reason}；容器清理失败，拒绝启动冲突 Agent`;
+                this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: blocked });
+                this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: blocked, current_task_id: task.id });
+                return { ok: false, reason: blocked, infrastructure: true };
+              }
+              await new Promise((r) => setTimeout(r, Math.min(5000, 500 * next)));
+              // 保持 worktree 与 session；继续下一轮 attempt（原 Agent 候选不切换）。
+              continue;
+            }
+            this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason, session_id: agentResult.sessionId || sessionId, verification_json: { ...prevVerification, infra_recovery_count: infraCount, checkpoint } });
             this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason, current_task_id: task.id });
-            this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'infrastructure_failure', level: 'error', message: reason, data: { failureClass, sessionId: agentResult.sessionId || sessionId, worktree, logPath: agentResult.logPath || '' } });
+            this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'infrastructure_blocked', level: 'error', message: `${reason}；恢复次数已耗尽或属于必须重新授权故障`, data: { failureClass, infraCount, maxInfraRecoveries, checkpoint } });
             return { ok: false, reason, infrastructure: true };
           }
+          productAttempts += 1;
           const canSwitch = ['agent_no_output', 'agent_error'].includes(failureClass);
           if (canSwitch) {
             const previous = agentId;
@@ -1419,6 +1456,7 @@ export class Orchestrator {
           continue;
         }
 
+        productAttempts += 1;
         // ---- 变更检查 ----
         const diff = await gitops.stagedDiff(worktree, baseCommit, { maxChars: 1_000_000 });
         const fileEntries = await gitops.stagedFiles(worktree, baseCommit);
@@ -2321,21 +2359,25 @@ export class Orchestrator {
       ].includes(task.status);
       const needReset = intermediate || (retryFailed && [TaskStatus.FAILED, TaskStatus.BLOCKED].includes(task.status));
       if (!needReset) continue;
+      // 无损续跑：有效 worktree 必须保留；只有已损坏/不存在的工作副本才丢弃。
+      let keepWorktree = false;
       if (task.worktree_path) {
-        await gitops.removeWorktree(resumeProject?.local_path || '', task.worktree_path).catch(() => {});
-        try {
-          fs.rmSync(task.worktree_path, { recursive: true, force: true });
-        } catch {
-          /* ignore */
+        keepWorktree = (() => { try { return fs.existsSync(task.worktree_path) && fs.existsSync(path.join(task.worktree_path, '.git')); } catch { return false; } })();
+        if (!keepWorktree) {
+          await gitops.removeWorktree(resumeProject?.local_path || '', task.worktree_path).catch(() => {});
+          try { fs.rmSync(task.worktree_path, { recursive: true, force: true }); } catch { /* ignore */ }
         }
       }
       this.store.updateTask(task.id, {
         status: TaskStatus.QUEUED,
         attempt: 0,
         blocked_reason: '',
-        worktree_path: '',
+        worktree_path: keepWorktree ? task.worktree_path : '',
+        branch: keepWorktree ? task.branch : '',
+        base_commit: keepWorktree ? task.base_commit : '',
+        session_id: task.session_id || '',
         head_commit: '',
-        result_json: {},
+        result_json: keepWorktree ? (task.result_json || {}) : {},
       });
       this.emit({ runId, taskId: task.id, type: 'task_requeued', message: `任务 #${task.seq} 已重新排队，准备继续` });
     }

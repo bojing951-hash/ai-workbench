@@ -335,9 +335,23 @@ async function main() {
     if (orphanContainers.skipped.length) console.log(`[recover] ${orphanContainers.skipped.length} 个容器仍由有效执行者持有，已保留`);
     const recovered = orchestrator.recoverOrphans();
     const recoveredLoops = loops.recover();
-    if (recoveredLoops.recovered?.length) console.log(`[recover] ${recoveredLoops.recovered.length} 个研发循环已标记中断，可在界面恢复`);
+    if (recoveredLoops.recovered?.length) console.log(`[recover] ${recoveredLoops.recovered.length} 个研发循环已标记中断`);
     if (recoveredLoops.skipped?.length) console.log(`[recover] ${recoveredLoops.skipped.length} 个研发循环由其他活 Workbench 持有，已跳过`);
-    if (recovered.recoveredRuns.length) console.log(`[recover] ${recovered.recoveredRuns.length} 个中断运行已标记，可在界面恢复`);
+    if (recovered.recoveredRuns.length) console.log(`[recover] ${recovered.recoveredRuns.length} 个中断运行已标记`);
+    // 自动恢复 supervised 项目的运行/循环，不需要人工点击 resume。
+    try {
+      const autoRuns = await orchestrator.recoverSupervisedRuns();
+      const resumedRuns = autoRuns.filter((x) => x.resumed).length;
+      if (resumedRuns) console.log(`[recover] ${resumedRuns} 个 supervised 运行已自动续跑`);
+      const interruptedLoops = store.listLoops({ status: 'interrupted' });
+      let loopResumed = 0;
+      for (const lp of interruptedLoops) {
+        const pj = store.getProject(lp.project_id);
+        if (!pj?.config_json?.supervisor_managed) continue;
+        try { await loops.resume(lp.id, { retryCurrent: true }); loopResumed += 1; } catch (err) { console.log(`[recover] 循环 ${lp.id} 自动恢复失败：${err.message}`); }
+      }
+      if (loopResumed) console.log(`[recover] ${loopResumed} 个 supervised 循环已自动续跑`);
+    } catch (err) { console.log(`[recover] supervised 自动恢复跳过：${err.message}`); }
     const server = await startServer({ config: serveConfig, store, orchestrator, loops });
     const shutdown = () => {
       console.log('\n正在关闭工作台…');
