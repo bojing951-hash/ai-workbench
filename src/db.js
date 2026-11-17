@@ -1235,6 +1235,10 @@ export class Store {
       if (!Number.isFinite(Number(input[k] ?? 0)) || Number(input[k] ?? 0) < 0) throw new Error(`EXPERIMENT_LIMIT_INVALID:${k}`);
     }
     if (!Number.isFinite(Date.parse(String(input.deadlineAt)))) throw new Error('EXPERIMENT_DEADLINE_INVALID');
+    for (const role of ['chat', 'planner', 'coding', 'audit']) {
+      const b = input.provider?.[role];
+      if (!b?.client || !b?.provider || !b?.model) throw new Error(`EXPERIMENT_PROVIDER_REQUIRED:${role}`);
+    }
     const id = input.id || `exp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const version = String(input.contractVersion || 'e2e-budget-v1');
     const payload = {
@@ -1270,6 +1274,14 @@ export class Store {
     return row.contract_hash === experimentContractHashFor(row);
   }
 
+  refreshExperimentContractHash(id) {
+    const row = this.db.prepare('SELECT * FROM experiment_contracts WHERE id=?').get(id);
+    if (!row) return null;
+    const hash = experimentContractHashFor(row);
+    this.db.prepare('UPDATE experiment_contracts SET contract_hash=?, updated_at=? WHERE id=?').run(hash, nowIso(), id);
+    return this.getExperimentContract(id);
+  }
+
   getExperimentForProject(projectId) {
     if (!projectId) return null;
     return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE project_id=? AND status IN ('authorized','running','stop_loss_reached','overspent','completed','cancelled','failed','ended') ORDER BY created_at DESC LIMIT 1").get(projectId), { provider_json: {}, stop_conditions_json: [] });
@@ -1296,7 +1308,8 @@ export class Store {
     const other = this.db.prepare("SELECT id FROM experiment_contracts WHERE project_id=? AND id<>? AND status IN ('authorized','running')").get(projectId, experimentId);
     if (other) throw new Error('EXPERIMENT_PROJECT_BOUND_ELSEWHERE');
     this.db.prepare('UPDATE experiment_contracts SET project_id=?, conversation_id=COALESCE(NULLIF(conversation_id,\'\'), ?), updated_at=? WHERE id=?').run(projectId, conversationId, nowIso(), experimentId);
-    return this.getExperimentContract(experimentId);
+    // 绑定 Project/Conversation 后重新计算 hash；绑定字段变化必须反映到冻结契约，不能保留旧 hash。
+    return this.refreshExperimentContractHash(experimentId);
   }
 
   updateExperimentStatus(id, status, patch = {}) {

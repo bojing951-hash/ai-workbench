@@ -19,11 +19,13 @@ function mk() {
 }
 function contract(store, patch = {}) {
   return store.createExperimentContract({
-    projectId: 'p-exp', authorizedBy: 'user:test', authorizationSource: 'user_cli_tty', authorizationText: 'I_AUTHORIZE_E2E_BUDGET_V1', provider: { coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' }, audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' } },
+    projectId: 'p-exp', authorizedBy: 'user:test', authorizationSource: 'user_cli_tty', authorizationText: 'I_AUTHORIZE_E2E_BUDGET_V1',
     tokenLimit: 10_000, costLimitCny: 80, stopLossCny: 72, callLimit: 50,
     deadlineAt: new Date(Date.now() + 3600_000).toISOString(),
     glmTokenLimit: 4_000_000, glmCostLimitCny: 40, dshTokenLimit: 2_000_000, dshCostLimitCny: 30,
-    isolationMode: 'DOCKER_REQUIRED', ...patch,
+    ...patch,
+    provider: { chat: { client: 'deepseek', provider: 'deepseek', model: 'deepseek-chat' }, planner: { client: 'deepseek', provider: 'deepseek', model: 'deepseek-chat' }, coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' }, audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' }, ...(patch.provider || {}) },
+    isolationMode: patch.isolationMode || 'DOCKER_REQUIRED',
   });
 }
 const reserve = (store, exp, id, tokens, cost = 0.01, extra = {}) => store.reserveModelBudget({ id, requestKey: id, provider: 'deepseek', estimatedTokens: tokens, estimatedCostCny: cost, maxTokens: 10_000_000, maxCostCny: 1000, minReserveTokens: 0, experimentId: exp.id, ...extra });
@@ -256,5 +258,23 @@ test('v3.4 P0-2：Planner 授权绑定不可用时禁止 fallback 到其它 Prov
     const cfg2 = { ...config, llm: { ...config.llm, deepseek: { ...config.llm.deepseek, apiKey: '' }, openai: { ...config.llm.openai, apiKey: 'other-provider-key', baseUrl: 'http://127.0.0.1:1', model: 'other-model' } } };
     const project = store.getProject('p-exp');
     await assert.rejects(planNextTask({ config: cfg2, project, goal: 'x', plannerBinding: { provider: 'deepseek', model: 'deepseek-chat' } }), /PLANNER_MODEL_MISMATCH|禁止 fallback|不匹配/);
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.4 P0-1：Conversation 授权后 link Project 会重算 hash；link 后预留成功，篡改 hash 被拒', () => {
+  const { root, store } = mk();
+  try {
+    const exp = contract(store, { projectId: '', conversationId: 'link-conv', tokenLimit: 100_000, callLimit: 50 });
+    assert.equal(store.verifyExperimentContractHash(exp.id), true);
+    const linked = store.linkExperimentProject(exp.id, 'p-exp', { conversationId: 'link-conv' });
+    assert.equal(linked.project_id, 'p-exp');
+    assert.equal(store.verifyExperimentContractHash(exp.id), true, 'link 后必须重算 hash');
+    const ok = reserve(store, linked, 'after-link', 100);
+    assert.equal(ok.ok, true, 'link 后 Planner/Chat 预留必须成功');
+    store.db.prepare("UPDATE experiment_contracts SET contract_hash=? WHERE id=?").run('a'.repeat(64), exp.id);
+    assert.equal(store.verifyExperimentContractHash(exp.id), false);
+    const rejected = reserve(store, linked, 'tampered', 100);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.reason, 'experiment-not-authorized');
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

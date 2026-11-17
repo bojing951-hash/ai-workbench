@@ -530,15 +530,12 @@ export class Orchestrator {
       throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Coding 实际身份 ${codingIdentity.provider}/${codingIdentity.model} 与授权 ${coding.provider}/${coding.model} 不匹配`);
     }
     const chat = bind.chat; const planner = bind.planner;
-    if (chat) {
-      const actual = resolveLlmIdentity({ config: this.config, provider: chat.client || chat.provider });
-      if (actual.provider !== chat.provider || String(actual.model || '').toLowerCase() !== String(chat.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Chat 实际身份 ${actual.provider}/${actual.model} 与授权 ${chat.provider}/${chat.model} 不匹配`);
-    }
-    if (planner) {
-      const p = this.config.planner?.provider || 'deepseek';
-      const actual = resolveLlmIdentity({ config: this.config, provider: p });
-      if (actual.provider !== planner.provider || String(actual.model || '').toLowerCase() !== String(planner.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Planner 实际身份 ${actual.provider}/${actual.model} 与授权 ${planner.provider}/${planner.model} 不匹配`);
-    }
+    if (!chat || !planner) throw new PolicyError('EXPERIMENT_MODEL_BINDING_MISSING', '实验契约缺少 Chat/Planner 绑定');
+    const chatActual = resolveLlmIdentity({ config: this.config, provider: chat.client || chat.provider });
+    if (chatActual.provider !== chat.provider || String(chatActual.model || '').toLowerCase() !== String(chat.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Chat 实际身份 ${chatActual.provider}/${chatActual.model} 与授权 ${chat.provider}/${chat.model} 不匹配`);
+    const p = this.config.planner?.provider || 'deepseek';
+    const plannerActual = resolveLlmIdentity({ config: this.config, provider: p });
+    if (plannerActual.provider !== planner.provider || String(plannerActual.model || '').toLowerCase() !== String(planner.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Planner 实际身份 ${plannerActual.provider}/${plannerActual.model} 与授权 ${planner.provider}/${planner.model} 不匹配`);
     const auditIdentity = audit.client === 'dsh' ? { provider: 'deepseek', model: 'deepseek' } : resolveLlmIdentity({ config: this.config, provider: audit.client });
     if (auditIdentity.provider !== audit.provider || String(auditIdentity.model || '').toLowerCase() !== String(audit.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Audit 实际身份 ${auditIdentity.provider}/${auditIdentity.model} 与授权 ${audit.provider}/${audit.model} 不匹配`);
     if (modelFamily(coding.provider, coding.model) === modelFamily(audit.provider, audit.model)) throw new PolicyError('EXPERIMENT_MODEL_SAME_FAMILY', 'Coding 与 Audit 不允许同模型族');
