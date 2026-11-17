@@ -37,7 +37,7 @@ try {
   const contract = store.createExperimentContract({
     projectId, conversationId, authorizedBy,
     authorizationSource: 'user_cli_tty',
-    authorizationText: `${expected} project=${projectId} conversation=${conversationId} at=${new Date(now).toISOString()} tokenLimit=${val('--token-limit', '3620000')} costLimit=${val('--cost-limit', '80')} stopLoss=${val('--stop-loss', '72')} callLimit=${val('--call-limit', '50')} deadlineHours=${hours} glmTokens=${val('--glm-tokens', '4000000')} glmCost=${val('--glm-cost', '40')} dshTokens=${val('--dsh-tokens', '2000000')} dshCost=${val('--dsh-cost', '30')} isolation=${val('--isolation', 'BLOCKED_UNLESS_APPROVED')}`,
+    authorizationText: `${expected} project=${projectId} conversation=${conversationId} at=${new Date(now).toISOString()} tokenLimit=${val('--token-limit', '3620000')} costLimit=${val('--cost-limit', '80')} stopLoss=${val('--stop-loss', '72')} callLimit=${val('--call-limit', '50')} deadlineHours=${hours} glmTokens=${val('--glm-tokens', '4000000')} glmCost=${val('--glm-cost', '40')} dshTokens=${val('--dsh-tokens', '2000000')} dshCost=${val('--dsh-cost', '30')} nonGlmCost=${val('--non-glm-cost', '10')} perCallTokens=${val('--per-call-tokens', '20000')} isolation=${val('--isolation', 'BLOCKED_UNLESS_APPROVED')}`,
     contractVersion: val('--contract-version', 'e2e-budget-v1'),
     tokenLimit: Number(val('--token-limit', '3620000')),
     costLimitCny: Number(val('--cost-limit', '80')),
@@ -48,7 +48,14 @@ try {
     glmCostLimitCny: Number(val('--glm-cost', '40')),
     dshTokenLimit: Number(val('--dsh-tokens', '2000000')),
     dshCostLimitCny: Number(val('--dsh-cost', '30')),
-    provider: { chat: 'deepseek/deepseek-chat', planner: 'deepseek/deepseek-chat', coding: 'Claude Code/GLM-5.3', audit: 'DSH/DeepSeek' },
+    nonGlmCostLimitCny: Number(val('--non-glm-cost', '10')),
+    perCallMaxTokens: Number(val('--per-call-tokens', '20000')),
+    provider: {
+      chat: { client: 'deepseek', provider: 'deepseek', model: 'deepseek-chat' },
+      planner: { client: 'deepseek', provider: 'deepseek', model: 'deepseek-chat' },
+      coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' },
+      audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' },
+    },
     isolationMode: val('--isolation', 'BLOCKED_UNLESS_APPROVED'),
     stopConditions: ['product acceptance PASS', 'stopLoss', 'callLimit', 'deadline', 'budget exhausted', 'unrecoverable BLOCKED', 'user cancel'],
   });

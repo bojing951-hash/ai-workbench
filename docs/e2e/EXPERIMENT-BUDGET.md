@@ -50,6 +50,8 @@ node scripts/e2e-authorize.mjs \
 | 契约字段 | 申请值 | 强制执行 |
 |---|---|---|
 | token_limit | 3,620,000 | 是 |
+| non_glm_cost_limit_cny | 10 | 是（global scope） |
+| per_call_max_tokens | 20,000 | 是（预留前） |
 | cost_limit_cny | 80 | 是 |
 | stop_loss_cny | 72 | 是 |
 | call_limit | 50 | 是 |
@@ -63,7 +65,7 @@ node scripts/e2e-authorize.mjs \
 
 ## 测试证据
 
-`tests/v34-experiment-budget.test.js` 11 tests：
+`tests/v34-experiment-budget.test.js` 14 tests：
 
 - 无授权/无效契约阻止预留；
 - Token、费用、止损、调用次数上限；

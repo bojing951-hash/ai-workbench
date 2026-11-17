@@ -1,0 +1,31 @@
+{
+  "status": "IMPLEMENTED_OFFLINE_VERIFIED",
+  "code": {
+    "chatFirstExperimentLink": true,
+    "projectDockerFlags": true,
+    "contractProjectConversationHashValidation": true,
+    "codingAgentMustEqualContract": true,
+    "auditProviderMustEqualContract": true,
+    "sameFamilyRejected": true,
+    "dshCliRequired": true,
+    "unauthorizedFallbackRejected": true
+  },
+  "tests": {
+    "file": "tests/v34-experiment-budget.test.js",
+    "modelBindingTests": 1,
+    "chatHttpTests": 1,
+    "fullLog": "demo/evidence/e2e-safety/tests.log"
+  },
+  "live": {
+    "authorized": false,
+    "activeContracts": 0,
+    "dockerAvailable": false,
+    "realE2EStarted": false,
+    "fullTests": {
+      "total": 321,
+      "pass": 317,
+      "skipped": 4,
+      "fail": 0
+    }
+  }
+}

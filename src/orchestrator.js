@@ -437,6 +437,7 @@ export class Orchestrator {
       allowLocalAcceptance: input.allowLocalAcceptance !== false && input.allow_local_acceptance !== false,
       remotePushAuthorized: input.remotePushAuthorized === true || input.remote_push_authorized === true,
       config: {
+        ...(input.config || {}),
         publish: input.publish === false ? false : true,
         allowed_test_commands: parseList(input.allowedTestCommands || input.allowed_test_commands || input.testCommand || input.test_command),
         test_env_allowlist: parseList(input.testEnvAllowlist || input.test_env_allowlist),
@@ -517,6 +518,34 @@ export class Orchestrator {
   // ============================================================
   // 运行创建
   // ============================================================
+  async assertExperimentModelBinding(project) {
+    const exp = this.store.getExperimentForProject?.(project.id);
+    if (!exp) return null;
+    const bind = exp.provider_json || {};
+    const coding = bind.coding || null; const audit = bind.audit || null;
+    if (!coding?.client || !coding?.provider || !coding?.model) throw new PolicyError('EXPERIMENT_MODEL_BINDING_MISSING', '实验契约缺少 Coding Provider/模型绑定');
+    if (!audit?.client || !audit?.provider || !audit?.model) throw new PolicyError('EXPERIMENT_MODEL_BINDING_MISSING', '实验契约缺少 Audit Provider/模型绑定');
+    const codingIdentity = resolveAgentIdentity({ config: this.config, agentId: coding.client, project });
+    if (!codingIdentity.known || codingIdentity.provider !== coding.provider || String(codingIdentity.model || '').toLowerCase() !== String(coding.model).toLowerCase()) {
+      throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Coding 实际身份 ${codingIdentity.provider}/${codingIdentity.model} 与授权 ${coding.provider}/${coding.model} 不匹配`);
+    }
+    const chat = bind.chat; const planner = bind.planner;
+    if (chat) {
+      const actual = resolveLlmIdentity({ config: this.config, provider: chat.client || chat.provider });
+      if (actual.provider !== chat.provider || String(actual.model || '').toLowerCase() !== String(chat.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Chat 实际身份 ${actual.provider}/${actual.model} 与授权 ${chat.provider}/${chat.model} 不匹配`);
+    }
+    if (planner) {
+      const p = this.config.planner?.provider || 'deepseek';
+      const actual = resolveLlmIdentity({ config: this.config, provider: p });
+      if (actual.provider !== planner.provider || String(actual.model || '').toLowerCase() !== String(planner.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Planner 实际身份 ${actual.provider}/${actual.model} 与授权 ${planner.provider}/${planner.model} 不匹配`);
+    }
+    const auditIdentity = audit.client === 'dsh' ? { provider: 'deepseek', model: 'deepseek' } : resolveLlmIdentity({ config: this.config, provider: audit.client });
+    if (auditIdentity.provider !== audit.provider || String(auditIdentity.model || '').toLowerCase() !== String(audit.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Audit 实际身份 ${auditIdentity.provider}/${auditIdentity.model} 与授权 ${audit.provider}/${audit.model} 不匹配`);
+    if (modelFamily(coding.provider, coding.model) === modelFamily(audit.provider, audit.model)) throw new PolicyError('EXPERIMENT_MODEL_SAME_FAMILY', 'Coding 与 Audit 不允许同模型族');
+    if (audit.client === 'dsh' && !dshAuditAvailable(this.config)) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', '授权要求 DSH 审计，但 DSH CLI 不可用');
+    return exp;
+  }
+
   assertExperimentIsolation(project) {
     const exp = this.store.getExperimentForProject?.(project.id);
     if (!exp) return null;
@@ -525,6 +554,7 @@ export class Orchestrator {
       // 本地测试进程与 Workbench 同用户/同文件系统，无法阻止读取宿主未授权文件；不满足 E2E 安全边界。
       throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', '实验契约要求本地执行，但本地无文件系统隔离边界（可读宿主文件）；必须使用容器隔离', { experimentId: exp.id });
     }
+    if (['completed','cancelled','failed','ended'].includes(exp.status)) throw new PolicyError('EXPERIMENT_ENDED', `实验契约已终止（${exp.status}），必须重新授权`, { experimentId: exp.id });
     if (mode === 'DOCKER_REQUIRED') {
       const caps = containerCapabilities(this.config);
       if (!caps.testExecution || !caps.agentExecution) throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验契约要求 Docker 隔离，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}；不静默降级`, { experimentId: exp.id });
@@ -540,6 +570,7 @@ export class Orchestrator {
   async startRun(input) {
     const project = this.store.getProject(input.projectId);
     if (!project) throw new PolicyError('PROJECT_NOT_FOUND', `项目不存在：${input.projectId}`);
+    await this.assertExperimentModelBinding(project);
     this.assertExperimentIsolation(project);
     const goal = String(input.goal || '').trim();
     if (!goal) throw new PolicyError('GOAL_REQUIRED', '请填写开发目标');
@@ -1127,6 +1158,17 @@ export class Orchestrator {
         const coderFamily = primaryIdentity.known ? modelFamily(primaryIdentity.provider, primaryIdentity.model || '') : '';
         const auditResource = this.auditResourcePreflight(project, coderFamily);
         auditResourceInfo = auditResource;
+        const exp = this.store.getExperimentForProject?.(project.id);
+        const bind = exp?.provider_json || {};
+        if (exp && bind.coding) {
+          if (primaryAgent !== bind.coding.client) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `实际 Coding Agent ${primaryAgent} 与授权 ${bind.coding.client} 不匹配；禁止自动切换`);
+          if (primaryIdentity.provider !== bind.coding.provider || String(primaryIdentity.model || '').toLowerCase() !== String(bind.coding.model || '').toLowerCase()) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `实际 Coding 模型 ${primaryIdentity.provider}/${primaryIdentity.model} 与授权 ${bind.coding.provider}/${bind.coding.model} 不匹配`);
+        }
+        if (exp && bind.audit) {
+          const effectiveAuditClient = this.isDshAuditProject(project) ? 'dsh' : auditResource.provider;
+          if (effectiveAuditClient !== bind.audit.client) throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `实际 Audit ${effectiveAuditClient} 与授权 ${bind.audit.client} 不匹配`);
+          if (auditResource.provider !== bind.audit.provider && bind.audit.client !== 'dsh') throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `实际 Audit Provider ${auditResource.provider} 与授权 ${bind.audit.provider} 不匹配`);
+        }
         this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'pipeline_resource_checked', message: `流水线资源预检通过：编码=${primaryIdentity.provider || 'unknown'}，审计=${auditResource.provider}${auditResource.exempt ? '（豁免）' : ''}`, data: { coding: primaryIdentity, audit: auditResource } });
       } catch (err) {
         if (err?.code === 'PREFLIGHT_SKIPPED_FOR_INJECTED_AUDIT') {
@@ -1166,7 +1208,11 @@ export class Orchestrator {
         this.store.updateTask(task.id, { status: TaskStatus.CODING, attempt: attemptNo });
 
         const agentId = agentCandidates[candidateIndex] || agentCandidates[0];
+        const expBinding = this.store.getExperimentForProject?.(project.id)?.provider_json || {};
+        if (expBinding.coding && agentId !== expBinding.coding.client) return this.failTask(run, task, `实验授权 Coding Agent=${expBinding.coding.client}，实际候选=${agentId}；拒绝自动切换`, 'blocked', { modelBinding: expBinding.coding });
         const agentIdentity = resolveAgentIdentity({ config: this.config, agentId, project });
+        if (expBinding.coding && (agentIdentity.provider !== expBinding.coding.provider || String(agentIdentity.model || '').toLowerCase() !== String(expBinding.coding.model || '').toLowerCase())) return this.failTask(run, task, `实验授权 Coding 模型=${expBinding.coding.provider}/${expBinding.coding.model}，实际=${agentIdentity.provider}/${agentIdentity.model}；拒绝执行`, 'blocked', { modelBinding: expBinding.coding });
+
         let permission;
         try {
           permission = resolveAgentPermission(this.config, agentId, project);
@@ -1926,6 +1972,10 @@ export class Orchestrator {
       ended_at: nowIso(),
       stop_reason: publish.blocked.length ? `部分发布动作待授权：${publish.blocked.join('；')}` : '',
     });
+    if (!loopScoped) {
+      const exp = this.store.getExperimentForProject?.(run.project_id);
+      if (exp) this.store.endExperiment?.(exp.id, 'completed', '产品级验收 PASS，终止新增付费调用');
+    }
     this.emit({
       runId: run.id,
       projectId: run.project_id,

@@ -10,6 +10,7 @@ import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
 import { EventBus } from '../src/bus.js';
 import { Orchestrator } from '../src/orchestrator.js';
+import { LoopManager } from '../src/loop.js';
 import { createApp } from '../src/server.js';
 
 function tempConfig(upstreamBase, budget = {}) {
@@ -21,7 +22,8 @@ function tempConfig(upstreamBase, budget = {}) {
 async function startServer(config, store) {
   const bus = new EventBus();
   const orch = new Orchestrator({ config, store, bus, deps: { checkAgents: async () => [], runAgent: async () => { throw new Error('no'); }, runAudit: async () => { throw new Error('no'); }, chooseAgent: async () => { throw new Error('no'); } } });
-  const server = createApp({ config, store, orchestrator: orch });
+  const loops = new LoopManager({ config, store, bus, orchestrator: orch });
+  const server = createApp({ config, store, orchestrator: orch, loops });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   return { server, base: `http://127.0.0.1:${server.address().port}` };
 }
@@ -143,6 +145,44 @@ test('v3.0 P0-4：Chat 接口超预算 fail-closed，不调用模型', async () 
     assert.equal(res.status, 409);
     assert.match(res.json.error.message, /预算不足|BUDGET_CHAT/i);
     assert.equal(fake.state.calls, 0, '超预算时绝不能调用模型');
+  } finally {
+    await new Promise((r) => server.close(r)); store.close(); await new Promise((r) => fake.server.close(r)); fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('v3.4 P0-1：Chat-First 实验关联 → 项目 Docker/模型绑定 → 启动前 BLOCKED，零模型调用', { timeout: 30_000 }, async () => {
+  const fake = await fakeUpstream();
+  const { root, config } = tempConfig(fake.base);
+  const store = openStore(config.paths.dbPath);
+  const { server, base } = await startServer(config, store);
+  try {
+    const conv = store.createConversation({ title: '实验 Chat', goal: '验证 Chat-First 实验关联', acceptance: ['A1', 'A2'], brief: { acceptance: ['A1', 'A2'] } });
+    const exp = store.createExperimentContract({
+      projectId: '', conversationId: conv.id, authorizedBy: 'user:test', authorizationSource: 'user_cli_tty',
+      authorizationText: 'I_AUTHORIZE_E2E_BUDGET_V1 limits', tokenLimit: 3_620_000, costLimitCny: 80, stopLossCny: 72, callLimit: 50,
+      deadlineAt: new Date(Date.now() + 3600_000).toISOString(), glmTokenLimit: 4_000_000, glmCostLimitCny: 40,
+      dshTokenLimit: 2_000_000, dshCostLimitCny: 30, nonGlmCostLimitCny: 10, perCallMaxTokens: 20_000,
+      provider: { chat: { client: 'deepseek', provider: 'deepseek', model: 'fake-deepseek' }, planner: { client: 'deepseek', provider: 'deepseek', model: 'fake-deepseek' }, coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' }, audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' } },
+      isolationMode: 'DOCKER_REQUIRED',
+    });
+    const msg = await request(base, 'POST', `/api/conversations/${conv.id}/messages`, { content: '开始开发', clientMessageId: 'exp-chat-1' });
+    assert.notEqual(msg.status, 200, 'Docker 不可用时 Chat 模型调用必须被阻止');
+    assert.equal(fake.state.calls, 0, '不得发生 Chat 模型调用');
+    assert.match(msg.text, /ISOLATION|Docker|隔离/);
+    // 直接 start 路径（不经过 Chat 模型）：项目应继承 Docker/模型绑定并关联实验。
+    const started = await request(base, 'POST', `/api/conversations/${conv.id}/start`, { brief: { goal: '验证关联', acceptance: ['A1', 'A2'] } });
+    assert.equal(started.status, 200, started.text);
+    const project = store.getProject(started.json.data.project.id);
+    assert.equal(project.config_json.agent_isolation, 'docker');
+    assert.equal(project.config_json.test_isolation, 'docker');
+    assert.equal(project.agent_kind, 'claude');
+    assert.equal(project.audit_provider, 'dsh');
+    assert.equal(store.getExperimentContract(exp.id).project_id, project.id, '实验必须绑定 Project ID');
+    await new Promise((r) => setTimeout(r, 50));
+    const loop = store.listLoops({ projectId: project.id })[0];
+    assert.ok(loop);
+    assert.notEqual(loop.status, 'completed');
+    assert.equal(fake.state.calls, 0, '启动失败也必须发生在模型调用前');
   } finally {
     await new Promise((r) => server.close(r)); store.close(); await new Promise((r) => fake.server.close(r)); fs.rmSync(root, { recursive: true, force: true });
   }

@@ -54,3 +54,15 @@ node scripts/e2e-authorize.mjs --project-id <id> --authorized-by "<name>" \
 - 授权命令要求真实 TTY + 终端内逐字输入确认语，并在数据库中记录 `authorization_source=user_cli_tty`；
 - 这不是密码学意义上的用户签名；能直接访问 SQLite 或伪造 PTY 的恶意本地进程理论上仍可伪造。正式 E2E 的安全边界依赖：用户在本机 TTY 执行授权 + 操作员在启动前核对 `experiment_contracts` 记录；
 - 当前 `experiment_contracts=0`，没有有效授权。
+
+
+## 本次合同绑定模型（拟）
+
+| 角色 | Client | Provider / Model | 角色约束 |
+|---|---|---|---|
+| Chat | DeepSeek API | deepseek / deepseek-chat | 不得切换 |
+| Planner | DeepSeek API | deepseek / deepseek-chat | 不得切换 |
+| Coding | Claude Code | GLM / glm-5.3 | 不得自动 fallback |
+| Audit | DSH headless | DeepSeek / deepseek | 必须真实 DSH CLI，且与 Coding 不同族 |
+
+另：non_glm_cost_limit_cny=10、per_call_max_tokens=20000，均由契约冻结。

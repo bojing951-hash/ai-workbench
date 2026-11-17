@@ -288,6 +288,8 @@ CREATE TABLE IF NOT EXISTS experiment_contracts (
   glm_cost_limit_cny REAL DEFAULT 0,
   dsh_token_limit INTEGER DEFAULT 0,
   dsh_cost_limit_cny REAL DEFAULT 0,
+  non_glm_cost_limit_cny REAL DEFAULT 0,
+  per_call_max_tokens INTEGER DEFAULT 0,
   provider_json TEXT DEFAULT '{}',
   isolation_mode TEXT DEFAULT '',
   stop_conditions_json TEXT DEFAULT '[]',
@@ -400,6 +402,8 @@ export class Store {
       ],
       experiment_contracts: [
         ['authorization_source', "TEXT DEFAULT ''"],
+        ['non_glm_cost_limit_cny', 'REAL DEFAULT 0'],
+        ['per_call_max_tokens', 'INTEGER DEFAULT 0'],
       ],
       model_reservations: [
         ['experiment_id', "TEXT DEFAULT ''"],
@@ -418,6 +422,8 @@ export class Store {
       ],
       experiment_contracts: [
         ['authorization_source', "TEXT DEFAULT ''"],
+        ['non_glm_cost_limit_cny', 'REAL DEFAULT 0'],
+        ['per_call_max_tokens', 'INTEGER DEFAULT 0'],
       ],
       model_reservations: [
         ['experiment_id', "TEXT DEFAULT ''"],
@@ -1204,7 +1210,7 @@ export class Store {
     for (const k of ['tokenLimit','costLimitCny','stopLossCny','callLimit']) {
       if (!Number.isFinite(Number(input[k])) || Number(input[k]) <= 0) throw new Error(`EXPERIMENT_LIMIT_INVALID:${k}`);
     }
-    for (const k of ['glmTokenLimit','glmCostLimitCny','dshTokenLimit','dshCostLimitCny']) {
+    for (const k of ['glmTokenLimit','glmCostLimitCny','dshTokenLimit','dshCostLimitCny','nonGlmCostLimitCny','perCallMaxTokens']) {
       if (!Number.isFinite(Number(input[k] ?? 0)) || Number(input[k] ?? 0) < 0) throw new Error(`EXPERIMENT_LIMIT_INVALID:${k}`);
     }
     if (!Number.isFinite(Date.parse(String(input.deadlineAt)))) throw new Error('EXPERIMENT_DEADLINE_INVALID');
@@ -1219,16 +1225,17 @@ export class Store {
       deadlineAt: String(input.deadlineAt),
       glmTokenLimit: Number(input.glmTokenLimit || 0), glmCostLimitCny: Number(input.glmCostLimitCny || 0),
       dshTokenLimit: Number(input.dshTokenLimit || 0), dshCostLimitCny: Number(input.dshCostLimitCny || 0),
+      nonGlmCostLimitCny: Number(input.nonGlmCostLimitCny || 0), perCallMaxTokens: Number(input.perCallMaxTokens || 0),
       provider: input.provider || {}, isolationMode: String(input.isolationMode || 'BLOCKED_UNLESS_APPROVED'),
       stopConditions: Array.isArray(input.stopConditions) ? input.stopConditions : [],
     };
     const contractHash = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
     const authorizationTextHash = crypto.createHash('sha256').update(String(input.authorizationText)).digest('hex');
-    this.db.prepare('INSERT INTO experiment_contracts (id,project_id,conversation_id,authorized_by,authorized_at,authorization_source,authorization_text_hash,contract_version,contract_hash,status,token_limit,cost_limit_cny,stop_loss_cny,call_limit,deadline_at,glm_token_limit,glm_cost_limit_cny,dsh_token_limit,dsh_cost_limit_cny,provider_json,isolation_mode,stop_conditions_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    this.db.prepare('INSERT INTO experiment_contracts (id,project_id,conversation_id,authorized_by,authorized_at,authorization_source,authorization_text_hash,contract_version,contract_hash,status,token_limit,cost_limit_cny,stop_loss_cny,call_limit,deadline_at,glm_token_limit,glm_cost_limit_cny,dsh_token_limit,dsh_cost_limit_cny,non_glm_cost_limit_cny,per_call_max_tokens,provider_json,isolation_mode,stop_conditions_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(id, payload.projectId, payload.conversationId, payload.authorizedBy, payload.authorizedAt, payload.authorizationSource, authorizationTextHash, version, contractHash, 'authorized',
         payload.tokenLimit, payload.costLimitCny, payload.stopLossCny, payload.callLimit, payload.deadlineAt,
         payload.glmTokenLimit, payload.glmCostLimitCny, payload.dshTokenLimit, payload.dshCostLimitCny,
-        JSON.stringify(payload.provider), payload.isolationMode, JSON.stringify(payload.stopConditions), now, now);
+        payload.nonGlmCostLimitCny, payload.perCallMaxTokens, JSON.stringify(payload.provider), payload.isolationMode, JSON.stringify(payload.stopConditions), now, now);
     return this.getExperimentContract(id);
   }
 
@@ -1238,12 +1245,12 @@ export class Store {
 
   getExperimentForProject(projectId) {
     if (!projectId) return null;
-    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE project_id=? AND status IN ('authorized','running','stop_loss_reached','overspent') ORDER BY created_at DESC LIMIT 1").get(projectId), { provider_json: {}, stop_conditions_json: [] });
+    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE project_id=? AND status IN ('authorized','running','stop_loss_reached','overspent','completed','cancelled','failed','ended') ORDER BY created_at DESC LIMIT 1").get(projectId), { provider_json: {}, stop_conditions_json: [] });
   }
 
   getExperimentForConversation(conversationId) {
     if (!conversationId) return null;
-    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE conversation_id=? AND status IN ('authorized','running','stop_loss_reached','overspent') ORDER BY created_at DESC LIMIT 1").get(conversationId), { provider_json: {}, stop_conditions_json: [] });
+    return parseRow(this.db.prepare("SELECT * FROM experiment_contracts WHERE conversation_id=? AND status IN ('authorized','running','stop_loss_reached','overspent','completed','cancelled','failed','ended') ORDER BY created_at DESC LIMIT 1").get(conversationId), { provider_json: {}, stop_conditions_json: [] });
   }
 
   listExperimentContracts(limit = 50) {
@@ -1251,15 +1258,29 @@ export class Store {
       .map((r) => parseRow(r, { provider_json: {}, stop_conditions_json: [] }));
   }
 
-  linkExperimentProject(experimentId, projectId) {
-    if (!experimentId || !projectId) return null;
-    this.db.prepare('UPDATE experiment_contracts SET project_id=?, updated_at=? WHERE id=?').run(projectId, nowIso(), experimentId);
+  linkExperimentProject(experimentId, projectId, { conversationId = '' } = {}) {
+    if (!experimentId || !projectId) throw new Error('EXPERIMENT_BINDING_REQUIRED');
+    const exp = this.getExperimentContract(experimentId);
+    if (!exp) throw new Error('EXPERIMENT_NOT_FOUND');
+    if (!['authorized', 'running'].includes(exp.status)) throw new Error('EXPERIMENT_NOT_ACTIVE');
+    if (!exp.contract_hash || exp.contract_hash.length !== 64) throw new Error('EXPERIMENT_CONTRACT_HASH_INVALID');
+    if (exp.conversation_id && conversationId && exp.conversation_id !== conversationId) throw new Error('EXPERIMENT_CONVERSATION_MISMATCH');
+    if (exp.project_id && exp.project_id !== projectId) throw new Error('EXPERIMENT_PROJECT_MISMATCH');
+    const other = this.db.prepare("SELECT id FROM experiment_contracts WHERE project_id=? AND id<>? AND status IN ('authorized','running')").get(projectId, experimentId);
+    if (other) throw new Error('EXPERIMENT_PROJECT_BOUND_ELSEWHERE');
+    this.db.prepare('UPDATE experiment_contracts SET project_id=?, conversation_id=COALESCE(NULLIF(conversation_id,\'\'), ?), updated_at=? WHERE id=?').run(projectId, conversationId, nowIso(), experimentId);
     return this.getExperimentContract(experimentId);
   }
 
   updateExperimentStatus(id, status, patch = {}) {
-    this.db.prepare('UPDATE experiment_contracts SET status=?, ended_at=?, updated_at=? WHERE id=?').run(status, patch.endedAt || (status === 'ended' ? nowIso() : ''), nowIso(), id);
+    this.db.prepare('UPDATE experiment_contracts SET status=?, ended_at=?, updated_at=? WHERE id=?').run(status, patch.endedAt || (['ended','completed','cancelled','failed'].includes(status) ? nowIso() : ''), nowIso(), id);
     return this.getExperimentContract(id);
+  }
+
+  endExperiment(id, status = 'completed', reason = '') {
+    const exp = this.getExperimentContract(id);
+    if (!exp) return null;
+    return this.updateExperimentStatus(id, status, { endedAt: nowIso(), reason });
   }
 
   experimentUsage(experimentId) {
@@ -1313,6 +1334,11 @@ export class Store {
           this.db.exec('ROLLBACK');
           return { ok: false, reason: 'experiment-call-limit', experimentId, calls: experimentUsage.calls, callLimit: experiment.call_limit };
         }
+        const perCallMax = Number(experiment.per_call_max_tokens || 0);
+        if (perCallMax > 0 && Number(estimatedTokens || 0) > perCallMax) {
+          this.db.exec('ROLLBACK');
+          return { ok: false, reason: 'experiment-per-call-token-limit', experimentId, estimatedTokens, perCallMax };
+        }
         const projectedTokens = Number(experimentUsage.tokens || 0) + Number(estimatedTokens || 0);
         const projectedCost = Number(experimentUsage.costCny || 0) + Number(estimatedCostCny || 0);
         const hardTokens = Number(experiment.token_limit || 0);
@@ -1321,7 +1347,11 @@ export class Store {
         if (hardTokens > 0 && projectedTokens > hardTokens) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-token-limit', experimentId, projectedTokens, hardTokens }; }
         if (hardCost > 0 && projectedCost > hardCost) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-cost-hard-limit', experimentId, projectedCost, hardCost }; }
         if (stopLoss > 0 && projectedCost >= stopLoss) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-stop-loss', experimentId, projectedCost, stopLoss }; }
-        if (experimentScope === 'glm') {
+        if (experimentScope === 'global') {
+          const ng = Number(experiment.non_glm_cost_limit_cny || 0);
+          const s = experimentUsage.byScope?.global || { costCny: 0 };
+          if (ng > 0 && Number(s.costCny || 0) + Number(estimatedCostCny || 0) > ng) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-non-glm-cost-limit', experimentId, projectedNonGlmCost: Number(s.costCny || 0) + Number(estimatedCostCny || 0), limit: ng }; }
+        } else if (experimentScope === 'glm') {
           const gt = Number(experiment.glm_token_limit || 0); const gc = Number(experiment.glm_cost_limit_cny || 0);
           const s = experimentUsage.byScope?.glm || { tokens: 0, costCny: 0 };
           if (gt > 0 && Number(s.tokens || 0) + Number(estimatedTokens || 0) > gt) { this.db.exec('ROLLBACK'); return { ok: false, reason: 'experiment-glm-token-limit', experimentId }; }

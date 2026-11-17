@@ -8,6 +8,7 @@ import { newId } from './util.js';
 import * as gitops from './git.js';
 import { assertModelBudget, chatBudgetEstimate } from './budget.js';
 import { writeProjectContract, contractBaseline, sha256File, CONTRACT_FILES, CONTRACT_PROTECTED_PATHS, TRUSTED_CONTRACT_TEST } from './contract.js';
+import { containerCapabilities } from './container.js';
 
 const SYSTEM = `你是 AI 开发工作台里的产品工程伙伴。用户通常不懂 Project/Loop/Run/Agent 等工程词，你要用自然中文和他讨论产品，同时判断是否已经可以开始开发。
 只输出一个 JSON 对象（不要 Markdown 代码围栏）。字段：
@@ -37,6 +38,20 @@ export async function chatTurn({ config, store, conversation, userMessage, proje
   const provider = providerFor(config);
   if (!provider) throw new PolicyError('CHAT_MODEL_UNAVAILABLE', '对话模型不可用：请在 .env 配置 DeepSeek/GLM/OpenAI API Key；未使用预设回复冒充 AI');
   const experiment = store.getExperimentForConversation?.(conversation.id) || (project ? store.getExperimentForProject?.(project.id) : null);
+  if (experiment) {
+    if (!['authorized', 'running'].includes(experiment.status)) throw new PolicyError('EXPERIMENT_NOT_ACTIVE', `实验契约状态 ${experiment.status}，拒绝新增 Chat 付费调用`);
+    const mode = String(experiment.isolation_mode || '').toUpperCase();
+    if (mode === 'DOCKER_REQUIRED') {
+      const caps = containerCapabilities(config);
+      if (!caps.testExecution || !caps.agentExecution) throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验要求 Docker 隔离，但 Docker/镜像不可用：${caps.image.reason || caps.docker.reason || 'unknown'}；拒绝 Chat 模型调用`);
+    } else {
+      throw new PolicyError('EXPERIMENT_ISOLATION_BLOCKED', `实验隔离方案 ${mode || 'EMPTY'} 未满足安全边界；拒绝 Chat 模型调用`);
+    }
+  }
+  const chatBinding = experiment?.provider_json?.chat;
+  if (chatBinding && (provider.name !== chatBinding.provider || String(provider.model || '').toLowerCase() !== String(chatBinding.model || '').toLowerCase())) {
+    throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Chat 实际模型 ${provider.name}/${provider.model} 与实验授权 ${chatBinding.provider}/${chatBinding.model} 不匹配`);
+  }
   const budget = assertModelBudget({ config, store, provider: provider.name, model: provider.model, ...chatBudgetEstimate(provider.name, provider.model), label: '对话模型', reserve: true, requestKey: budgetRequestKey, reservationId: budgetReservationId, experimentId: experiment?.id || '', experimentScope: provider.name === 'glm' ? 'glm' : 'global' });
   const history = store.listConversationMessages(conversation.id).slice(-12).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 4000) }));
   // 最新用户消息已由 server 保存；从历史尾部去掉，避免模型收到重复内容。
@@ -87,6 +102,8 @@ export async function startDevelopment({ config, store, orchestrator, loops, con
     return { conversation, project: store.getProject(conversation.project_id), loop: conversation.loop_id ? loops.get(conversation.loop_id) : null, existing: true };
   }
   let project = projectId ? store.getProject(projectId) : (conversation.project_id ? store.getProject(conversation.project_id) : null);
+  const experiment = store.getExperimentForConversation?.(conversation.id) || (project ? store.getExperimentForProject?.(project.id) : null);
+  if (experiment && !['authorized', 'running'].includes(experiment.status)) throw new PolicyError('EXPERIMENT_NOT_ACTIVE', `实验契约当前状态 ${experiment.status}，不能创建新的付费开发；请重新授权`);
   if (!project) {
     if (!conversation.goal || !Array.isArray(conversation.brief_json?.acceptance) || !conversation.brief_json.acceptance.length) {
       throw new PolicyError('GOAL_NOT_READY', '还没有确认产品目标和验收标准，不能开始开发');
@@ -123,12 +140,18 @@ export async function startDevelopment({ config, store, orchestrator, loops, con
       ciRequired: false,
       supervisorManaged: true,
       publish: false,
+      agentKind: experiment?.provider_json?.coding?.client || 'auto',
+      auditProvider: experiment?.provider_json?.audit?.client === 'dsh' ? 'dsh' : 'auto',
+      config: experiment ? { agent_isolation: 'docker', test_isolation: 'docker' } : undefined,
     });
     // 先持久化项目关联：即使后续 commit/Loop 创建失败，重试也复用同一项目，不重复建项目。
-    const experiment = store.getExperimentForConversation?.(conversation.id);
-    if (experiment) store.linkExperimentProject?.(experiment.id, project.id);
+    if (experiment) store.linkExperimentProject?.(experiment.id, project.id, { conversationId: conversation.id });
     store.updateConversation(conversation.id, { project_id: project.id, title: conversation.title, goal: conversation.goal });
     await gitops.commitAll(localPath, 'chore: initialize chat product');
+  }
+  if (experiment && project) {
+    orchestrator.updateProject?.(project.id, { agentIsolation: 'docker', testIsolation: 'docker', agentKind: experiment.provider_json?.coding?.client || project.agent_kind, auditProvider: experiment.provider_json?.audit?.client === 'dsh' ? 'dsh' : project.audit_provider });
+    store.linkExperimentProject?.(experiment.id, project.id, { conversationId: conversation.id });
   }
   const active = store.listLoops({ projectId: project.id }).find((l) => ['running', 'paused'].includes(l.status));
   if (active) {

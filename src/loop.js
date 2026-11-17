@@ -546,6 +546,8 @@ export class LoopManager {
     if (!loopStillRunning(this.store, loop.id)) return { ok: false, cancelled: true, audit };
     if (audit?.ok) {
       if (!loopStillRunning(this.store, loop.id)) return { ok: false, cancelled: true, audit };
+      const exp = this.store.getExperimentForProject?.(project.id);
+      if (exp) this.store.endExperiment?.(exp.id, 'completed', '产品级验收 PASS，终止新增付费调用');
       if (latestRun) {
         this.store.updateRun(latestRun.id, {
           result_json: { ...(latestRun.result_json || {}), productAcceptance: 'PASS', productAcceptanceAuditId: audit.auditRow?.id || '', productPlanHead: planHead, productAcceptanceAt: nowIso() },

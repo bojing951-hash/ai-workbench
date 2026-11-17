@@ -19,7 +19,7 @@ function mk() {
 }
 function contract(store, patch = {}) {
   return store.createExperimentContract({
-    projectId: 'p-exp', authorizedBy: 'user:test', authorizationSource: 'user_cli_tty', authorizationText: 'I_AUTHORIZE_E2E_BUDGET_V1',
+    projectId: 'p-exp', authorizedBy: 'user:test', authorizationSource: 'user_cli_tty', authorizationText: 'I_AUTHORIZE_E2E_BUDGET_V1', provider: { coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' }, audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' } },
     tokenLimit: 10_000, costLimitCny: 80, stopLossCny: 72, callLimit: 50,
     deadlineAt: new Date(Date.now() + 3600_000).toISOString(),
     glmTokenLimit: 4_000_000, glmCostLimitCny: 40, dshTokenLimit: 2_000_000, dshCostLimitCny: 30,
@@ -191,5 +191,60 @@ test('v3.4 隔离：执行值必须是 docker 而非 container；容器请求标
     const exp = contract(store, { projectId: 'p-container', isolationMode: 'DOCKER_REQUIRED' });
     await assert.rejects(o.startRun({ projectId: wrong.id, goal: 'x', mode: 'single', tasks: [] }), /EXPERIMENT_ISOLATION_BLOCKED|Docker|docker|隔离/);
     assert.equal(store.getExperimentContract(exp.id).status, 'authorized');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.4 P1：实验完成后终态持久化，Chat/Planner/Coding/Audit 新预留全部拒绝，历史不删除', () => {
+  const { root, store } = mk();
+  try {
+    const exp = contract(store, { tokenLimit: 100_000, callLimit: 50 });
+    const r = reserve(store, exp, 'done-1', 100);
+    store.settleModelReservation(r.reservation.id, { actualTokens: 100, usageKnown: true });
+    store.endExperiment(exp.id, 'completed', 'product PASS');
+    const terminal = store.getExperimentForProject('p-exp');
+    assert.equal(terminal.status, 'completed');
+    assert.ok(terminal.ended_at);
+    for (const [id, scope] of [['chat-after', 'global'], ['planner-after', 'global'], ['coding-after', 'glm'], ['audit-after', 'dsh']]) {
+      const x = reserve(store, exp, id, 100, 0.01, { experimentScope: scope, provider: scope === 'glm' ? 'glm' : 'deepseek', exemptGlobal: scope === 'glm' });
+      assert.equal(x.ok, false, `${id} 必须被实验终态拒绝`);
+    }
+    assert.equal(store.listModelReservations().length, 1, '历史预留不得删除');
+    assert.equal(store.experimentUsage(exp.id).calls, 1, '历史用量不得清空');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.4 P0-3：非 GLM 新增费用 ¥10 分项限制与单次最大输出 Token', () => {
+  const { root, store } = mk();
+  try {
+    const exp = contract(store, { tokenLimit: 1_000_000, costLimitCny: 80, stopLossCny: 72, callLimit: 50, nonGlmCostLimitCny: 10, perCallMaxTokens: 1000 });
+    const a = reserve(store, exp, 'ng-1', 100, 9.90);
+    assert.equal(a.ok, true);
+    const b = reserve(store, exp, 'ng-2', 100, 0.20);
+    assert.equal(b.ok, false); assert.equal(b.reason, 'experiment-non-glm-cost-limit');
+    const c = reserve(store, exp, 'ng-3', 1001, 0.01);
+    assert.equal(c.ok, false); assert.equal(c.reason, 'experiment-per-call-token-limit');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v3.4 P0-2：Coding/Audit 模型身份必须与授权契约一致，禁止同族与不可用 CLI', async () => {
+  const { root, config, store } = mk();
+  try {
+    const { EventBus } = await import('../src/bus.js');
+    const { Orchestrator } = await import('../src/orchestrator.js');
+    const o = new Orchestrator({ config, store, bus: new EventBus(), deps: {} });
+    // 身份不匹配：授权 GLM，实际配置也是 GLM；但声明 provider=deepseek 应拒绝。
+    const exp = contract(store, { provider: { coding: { client: 'claude', provider: 'deepseek', model: 'deepseek-chat' }, audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' } } });
+    await assert.rejects(o.startRun({ projectId: 'p-exp', goal: 'x', mode: 'single', tasks: [] }), /EXPERIMENT_MODEL_MISMATCH|不匹配/);
+    // 同模型族：Coding GLM + Audit GLM 拒绝。
+    store.createProject({ id: 'p-same', name: 'same', localPath: root, defaultBranch: 'main' });
+    const exp2 = contract(store, { projectId: 'p-same', conversationId: 'same-family', provider: { coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' }, audit: { client: 'glm', provider: 'glm', model: 'glm-5.3' } } });
+    await assert.rejects(o.startRun({ projectId: 'p-same', goal: 'x', mode: 'single', tasks: [] }), /SAME_FAMILY|同模型族|MISMATCH/);
+    // CLI 不可用：DSH bin 指向不存在路径。
+    const badCfg = { ...config, agents: { ...config.agents, dsh: { ...config.agents.dsh, bin: '/no/such/dsh' } } };
+    const o2 = new Orchestrator({ config: badCfg, store, bus: new EventBus(), deps: {} });
+    store.createProject({ id: 'p-nocli', name: 'nocli', localPath: root, defaultBranch: 'main' });
+    const exp3 = contract(store, { projectId: 'p-nocli', conversationId: 'no-cli', provider: { coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' }, audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' } } });
+    await assert.rejects(o2.startRun({ projectId: 'p-nocli', goal: 'x', mode: 'single', tasks: [] }), /DSH|MODEL_MISMATCH|不可用/);
+    assert.equal(store.listModelReservations().length, 0, '模型绑定错误必须发生在任何付费预留之前');
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
