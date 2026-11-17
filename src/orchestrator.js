@@ -585,7 +585,7 @@ export class Orchestrator {
     }
 
     this.assertBudget(5_000);
-    assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner', experimentId: this.experimentIdForProject(project.id) });
+    assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner', experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
 
     const busy = this.store.activeRunForProject(project.id);
     if (busy) {
@@ -626,7 +626,7 @@ export class Orchestrator {
     let plannerReservation = null;
     try {
       // 原子预算预留：并发进程不能同时读到同一余额后越权调用。
-      plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id) });
+      plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
       const experimentPlanBinding = this.store.getExperimentForProject?.(project.id)?.provider_json?.planner || null;
       planResult = await planTasks({
         config: this.config,
@@ -1363,7 +1363,7 @@ export class Orchestrator {
           // 预留同时受单任务剩余额度和实验 per-call 上限约束。
           if (!agentIdentity.exempt || codingExperimentId) {
             const reserveEstimate = codingExperimentId ? codingReservation.tokens : Math.max(12_000, codingReservation.tokens);
-            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: reserveEstimate, label: 'Coding Agent', reserve: true, experimentId: codingExperimentId, experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global' });
+            agentReservation = assertModelBudget({ config: this.config, store: this.store, provider: agentIdentity.provider, model: agentIdentity.model || '', estimatedTokens: reserveEstimate, label: 'Coding Agent', reserve: true, experimentId: codingExperimentId, experimentScope: agentIdentity.provider === 'glm' ? 'glm' : 'global', experimentRole: 'coding', experimentClient: agentId });
           }
           const watchdog = await this.runAgentWithWatchdog({
             agentId,
@@ -1623,7 +1623,7 @@ export class Orchestrator {
         try {
           if (this.deps.runAudit === runAudit && auditResourceInfo && ((!auditResourceInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
             const mainAuditProvider = this.isDshAuditProject(project) ? 'deepseek' : auditResourceInfo.provider;
-            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: mainAuditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, mainAuditProvider) });
+            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: mainAuditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, mainAuditProvider), experimentRole: 'audit', experimentClient: this.isDshAuditProject(project) ? 'dsh' : mainAuditProvider });
           }
           const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
           const diffStat = await gitops.diffStat(worktree, baseCommit);
@@ -2443,41 +2443,73 @@ export class Orchestrator {
     if (!meta?.archive || !fs.existsSync(meta.manifestFile)) throw new PolicyError('CHECKPOINT_MISSING', '恢复检查点不存在');
     let parsed;
     try { parsed = JSON.parse(fs.readFileSync(meta.manifestFile, 'utf8')); } catch { throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 无法解析'); }
-    if (!Array.isArray(parsed.manifest)) throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 结构非法');
+    if (!Array.isArray(parsed.manifest) || parsed.manifest.length > 5000) throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 结构非法');
     const manifestHash = crypto.createHash('sha256').update(JSON.stringify(parsed.manifest)).digest('hex');
     if (manifestHash !== meta.manifestHash) throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 哈希不匹配');
-    ensureDir(targetWorktree);
-    const rootResolved = path.resolve(targetWorktree);
-    const safePath = (rel) => {
+
+    const target = path.resolve(targetWorktree);
+    const parent = path.dirname(target);
+    ensureDir(parent);
+    const parentReal = fs.realpathSync(parent);
+    // macOS /var、/tmp 是系统别名；除这些已知别名外，目标父目录链中的符号链接一律拒绝。
+    const normalizedParent = parent.replace(/^\/var\//, '/private/var/').replace(/^\/tmp\//, '/private/tmp/');
+    if (parentReal !== normalizedParent) throw new PolicyError('CHECKPOINT_TARGET_PARENT_SYMLINK', `目标父目录包含符号链接：${parent} -> ${parentReal}`);
+    try { if (fs.lstatSync(target).isSymbolicLink()) throw new PolicyError('CHECKPOINT_TARGET_SYMLINK', `目标 Worktree 本身是符号链接：${target}`); } catch (err) { if (err?.code !== 'ENOENT') throw err; }
+
+    // 所有恢复先写入同文件系统临时目录，验证成功后再整体替换；失败不触碰现有 Worktree。
+    const staging = fs.mkdtempSync(path.join(parentReal, '.wb-restore-'));
+    let backup = '';
+    const safeStagePath = (rel) => {
       const norm = String(rel || '').replaceAll('\\', '/');
-      if (!norm || path.isAbsolute(norm) || norm.split('/').includes('..') || norm.includes('\0')) throw new PolicyError('CHECKPOINT_PATH_TRAVERSAL', `检查点路径非法：${rel}`);
-      const dest = path.resolve(rootResolved, norm);
-      if (!(dest === rootResolved || dest.startsWith(rootResolved + path.sep))) throw new PolicyError('CHECKPOINT_PATH_TRAVERSAL', `检查点路径越界：${rel}`);
+      if (!norm || path.isAbsolute(norm) || norm.split('/').includes('..') || norm.includes('\0') || norm === '.git' || norm.startsWith('.git/')) throw new PolicyError('CHECKPOINT_PATH_TRAVERSAL', `检查点路径非法：${rel}`);
+      const dest = path.resolve(staging, norm);
+      if (!dest.startsWith(staging + path.sep)) throw new PolicyError('CHECKPOINT_PATH_TRAVERSAL', `检查点路径越界：${rel}`);
       return dest;
     };
-    for (const f of parsed.manifest) {
-      const dest = safePath(f.path);
-      if (f.type === 'symlink') {
-        const target = String(f.target || '');
-        const resolved = path.resolve(path.dirname(dest), target);
-        if (path.isAbsolute(target) || !(resolved === rootResolved || resolved.startsWith(rootResolved + path.sep))) throw new PolicyError('CHECKPOINT_SYMLINK_UNSAFE', `符号链接越界：${f.path} -> ${target}`);
+    try {
+      for (const f of parsed.manifest) {
+        if (!f || !['file', 'symlink'].includes(String(f.type))) throw new PolicyError('CHECKPOINT_CORRUPT', `检查点条目类型非法：${f?.path}`);
+        const dest = safeStagePath(f.path);
+        if (f.type === 'symlink') {
+          const linkTarget = String(f.target || '');
+          const resolved = path.resolve(path.dirname(dest), linkTarget);
+          if (path.isAbsolute(linkTarget) || !(resolved === staging || resolved.startsWith(staging + path.sep))) throw new PolicyError('CHECKPOINT_SYMLINK_UNSAFE', `符号链接越界：${f.path} -> ${linkTarget}`);
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.symlinkSync(linkTarget, dest);
+          continue;
+        }
+        const src = path.join(meta.archive, f.path);
+        const buf = fs.readFileSync(src);
+        if (Number(f.size) >= 0 && buf.length !== Number(f.size)) throw new PolicyError('CHECKPOINT_CORRUPT', `检查点大小不匹配：${f.path}`);
+        if (crypto.createHash('sha256').update(buf).digest('hex') !== f.sha256) throw new PolicyError('CHECKPOINT_CORRUPT', `检查点文件哈希不匹配：${f.path}`);
         fs.mkdirSync(path.dirname(dest), { recursive: true });
-        try { fs.rmSync(dest, { force: true }); } catch { /* ignore */ }
-        fs.symlinkSync(target, dest);
-        continue;
+        fs.writeFileSync(dest, buf, { mode: f.mode || 0o644 });
+        if (f.mode) try { fs.chmodSync(dest, f.mode); } catch { /* ignore */ }
       }
-      const src = path.join(meta.archive, f.path);
-      const buf = fs.readFileSync(src);
-      if (crypto.createHash('sha256').update(buf).digest('hex') !== f.sha256) throw new PolicyError('CHECKPOINT_CORRUPT', `检查点文件哈希不匹配：${f.path}`);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.writeFileSync(dest, buf, { mode: f.mode || 0o644 });
-      if (f.mode) try { fs.chmodSync(dest, f.mode); } catch { /* ignore */ }
+      // 只复制 Worktree 的 .git 文件（不是目录）；.git 目录目标拒绝整体替换，避免丢仓库元数据。
+      const gitEntry = path.join(target, '.git');
+      if (fs.existsSync(gitEntry)) {
+        const stEntry = fs.lstatSync(gitEntry);
+        if (stEntry.isDirectory()) throw new PolicyError('CHECKPOINT_TARGET_GIT_UNSUPPORTED', '目标 Worktree 的 .git 是目录，拒绝整体恢复');
+        if (stEntry.isSymbolicLink()) throw new PolicyError('CHECKPOINT_TARGET_SYMLINK', '目标 .git 是符号链接，拒绝恢复');
+        fs.copyFileSync(gitEntry, path.join(staging, '.git'));
+      }
+      if (parsed.indexTree && fs.existsSync(path.join(staging, '.git'))) {
+        const idx = await gitops.git(staging, ['read-tree', parsed.indexTree], { allowFail: true });
+        if (idx.code !== 0) throw new PolicyError('CHECKPOINT_INDEX_RESTORE_FAILED', `Git index 恢复失败：${idx.stderr || idx.stdout}`);
+      }
+      if (fs.existsSync(target)) {
+        backup = `${target}.backup-${Date.now().toString(36)}`;
+        fs.renameSync(target, backup);
+      }
+      try { fs.renameSync(staging, target); } catch (err) { if (backup && !fs.existsSync(target)) fs.renameSync(backup, target); throw err; }
+      if (backup) fs.rmSync(backup, { recursive: true, force: true });
+      return { files: parsed.manifest.length, manifestHash, indexTree: parsed.indexTree || '' };
+    } catch (err) {
+      try { fs.rmSync(staging, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { if (backup && fs.existsSync(backup) && !fs.existsSync(target)) fs.renameSync(backup, target); } catch { /* ignore */ }
+      throw err;
     }
-    if (parsed.indexTree && fs.existsSync(path.join(targetWorktree, '.git'))) {
-      const idx = await gitops.git(targetWorktree, ['read-tree', parsed.indexTree], { allowFail: true });
-      if (idx.code !== 0) throw new PolicyError('CHECKPOINT_INDEX_RESTORE_FAILED', `Git index 恢复失败：${idx.stderr || idx.stdout}`);
-    }
-    return { files: parsed.manifest.length, manifestHash, indexTree: parsed.indexTree || '' };
   }
 
   async resumeRun(runId, { retryFailed = false, authorizeBudget = false } = {}) {
@@ -2714,7 +2746,7 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
     try {
       if (this.deps.runAudit === runAudit && auditInfo && ((!auditInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
         const paProvider = this.isDshAuditProject(project) ? 'deepseek' : auditInfo.provider;
-        reservation = assertModelBudget({ config: this.config, store: this.store, provider: paProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditInfo.model || ''), estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, paProvider) });
+        reservation = assertModelBudget({ config: this.config, store: this.store, provider: paProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditInfo.model || ''), estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, paProvider), experimentRole: 'audit', experimentClient: this.isDshAuditProject(project) ? 'dsh' : paProvider });
       }
       audit = await this.deps.runAudit({
         config: this.config, project,
@@ -2860,7 +2892,7 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
       try {
         if (this.deps.runAudit === runAudit && auditResourceInfo && ((!auditResourceInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
           const auditProvider = this.isDshAuditProject(project) ? 'deepseek' : auditResourceInfo.provider;
-          auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, auditProvider) });
+          auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, auditProvider), experimentRole: 'audit', experimentClient: this.isDshAuditProject(project) ? 'dsh' : auditProvider });
         }
         audit = await this.deps.runAudit({
           config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },

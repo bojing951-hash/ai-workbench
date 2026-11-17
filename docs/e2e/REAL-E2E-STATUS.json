@@ -14,15 +14,18 @@
   "accepted": false,
   "24h": "NOT_VERIFIED",
   "newAuthorizationRequired": true,
-  "engineeringReady": "PASS",
-  "engineeringFreeze": "FROZEN_CANDIDATE",
+  "engineeringReady": "FAIL",
+  "engineeringFreeze": "BLOCKED",
   "testExecution": "PASS",
   "productQualityLoop": "PASS_OFFLINE",
   "supervisorRecovery": "PASS",
   "dockerFencing": "PASS",
   "checkpointIntegrity": "PASS",
-  "independentReview": "PASS",
+  "independentReview": "PASS_WITH_DOCUMENTED_P1",
   "historicalE2E": "FAILED",
   "budgetRiskGate": "PASS",
-  "githubCi": "PASS"
+  "githubCi": "PASS",
+  "gitDbRecovery": "UNKNOWN",
+  "unknownBillingRecovery": "UNKNOWN",
+  "offlineE2E": "UNKNOWN"
 }

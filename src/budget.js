@@ -43,7 +43,11 @@ export function budgetSnapshot(store, config) {
   };
 }
 
-export function assertModelBudget({ config, store, provider, model = '', estimatedTokens = 2000, estimatedCostCny = 0.02, label = '模型调用', reserve = false, requestKey = '', reservationId = '', experimentId = '', experimentScope = '' }) {
+export function assertModelBudget({ config, store, provider, model = '', estimatedTokens = 2000, estimatedCostCny = 0.02, label = '模型调用', reserve = false, requestKey = '', reservationId = '', experimentId = '', experimentScope = '', experimentRole = '', experimentClient = '' }) {
+  if (experimentId && experimentRole) {
+    const gate = evaluateProviderRiskGate({ store, experimentId, binding: { client: experimentClient || provider, provider, model, role: experimentRole } });
+    if (!gate.ok) throw new PolicyError('BUDGET_RISK_BLOCKED', `${label}: 实验 Provider 风险准入失败（${gate.code}），禁止付费调用`, { experimentId, role: experimentRole });
+  }
   const identity = resolveLlmIdentity({ config, provider });
   const estimate = Math.max(1, Number(estimatedTokens || 0));
   const estCost = Number(estimatedCostCny || 0) || estimateCostCny(identity.provider, model || identity.model, { input: Math.round(estimate * 0.75), output: Math.round(estimate * 0.25) });
@@ -147,7 +151,7 @@ export function providerHasExecutableCostLimit({ client = '', provider = '', mod
 export function riskAcceptanceFor(experiment, binding = {}) {
   const entries = experiment?.provider_json?.risk?.unbounded;
   if (!Array.isArray(entries)) return null;
-  return entries.find((e) => e && String(e.client) === String(binding.client || '') && String(e.provider) === String(binding.provider || '') && String(e.model) === String(binding.model || '')
+  return entries.find((e) => e && String(e.client) === String(binding.client || '') && String(e.provider) === String(binding.provider || '') && String(e.model) === String(binding.model || '') && (!binding.role || String(e.role) === String(binding.role))
     && String(e.acceptedBy || '').trim().length >= 2 && String(e.acceptedAt || '').trim().length >= 10 && String(e.reason || '').trim().length >= 8) || null;
 }
 

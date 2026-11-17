@@ -54,7 +54,7 @@ test('v3.5 Checkpoint：tracked/untracked/staged/unstaged 全部保存并可校�
     assert.equal(parsed.verification_json.keep_field, 42);
     // 篡改归档 -> 必须拒绝，不得静默恢复
     const target = path.join(meta.archive, 'untracked.js'); fs.writeFileSync(target, 'tampered\n');
-    await assert.rejects(() => o.verifyAndRestoreCheckpoint(meta, path.join(root, 'restored2')), /CHECKPOINT_CORRUPT|哈希/);
+    await assert.rejects(() => o.verifyAndRestoreCheckpoint(meta, path.join(root, 'restored2')), /CHECKPOINT_CORRUPT|哈希|大小不匹配/);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -84,4 +84,31 @@ test('v35 Checkpoint：Git Index 恢复到新 Worktree，且路径穿越/陈旧�
     const badMeta = { ...meta, manifestHash: (await import('node:crypto')).createHash('sha256').update(JSON.stringify(parsed.manifest)).digest('hex') };
     await assert.rejects(() => o.verifyAndRestoreCheckpoint(badMeta, path.join(root, 'restore-bad')), /PATH_TRAVERSAL|越界|路径非法/);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('v35 Checkpoint：目标父目录符号链接/目标符号链接禁止恢复，外部无写入', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-escape-'));
+  try {
+    const { getConfig } = await import('../src/config.js');
+    const { openStore } = await import('../src/db.js');
+    const { EventBus } = await import('../src/bus.js');
+    const { Orchestrator } = await import('../src/orchestrator.js');
+    const repo = path.join(root, 'repo'); fs.mkdirSync(repo, { recursive: true });
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'x'); spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+    const wt = path.join(root, 'wt'); fs.mkdirSync(wt); fs.writeFileSync(path.join(wt, 'a.txt'), 'x');
+    const dataDir = path.join(root, 'data');
+    const config = getConfig({ root, paths: { root, dataDir, dbPath: path.join(dataDir, 't.db'), projectsDir: path.join(root, 'p'), worktreesDir: path.join(dataDir, 'w'), artifactsDir: path.join(dataDir, 'a'), logsDir: path.join(dataDir, 'l'), agentsDir: path.join(dataDir, 'ag'), dshHome: path.join(dataDir, 'ag/dsh'), claudeHome: path.join(dataDir, 'ag/claude') } });
+    const store = openStore(config.paths.dbPath);
+    try {
+      const o = new Orchestrator({ config, store, bus: new EventBus(), deps: {} });
+      const meta = await o.saveWorktreeCheckpoint({ run: { id: 'r' }, task: { id: 't' }, project: { id: 'p' }, worktree: wt });
+      const outside = path.join(root, 'outside'); fs.mkdirSync(outside);
+      const linkParent = path.join(root, 'link'); fs.symlinkSync(outside, linkParent);
+      await assert.rejects(() => o.verifyAndRestoreCheckpoint(meta, path.join(linkParent, 'target')), /PARENT_SYMLINK|符号链接/);
+      assert.equal(fs.existsSync(path.join(outside, 'a.txt')), false);
+      const targetLink = path.join(root, 'target-link'); fs.symlinkSync(outside, targetLink);
+      await assert.rejects(() => o.verifyAndRestoreCheckpoint(meta, targetLink), /TARGET_SYMLINK|符号链接/);
+      assert.equal(fs.existsSync(path.join(outside, 'a.txt')), false);
+    } finally { store.close(); }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

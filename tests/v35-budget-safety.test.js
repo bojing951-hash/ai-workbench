@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
-import { providerHasExecutableCostLimit, riskAcceptanceFor, evaluateProviderRiskGate, resolveCodingReservation } from '../src/budget.js';
+import { providerHasExecutableCostLimit, riskAcceptanceFor, evaluateProviderRiskGate, resolveCodingReservation, assertModelBudget } from '../src/budget.js';
 
 function mk() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-budget-'));
@@ -134,4 +134,20 @@ test('v35 预算语义：单任务额度与 per-call 上限取最小值，不允
   assert.equal(d.tokens, 600_000);
   const e = resolveCodingReservation({ perTaskTokens: 600_000, perCallMaxTokens: 5_000 });
   assert.equal(e.tokens, 5_000);
+});
+
+
+test('v35 统一风险门：Chat/Planner/Audit 在实验内同样默认阻断', () => {
+  const h = mk();
+  try {
+    const c = contract(h.store);
+    const bind = (role, client, provider, model) => ({ config: h.config, store: h.store, provider, model, estimatedTokens: 100, estimatedCostCny: 0.01, label: role, experimentId: c.id, experimentRole: role, experimentClient: client });
+    for (const [role, client, provider, model] of [['chat', 'deepseek', 'deepseek', 'deepseek-chat'], ['planner', 'deepseek', 'deepseek', 'deepseek-chat'], ['audit', 'dsh', 'deepseek', 'deepseek']]) {
+      assert.throws(() => assertModelBudget(bind(role, client, provider, model)), /BUDGET_RISK_BLOCKED|实验 Provider 风险准入失败/);
+    }
+    const risk = { unbounded: [{ role: 'chat', client: 'deepseek', provider: 'deepseek', model: 'deepseek-chat', acceptedBy: 'user', acceptedAt: new Date().toISOString(), reason: 'explicit chat risk acceptance' }] };
+    const c2 = contract(h.store, { projectId: 'p-chat', provider: { ...c.provider_json, risk } });
+    const r = assertModelBudget({ config: h.config, store: h.store, provider: 'deepseek', model: 'deepseek-chat', estimatedTokens: 100, estimatedCostCny: 0.01, label: 'chat', reserve: true, experimentId: c2.id, experimentRole: 'chat', experimentClient: 'deepseek' });
+    assert.ok(r.reservation?.id);
+  } finally { h.store.close(); fs.rmSync(h.root, { recursive: true, force: true }); }
 });
