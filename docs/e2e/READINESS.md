@@ -2,7 +2,7 @@
 
 生成时间：2026-11-17T05:30Z（Asia/Hong_Kong 13:30）
 Workbench：v3.3.0
-Git：分支 `v3.3.0`，源码提交 `e00b534`
+Git：分支 `v3.3.0`，源码提交 `AUTO_UPDATE`
 Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 
 ## 结论
@@ -24,7 +24,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 | Docker | 29.9.3，镜像 `ai-workbench-runtime:2.2` 可用 |
 | 容器测试 | `tests/container.test.js` 5/5 PASS（含真实容器执行） |
 | 全局预算 | max 3,620,000；remaining 121,011.8；费用 remaining ¥24.7544 |
-| 工程回归 | **336 tests / 336 pass / 0 skipped / 0 fail**（Docker 可用） |
+| 工程回归 | **337 tests / 337 pass / 0 skipped / 0 fail**（Docker 可用） |
 
 ## 真实 E2E 结果
 
