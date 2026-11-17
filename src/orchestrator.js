@@ -2452,7 +2452,10 @@ export class Orchestrator {
     ensureDir(parent);
     const parentReal = fs.realpathSync(parent);
     // macOS /var、/tmp 是系统别名；除这些已知别名外，目标父目录链中的符号链接一律拒绝。
-    const normalizedParent = parent.replace(/^\/var\//, '/private/var/').replace(/^\/tmp\//, '/private/tmp/');
+    let normalizedParent = parent;
+    // 仅修正 macOS 已知系统别名；Linux 的 /tmp 是真实目录，不能盲目替换。
+    if (parentReal.startsWith('/private/var/') && parent.startsWith('/var/')) normalizedParent = parent.replace(/^\/var\//, '/private/var/');
+    else if (parentReal.startsWith('/private/tmp/') && parent.startsWith('/tmp/')) normalizedParent = parent.replace(/^\/tmp\//, '/private/tmp/');
     if (parentReal !== normalizedParent) throw new PolicyError('CHECKPOINT_TARGET_PARENT_SYMLINK', `目标父目录包含符号链接：${parent} -> ${parentReal}`);
     try { if (fs.lstatSync(target).isSymbolicLink()) throw new PolicyError('CHECKPOINT_TARGET_SYMLINK', `目标 Worktree 本身是符号链接：${target}`); } catch (err) { if (err?.code !== 'ENOENT') throw err; }
 
