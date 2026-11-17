@@ -168,6 +168,18 @@ export function inspectTestFiles(root) {
   return { files, meaningful: meaningfulFiles, all: meaningful, product: meaningfulFiles.filter((f) => !f.file.includes('workbench-contract.test')) };
 }
 
+
+/** 区分测试命令/运行器兼容性错误与产品断言失败；回退只允许前者。 */
+export function classifyTestFailure(result = {}, command = '') {
+  const text = `${result.stdout || ''}\n${result.stderr || ''}`;
+  const runnerPattern = /Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|Cannot find package|command not found|ENOENT|ENOTDIR|not found|exit=127|spawn .* ENOENT|Unsupported|Unsupported engine/i;
+  const assertionPattern = /AssertionError|\bnot ok\b|\bfail\s+[1-9]|# fail|\bpass\s+[1-9]|✖\s+/i;
+  if (runnerPattern.test(text) && !/\bpass\s+[1-9]/i.test(text)) return 'runner_compatibility';
+  if (assertionPattern.test(text)) return 'product_assertion';
+  if (runnerPattern.test(text)) return 'runner_compatibility';
+  return 'unknown';
+}
+
 /** 独立于 Agent test script 的可信测试运行器；拒绝未覆盖/未引用产品代码的测试。 */
 export function trustedProductTestCommand(root, productFiles, { nodeBin = 'node' } = {}) {
   if (!productFiles.length) throw new PolicyError('TEST_PLAN_NO_PRODUCT_TESTS', '没有产品测试文件');

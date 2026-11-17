@@ -31,7 +31,7 @@ import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { deriveClausePlan } from './quality.js';
 import { assertModelBudget } from './budget.js';
-import { verifyContractBaseline, verifyTestBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount } from './contract.js';
+import { verifyContractBaseline, verifyTestBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount, classifyTestFailure } from './contract.js';
 import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
 import { AsyncSemaphore } from './semaphore.js';
@@ -1135,7 +1135,12 @@ export class Orchestrator {
       let evidence = validateTestEvidence({ project, worktree, command, result: res });
       // 测试命令本身可能是不可移植的包脚本（例如 node --test tests/），但产品测试可由独立可信运行器实际执行。
       // 仅当原命令确有测试文件、可信运行器真实通过时采用，绝不把退出码 0 当成测试证据。
-      if (!evidence.ok && evidence.code === 'TEST_EXIT_NONZERO' && Array.isArray(evidence.productTestFiles) && evidence.productTestFiles.length) {
+      const failureClass = classifyTestFailure(res, command);
+      const uncovered = (evidence.all || []).filter((f) => !f.meaningful && !String(f.file).includes('workbench-contract.test'));
+      // 只有明确是测试命令/运行器兼容性错误、且所有非冻结测试文件都被覆盖时，才允许可信回退。
+      // 产品断言失败、混合格式、遗漏文件一律保留 FAIL/BLOCKED，禁止用部分测试放行。
+      if (!evidence.ok && evidence.code === 'TEST_EXIT_NONZERO' && failureClass === 'runner_compatibility' && uncovered.length === 0 && Array.isArray(evidence.productTestFiles) && evidence.productTestFiles.length) {
+        const originalExit = res.code; const originalStdout = String(res.stdout || '').slice(-4000); const originalStderr = String(res.stderr || '').slice(-4000);
         try {
           const fallbackCmd = trustedProductTestCommand(worktree, evidence.productTestFiles, { nodeBin: this.containerTestRequested(project) ? 'node' : process.execPath });
           const fallbackRes = await runOnce(fallbackCmd, `${logPath}.trusted-fallback.log`);
@@ -1143,9 +1148,16 @@ export class Orchestrator {
           if (fallbackEvidence.ok) {
             res = fallbackRes; evidence = fallbackEvidence;
             res.testCommandFallback = fallbackCmd;
-            this.emit({ runId, projectId: project.id, taskId, type: 'test_command_fallback', level: 'warn', message: `原测试命令失败，已使用独立可信运行器实际执行产品测试：${fallbackCmd}`, data: { original: command, fallback: fallbackCmd, count: parseTestCount(fallbackRes.stdout, fallbackRes.stderr) } });
+            res.testFallbackEvidence = { reason: 'runner_compatibility', originalCommand: command, originalExit, originalStdout, originalStderr, fallbackCommand: fallbackCmd, files: evidence.productTestFiles, count: parseTestCount(fallbackRes.stdout, fallbackRes.stderr) };
+            this.emit({ runId, projectId: project.id, taskId, type: 'test_command_fallback', level: 'warn', message: `原测试命令属于运行器兼容性错误，已使用独立可信运行器覆盖 ${evidence.productTestFiles.length} 个产品测试文件：${fallbackCmd}`, data: res.testFallbackEvidence });
+          } else {
+            this.emit({ runId, projectId: project.id, taskId, type: 'test_command_fallback_failed', level: 'error', message: `可信运行器回退仍未通过：${fallbackEvidence.reason || fallbackEvidence.code}`, data: { fallbackCommand: fallbackCmd, code: fallbackEvidence.code } });
           }
-        } catch { /* keep original failure */ }
+        } catch (err) {
+          this.emit({ runId, projectId: project.id, taskId, type: 'test_command_fallback_failed', level: 'error', message: `可信运行器回退异常：${err.message}` });
+        }
+      } else if (!evidence.ok) {
+        this.emit({ runId, projectId: project.id, taskId, type: 'test_no_fallback', level: 'warn', message: `测试失败不满足可信回退条件（class=${failureClass}, uncovered=${uncovered.length}），保持 FAIL`, data: { failureClass, uncovered: uncovered.map((f) => f.file), code: evidence.code } });
       }
       res.realTestEvidence = evidence;
       if (!evidence.ok) throw new PolicyError(evidence.code || 'TEST_EVIDENCE_INVALID', `${evidence.reason}；真实测试未成立，不能进入审计/交付`);
@@ -1309,6 +1321,11 @@ export class Orchestrator {
         let agentReservation = null;
         try {
           const codingExperimentId = this.experimentIdForProject(project.id);
+          // 真实 Claude Code 只能在返回后知道实际 Token；没有调用中硬限额时，实验内默认 fail-closed，
+          // 不允许把“事后结算”冒充为可执行硬边界。显式授权风险后才可关闭此门。
+          if (codingExperimentId && this.deps.runAgent === runAgent && agentId === 'claude' && agentIdentity.provider === 'glm' && !this.config.budget.allowUnboundedProviderRisk) {
+            return this.failTask(run, task, 'BUDGET_RISK_UNBOUNDED：Claude Code/GLM 不支持调用中硬 Token 限额，实验预算无法保证单次调用不越线；已 fail-closed。若允许该风险，必须由用户显式设置 ALLOW_UNBOUNDED_PROVIDER_RISK=true 并重新授权。', 'blocked');
+          }
           const remaining = this.budget().remainingTokens;
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
           const perTaskCap = projectTaskCap > 0 ? projectTaskCap : this.config.budget.maxTokensPerTask;

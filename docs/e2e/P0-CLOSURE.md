@@ -44,3 +44,13 @@
 
 `ENGINEERING_FREEZE_BLOCKED`：预算无法保证硬上限，且真实 E2E 仍为 FAILED / 历史 OVERSPENT。  
 不宣布 `ENGINEERING_READY_FOR_REAL_E2E`。
+
+## 追加：P0 最终 fail-closed 收口
+
+- 实验内真实 Claude Code/GLM 默认 **fail-closed**：`ALLOW_UNBOUNDED_PROVIDER_RISK` 未显式设置为 true 时，拒绝启动无调用中硬 Token 限额的调用，返回 `BUDGET_RISK_UNBOUNDED`。
+- 显式允许风险必须由用户重新授权；这不是硬上限，只是把“无法保证调用在授权风险内结束”的配置标为 BLOCKED。
+- Coding 预留改为 `max(12k, perTaskTokens)`；`overspent/stop_loss_reached` 不会被 completed 覆盖。
+- 测试回退只允许 `runner_compatibility`，产品断言失败/混合 FAIL/遗漏测试文件/隐藏契约 FAIL 全部保持失败（负向 B/C/D/F）。
+- 最终全量：**351 tests / 351 pass / 0 skipped / 0 fail**。
+
+残余 P1：Supervisor Testing/Auditing/Committing 注入、Commit 后崩溃幂等恢复、宿主 Agent 孤儿进程清理仍未完全验证。

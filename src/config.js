@@ -80,6 +80,8 @@ export function buildConfig(overrides = {}) {
       maxTotalTokens: int(env.MAX_TOTAL_TOKENS, 3_000_000),
       maxCostCny: Number(env.MAX_COST_CNY ?? 30),
       maxTokensPerTask: int(env.MAX_TOKENS_PER_TASK, 600_000),
+      // 真实 Claude Code 没有调用中硬 Token 限额；实验内默认拒绝无界风险调用。
+      allowUnboundedProviderRisk: toBool(env.ALLOW_UNBOUNDED_PROVIDER_RISK, false),
       maxAttempts: int(env.MAX_ATTEMPTS, 2),
       maxAgentConcurrency: int(env.MAX_AGENT_CONCURRENCY, 2),
       minReserveTokens: int(env.MIN_RESERVE_TOKENS, 2_000),
