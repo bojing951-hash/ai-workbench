@@ -150,3 +150,19 @@ export function riskAcceptanceFor(experiment, binding = {}) {
   return entries.find((e) => e && String(e.client) === String(binding.client || '') && String(e.provider) === String(binding.provider || '') && String(e.model) === String(binding.model || '')
     && String(e.acceptedBy || '').trim().length >= 2 && String(e.acceptedAt || '').trim().length >= 10 && String(e.reason || '').trim().length >= 8) || null;
 }
+
+/**
+ * 统一实验 Provider 风险准入。返回 ok 不是费用硬上限，只表示：
+ * - Provider 具备可执行硬边界；或
+ * - 冻结实验契约中存在与 client/provider/model 精确匹配且哈希有效的用户风险许可。
+ */
+export function evaluateProviderRiskGate({ store, experimentId, binding = {} } = {}) {
+  const exp = store?.getExperimentContract?.(experimentId);
+  if (!exp) return { ok: false, code: 'EXPERIMENT_NOT_FOUND' };
+  if (!store.verifyExperimentContractHash(experimentId)) return { ok: false, code: 'EXPERIMENT_CONTRACT_HASH_INVALID' };
+  if (!['authorized', 'running'].includes(exp.status)) return { ok: false, code: 'EXPERIMENT_NOT_ACTIVE', status: exp.status };
+  if (providerHasExecutableCostLimit(binding)) return { ok: true, mode: 'executable-hard-limit', experiment: exp };
+  const accepted = riskAcceptanceFor(exp, binding);
+  if (!accepted) return { ok: false, code: 'BUDGET_RISK_UNBOUNDED' };
+  return { ok: true, mode: 'contract-risk-accepted', acceptance: accepted, experiment: exp };
+}

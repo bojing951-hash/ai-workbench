@@ -47,8 +47,9 @@
 
 ## 追加：P0 最终 fail-closed 收口
 
-- 实验内真实 Claude Code/GLM 默认 **fail-closed**：`ALLOW_UNBOUNDED_PROVIDER_RISK` 未显式设置为 true 时，拒绝启动无调用中硬 Token 限额的调用，返回 `BUDGET_RISK_UNBOUNDED`。
-- 显式允许风险必须由用户重新授权；这不是硬上限，只是把“无法保证调用在授权风险内结束”的配置标为 BLOCKED。
+- 实验内真实 Claude Code/GLM 默认 **fail-closed**：无 `provider_json.risk.unbounded` 冻结契约许可时，拒绝启动无调用中硬 Token 限额的调用，返回 `BUDGET_RISK_BLOCKED`。
+- 显式允许风险必须写入实验契约（provider_json.risk.unbounded，含授权人/时间/原因，并受契约哈希绑定）；环境变量不能授权。
+- 该许可不是硬上限，只是把“无法保证调用在授权风险内结束”的配置显式接受。
 - Coding 预留改为 `max(12k, perTaskTokens)`；`overspent/stop_loss_reached` 不会被 completed 覆盖。
 - 测试回退只允许 `runner_compatibility`，产品断言失败/混合 FAIL/遗漏测试文件/隐藏契约 FAIL 全部保持失败（负向 B/C/D/F）。
 - 最终全量：**355 tests / 355 pass / 0 skipped / 0 fail**。
@@ -78,3 +79,11 @@
 - 原始退出码/stdout/stderr、文件清单、命令完整保留。
 
 最终全量：**355 tests / 355 pass / 0 skipped / 0 fail**。
+
+## 独立复审后的补强
+
+- 运行时基础设施恢复现检查 `cleanup.failed[]`，不是只看 `cleanup.error`；
+- 风险许可门先验证实验契约哈希，再读取 `provider_json.risk.unbounded`；篡改契约许可失效；
+- 授权脚本新增 TTY 风险许可参数（client/provider/model/reason/acceptedBy/maxRiskTokens）；
+- 测试回退负向 E 现在包含可执行 lint 阶段，确保 mandatory-phase 守卫真实生效；
+- 最终全量仍为 355/355/0。

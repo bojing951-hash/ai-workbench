@@ -31,13 +31,23 @@ if (!projectId && !conversationId) { console.error('必须指定 --project-id �
 if (!authorizedBy) { console.error('必须指定 --authorized-by 实名'); process.exit(5); }
 const hours = Number(val('--hours', '6'));
 const now = Date.now();
+const riskClient = val('--risk-client', '');
+const riskProvider = val('--risk-provider', '');
+const riskModel = val('--risk-model', '');
+const riskReason = val('--risk-reason', '');
+const riskAcceptedBy = val('--risk-accepted-by', authorizedBy);
+const riskMaxTokens = Number(val('--risk-max-tokens', '0'));
+if ((riskClient || riskProvider || riskModel) && !(riskClient && riskProvider && riskModel && riskReason)) {
+  console.error('风险许可必须同时提供 --risk-client --risk-provider --risk-model --risk-reason');
+  process.exit(6);
+}
 const config = getConfig();
 const store = openStore(config.paths.dbPath);
 try {
   const contract = store.createExperimentContract({
     projectId, conversationId, authorizedBy,
     authorizationSource: 'user_cli_tty',
-    authorizationText: `${expected} project=${projectId} conversation=${conversationId} at=${new Date(now).toISOString()} tokenLimit=${val('--token-limit', '3620000')} costLimit=${val('--cost-limit', '80')} stopLoss=${val('--stop-loss', '72')} callLimit=${val('--call-limit', '50')} deadlineHours=${hours} glmTokens=${val('--glm-tokens', '4000000')} glmCost=${val('--glm-cost', '40')} dshTokens=${val('--dsh-tokens', '2000000')} dshCost=${val('--dsh-cost', '30')} nonGlmCost=${val('--non-glm-cost', '10')} perCallTokens=${val('--per-call-tokens', '20000')} isolation=${val('--isolation', 'BLOCKED_UNLESS_APPROVED')}`,
+    authorizationText: `${expected} project=${projectId} conversation=${conversationId} at=${new Date(now).toISOString()} tokenLimit=${val('--token-limit', '3620000')} costLimit=${val('--cost-limit', '80')} stopLoss=${val('--stop-loss', '72')} callLimit=${val('--call-limit', '50')} deadlineHours=${hours} glmTokens=${val('--glm-tokens', '4000000')} glmCost=${val('--glm-cost', '40')} dshTokens=${val('--dsh-tokens', '2000000')} dshCost=${val('--dsh-cost', '30')} nonGlmCost=${val('--non-glm-cost', '10')} perCallTokens=${val('--per-call-tokens', '20000')} risk=${riskClient ? `${riskClient}/${riskProvider}/${riskModel}:${riskReason}` : 'none'} isolation=${val('--isolation', 'BLOCKED_UNLESS_APPROVED')}`,
     contractVersion: val('--contract-version', 'e2e-budget-v1'),
     tokenLimit: Number(val('--token-limit', '3620000')),
     costLimitCny: Number(val('--cost-limit', '80')),
@@ -55,6 +65,7 @@ try {
       planner: { client: 'deepseek', provider: 'deepseek', model: 'deepseek-chat' },
       coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' },
       audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' },
+      ...(riskClient ? { risk: { unbounded: [{ client: riskClient, provider: riskProvider, model: riskModel, acceptedBy: riskAcceptedBy, acceptedAt: new Date(now).toISOString(), reason: riskReason, maxRiskTokens: riskMaxTokens }] } } : {}),
     },
     isolationMode: val('--isolation', 'BLOCKED_UNLESS_APPROVED'),
     stopConditions: ['product acceptance PASS', 'stopLoss', 'callLimit', 'deadline', 'budget exhausted', 'unrecoverable BLOCKED', 'user cancel'],

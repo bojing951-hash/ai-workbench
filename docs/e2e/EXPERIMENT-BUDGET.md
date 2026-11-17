@@ -80,3 +80,8 @@ node scripts/e2e-authorize.mjs \
 - 隔离未批准在规划前 BLOCKED 且零模型调用。
 
 完整套件：`demo/evidence/e2e-safety/tests.log`。
+
+
+## 无界 Provider 风险许可
+
+Claude Code/GLM 等无法在调用中强制 Token 硬上限的 Provider，实验内默认 BLOCKED。只有冻结实验契约包含 `provider_json.risk.unbounded`，且 client/provider/model 精确匹配、含授权人/时间/原因时，才能启动；该许可仍不构成绝对费用硬上限。授权脚本支持 `--risk-client --risk-provider --risk-model --risk-reason --risk-accepted-by`。

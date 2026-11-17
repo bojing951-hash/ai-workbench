@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getConfig } from '../src/config.js';
 import { openStore } from '../src/db.js';
-import { providerHasExecutableCostLimit, riskAcceptanceFor } from '../src/budget.js';
+import { providerHasExecutableCostLimit, riskAcceptanceFor, evaluateProviderRiskGate } from '../src/budget.js';
 
 function mk() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-budget-'));
@@ -107,6 +107,14 @@ test('v35 风险准入：默认无边界 Provider 被拒绝，风险许可必须
     const accepted = { client: 'claude', provider: 'glm', model: 'glm-5.3', acceptedBy: 'user', acceptedAt: new Date().toISOString(), reason: 'user accepted unbounded risk for this frozen experiment', maxRiskTokens: 250000 };
     const c2 = contract(h.store, { projectId: 'p2', provider: { ...base.provider_json, risk: { unbounded: [accepted] } } });
     assert.ok(riskAcceptanceFor(c2, { client: 'claude', provider: 'glm', model: 'glm-5.3' }));
+    const gate = evaluateProviderRiskGate({ store: h.store, experimentId: c2.id, binding: { client: 'claude', provider: 'glm', model: 'glm-5.3' } });
+    assert.equal(gate.ok, true);
+    assert.equal(gate.mode, 'contract-risk-accepted');
+    assert.equal(evaluateProviderRiskGate({ store: h.store, experimentId: c2.id, binding: { client: 'claude', provider: 'openai', model: 'gpt' } }).ok, false);
+    // 篡改冻结契约 provider_json 后，哈希校验必须让许可失效。
+    h.store.db.prepare('UPDATE experiment_contracts SET provider_json=? WHERE id=?').run(JSON.stringify({ ...c2.provider_json, risk: { unbounded: [{ ...accepted, provider: 'openai' }] } }), c2.id);
+    assert.equal(h.store.verifyExperimentContractHash(c2.id), false);
+    assert.equal(evaluateProviderRiskGate({ store: h.store, experimentId: c2.id, binding: { client: 'claude', provider: 'openai', model: 'gpt' } }).code, 'EXPERIMENT_CONTRACT_HASH_INVALID');
     assert.equal(riskAcceptanceFor(c2, { client: 'claude', provider: 'anthropic', model: 'claude' }), null);
     assert.equal(riskAcceptanceFor(c2, { client: 'claude', provider: 'openai', model: 'gpt' }), null);
     // 环境变量不是授权来源：contract 没 risk 时仍为 null

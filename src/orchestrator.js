@@ -30,7 +30,7 @@ import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { deriveClausePlan } from './quality.js';
-import { assertModelBudget, providerHasExecutableCostLimit, riskAcceptanceFor } from './budget.js';
+import { assertModelBudget, evaluateProviderRiskGate } from './budget.js';
 import { verifyContractBaseline, verifyTestBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount, classifyTestFailure } from './contract.js';
 import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
@@ -1332,13 +1332,14 @@ export class Orchestrator {
           // 唯一例外是冻结实验契约中按 client/provider/model 精确绑定的用户风险许可；
           // 环境变量、单独配置开关、重启或切换模型都不能绕过。
           const userPays = agentId !== 'custom' && agentIdentity.provider !== 'custom';
-          if (codingExperimentId && userPays && this.deps.runAgent === runAgent && !providerHasExecutableCostLimit({ client: agentId, provider: agentIdentity.provider, model: agentIdentity.model })) {
-            const exp = this.store.getExperimentContract(codingExperimentId);
-            const accepted = riskAcceptanceFor(exp, { client: agentId, provider: agentIdentity.provider, model: agentIdentity.model });
-            if (!accepted) {
-              return this.failTask(run, task, `BUDGET_RISK_UNBOUNDED：${agentId}/${agentIdentity.provider}/${agentIdentity.model || 'unknown'} 无调用中可执行费用硬边界，且冻结实验契约未包含匹配的用户风险许可；已 fail-closed，禁止启动付费调用。`, 'blocked');
+          if (codingExperimentId && userPays && this.deps.runAgent === runAgent) {
+            const gate = evaluateProviderRiskGate({ store: this.store, experimentId: codingExperimentId, binding: { client: agentId, provider: agentIdentity.provider, model: agentIdentity.model } });
+            if (!gate.ok) {
+              return this.failTask(run, task, `BUDGET_RISK_BLOCKED（${gate.code}）：${agentId}/${agentIdentity.provider}/${agentIdentity.model || 'unknown'} 没有可执行费用硬边界，且冻结实验契约没有有效匹配的风险许可；已 fail-closed，禁止启动付费调用。`, 'blocked');
             }
-            this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'budget_risk_accepted', level: 'warn', message: `使用实验契约内用户风险许可启动调用：${accepted.reason}（仍不宣称绝对费用硬上限）`, data: accepted });
+            if (gate.mode === 'contract-risk-accepted') {
+              this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'budget_risk_accepted', level: 'warn', message: `使用实验契约内用户风险许可启动调用：${gate.acceptance.reason}（仍不宣称绝对费用硬上限）`, data: gate.acceptance });
+            }
           }
           const remaining = this.budget().remainingTokens;
           const projectTaskCap = Number(project.budget_json?.max_tokens_per_task || 0);
@@ -1464,6 +1465,7 @@ export class Orchestrator {
                 const { cleanupOrphanContainers } = await import('./container.js');
                 const cleanup = await cleanupOrphanContainers({ config: this.config, store: this.store, log: (m) => this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'container_recovery', message: m }) });
                 if (cleanup?.error) throw new Error(cleanup.error);
+                if (cleanup?.failed?.length) throw new Error(`容器清理未确认：${cleanup.failed.map((x) => x.error).join('；').slice(0, 800)}`);
               } catch (e) { cleanupOk = false; this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'container_recovery_failed', level: 'warn', message: `容器清理失败，停止自动恢复：${e.message}` }); }
               if (!cleanupOk) {
                 const blocked = `${reason}；容器清理失败，拒绝启动冲突 Agent`;
