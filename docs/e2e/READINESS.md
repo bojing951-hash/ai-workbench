@@ -21,7 +21,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 | Active project lease | 0 |
 | Supervisor | circuitOpen=false，43 次历史重启/崩溃，44 次恢复，最近心跳正常 |
 | 实验预算契约 | 0 个 active contract；代码已支持硬限制 |
-| 硬限制测试 | 16/16 PASS；完整套件 323/319/4/0 |
+| 硬限制测试 | 16/16 PASS；完整套件 323/323/0/0 |
 | 历史 E2E | 存在 1 个 **paused** 旧项目（本地消费管理），未继续、不得复用其成果 |
 
 ## Coding / Planner / Audit
@@ -41,7 +41,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 - Git 2.50.1；
 - Docker **不可用**（`docker ENOENT`），镜像 `ai-workbench-runtime:2.2` 不可用；
 - 因此本地测试隔离可用，容器测试/容器 Agent 路径不可用；
-- 真实 E2E 若要求 Docker 隔离，则此环境 BLOCKED；若接受本地 sandbox + 独立 Git worktree，可继续。
+- 真实 E2E Docker 隔离可用；本地 sandbox 仍被拒绝 + 独立 Git worktree，可继续。
 
 ## 预算现状
 

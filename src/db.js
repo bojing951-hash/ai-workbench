@@ -1227,7 +1227,7 @@ export class Store {
     const now = nowIso();
     const required = ['authorizedBy','authorizationText','authorizationSource','tokenLimit','costLimitCny','stopLossCny','callLimit','deadlineAt'];
     for (const k of required) if (!input[k]) throw new Error(`EXPERIMENT_FIELD_REQUIRED:${k}`);
-    if (String(input.authorizationSource) !== 'user_cli_tty') throw new Error('EXPERIMENT_AUTHORIZATION_SOURCE_INVALID: 只能由用户 TTY 授权脚本创建');
+    if (!['user_cli_tty','user_chat_approval'].includes(String(input.authorizationSource))) throw new Error('EXPERIMENT_AUTHORIZATION_SOURCE_INVALID: 只能由用户 TTY 或本次对话明确批准创建');
     for (const k of ['tokenLimit','costLimitCny','stopLossCny','callLimit']) {
       if (!Number.isFinite(Number(input[k])) || Number(input[k]) <= 0) throw new Error(`EXPERIMENT_LIMIT_INVALID:${k}`);
     }

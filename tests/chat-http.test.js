@@ -152,7 +152,13 @@ test('v3.0 P0-4：Chat 接口超预算 fail-closed，不调用模型', async () 
 
 test('v3.4 P0-1：Chat-First 实验关联 → 项目 Docker/模型绑定 → 启动前 BLOCKED，零模型调用', { timeout: 30_000 }, async () => {
   const fake = await fakeUpstream();
-  const { root, config } = tempConfig(fake.base);
+  // 该失败路径必须稳定模拟 Docker 不可用，不依赖宿主是否安装 Docker；通过构造配置时环境覆盖，避免改写冻结 config。
+  const prevDockerBin = process.env.DOCKER_BIN;
+  process.env.DOCKER_BIN = '/no/such/docker';
+  let root; let config;
+  try { ({ root, config } = tempConfig(fake.base)); } finally {
+    if (prevDockerBin === undefined) delete process.env.DOCKER_BIN; else process.env.DOCKER_BIN = prevDockerBin;
+  }
   const store = openStore(config.paths.dbPath);
   const { server, base } = await startServer(config, store);
   try {

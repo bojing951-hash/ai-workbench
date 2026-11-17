@@ -36,14 +36,14 @@ export function containerConfig(config) {
 
 export function dockerAvailable({ dockerBin = 'docker' } = {}) {
   try {
-    const res = execCaptureSync(dockerBin, ['info', '--format', '{{.ServerVersion}}'], { timeout: 5000 });
+    const res = execCaptureSync(dockerBin, ['info', '--format', '{{.ServerVersion}}'], { timeout: 5_000 });
     return { available: res.code === 0, version: res.stdout.trim(), reason: res.code === 0 ? '' : res.stderr.slice(0, 300) };
   } catch (err) {
     return { available: false, version: '', reason: String(err?.message || err).slice(0, 300) };
   }
 }
 
-function execCaptureSync(cmd, args, { timeout = 5000 } = {}) {
+function execCaptureSync(cmd, args, { timeout = 5_000 } = {}) {
   // 轻量同步探测；仅在创建隔离能力时调用，不用于任务执行
   const res = spawnSync(cmd, args, { encoding: 'utf8', timeout, env: dockerEnv() });
   return { code: res.status ?? -1, stdout: res.stdout || '', stderr: res.stderr || res.error?.message || '' };
@@ -51,7 +51,7 @@ function execCaptureSync(cmd, args, { timeout = 5000 } = {}) {
 
 export function imageAvailable({ dockerBin = 'docker', image = DEFAULT_IMAGE } = {}) {
   try {
-    const res = execCaptureSync(dockerBin, ['image', 'inspect', image, '--format', '{{.Id}}'], { timeout: 5000 });
+    const res = execCaptureSync(dockerBin, ['image', 'inspect', image, '--format', '{{.Id}}'], { timeout: 5_000 });
     return { available: res.code === 0, id: (res.stdout || '').trim(), reason: res.code === 0 ? '' : (res.stderr || '').slice(0, 300) };
   } catch (err) {
     return { available: false, id: '', reason: String(err?.message || err).slice(0, 300) };

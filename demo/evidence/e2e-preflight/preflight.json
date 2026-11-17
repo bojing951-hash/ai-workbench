@@ -4,7 +4,7 @@
   "version": "3.3.0",
   "health": true,
   "git": {
-    "head": "97540ba77de1e6a277c7041bf401214ef38a951a",
+    "head": "faf2911fa292477b44366887d09a70fb82a37f1d",
     "branch": "v3.3.0"
   },
   "agents": [
@@ -56,17 +56,17 @@
     }
   },
   "container": {
-    "docker": false,
-    "dockerReason": "docker ENOENT; podman/colima/nerdctl/lima also missing",
+    "docker": true,
+    "dockerReason": "",
     "image": "ai-workbench-runtime:2.2",
-    "imageAvailable": false,
-    "testExecution": false,
-    "agentExecution": false
+    "imageAvailable": true,
+    "testExecution": true,
+    "agentExecution": true
   },
   "budget": {
-    "maxTokens": 3000000,
-    "usedTokens": 41525730,
-    "usedBudgetTokens": 3495479,
+    "maxTokens": 3620000,
+    "usedTokens": 42789871,
+    "usedBudgetTokens": 3498988,
     "projectAudit": {
       "tokensIn": 564080,
       "tokensOut": 426701,
@@ -80,42 +80,42 @@
       "glm"
     ],
     "glm": {
-      "tokensIn": 1372957,
-      "tokensOut": 508363,
-      "tokensCache": 18036032,
-      "tokens": 19917352,
-      "costCny": 121.52835712,
+      "tokensIn": 1428673,
+      "tokensOut": 553752,
+      "tokensCache": 19194752,
+      "tokens": 21177177,
+      "costCny": 130.13666992,
       "known": true,
       "baseProvider": "glm"
     },
     "nonGlm": {
-      "tokensIn": 1150350,
-      "tokensOut": 442671,
-      "tokensCache": 19024576,
-      "costCny": 15.237486953600001,
+      "tokensIn": 1152721,
+      "tokensOut": 443720,
+      "tokensCache": 19025472,
+      "costCny": 15.2456196992,
       "names": [
         "deepseek@unknown",
         "deepseek",
         "glm@unknown"
       ],
-      "tokens": 20617597
+      "tokens": 20621913
     },
     "byProvider": {
       "deepseek@unknown": {
-        "tokensIn": 751923,
-        "tokensOut": 280646,
-        "tokensCache": 17255040,
-        "tokens": 18287609,
-        "costCny": 5.8432179456,
+        "tokensIn": 753787,
+        "tokensOut": 281413,
+        "tokensCache": 17255936,
+        "tokens": 18291136,
+        "costCny": 5.8494758112000005,
         "known": false,
         "baseProvider": "deepseek"
       },
       "deepseek": {
-        "tokensIn": 138749,
-        "tokensOut": 25903,
+        "tokensIn": 139256,
+        "tokensOut": 26185,
         "tokensCache": 686208,
-        "tokens": 850860,
-        "costCny": 0.4971365280000001,
+        "tokens": 851649,
+        "costCny": 0.49901140800000005,
         "known": true,
         "baseProvider": "deepseek"
       },
@@ -129,46 +129,46 @@
         "baseProvider": "glm"
       },
       "glm": {
-        "tokensIn": 1372957,
-        "tokensOut": 508363,
-        "tokensCache": 18036032,
-        "tokens": 19917352,
-        "costCny": 121.52835712,
+        "tokensIn": 1428673,
+        "tokensOut": 553752,
+        "tokensCache": 19194752,
+        "tokens": 21177177,
+        "costCny": 130.13666992,
         "known": true,
         "baseProvider": "glm"
       }
     },
-    "maxCostCny": 30,
-    "usedCostCny": 140.6181,
-    "usedBudgetCostCny": 15.2375,
+    "maxCostCny": 40,
+    "usedCostCny": 149.2345,
+    "usedBudgetCostCny": 15.2456,
     "reservedTokens": 0,
     "reservedCostCny": 0,
-    "remainingTokens": 0,
-    "remainingCostCny": 14.762513046399999,
-    "tokensPercent": 100,
-    "costPercent": 50.8,
+    "remainingTokens": 121011.80000000028,
+    "remainingCostCny": 24.7543803008,
+    "tokensPercent": 96.7,
+    "costPercent": 38.1,
     "breakdown": {
-      "tokensIn": 2523307,
-      "tokensOut": 951034,
-      "tokensCache": 37060608,
-      "tokens": 40534949,
-      "costCny": 136.7658440736,
+      "tokensIn": 2581394,
+      "tokensOut": 997472,
+      "tokensCache": 38220224,
+      "tokens": 41799090,
+      "costCny": 145.3822896192,
       "byProvider": {
         "deepseek@unknown": {
-          "tokensIn": 751923,
-          "tokensOut": 280646,
-          "tokensCache": 17255040,
-          "tokens": 18287609,
-          "costCny": 5.8432179456,
+          "tokensIn": 753787,
+          "tokensOut": 281413,
+          "tokensCache": 17255936,
+          "tokens": 18291136,
+          "costCny": 5.8494758112000005,
           "known": false,
           "baseProvider": "deepseek"
         },
         "deepseek": {
-          "tokensIn": 138749,
-          "tokensOut": 25903,
+          "tokensIn": 139256,
+          "tokensOut": 26185,
           "tokensCache": 686208,
-          "tokens": 850860,
-          "costCny": 0.4971365280000001,
+          "tokens": 851649,
+          "costCny": 0.49901140800000005,
           "known": true,
           "baseProvider": "deepseek"
         },
@@ -182,11 +182,11 @@
           "baseProvider": "glm"
         },
         "glm": {
-          "tokensIn": 1372957,
-          "tokensOut": 508363,
-          "tokensCache": 18036032,
-          "tokens": 19917352,
-          "costCny": 121.52835712,
+          "tokensIn": 1428673,
+          "tokensOut": 553752,
+          "tokensCache": 19194752,
+          "tokens": 21177177,
+          "costCny": 130.13666992,
           "known": true,
           "baseProvider": "glm"
         }
@@ -198,32 +198,32 @@
         "tokens": 990781,
         "costCny": 3.8522379168
       },
-      "budgetTokens": 3495478.5999999996,
-      "budgetCostCny": 15.237486953600001,
+      "budgetTokens": 3498988.1999999997,
+      "budgetCostCny": 15.2456196992,
       "glmUnlimited": true,
       "exemptProviders": [
         "glm"
       ],
       "glm": {
-        "tokensIn": 1372957,
-        "tokensOut": 508363,
-        "tokensCache": 18036032,
-        "tokens": 19917352,
-        "costCny": 121.52835712,
+        "tokensIn": 1428673,
+        "tokensOut": 553752,
+        "tokensCache": 19194752,
+        "tokens": 21177177,
+        "costCny": 130.13666992,
         "known": true,
         "baseProvider": "glm"
       },
       "nonGlm": {
-        "tokensIn": 1150350,
-        "tokensOut": 442671,
-        "tokensCache": 19024576,
-        "costCny": 15.237486953600001,
+        "tokensIn": 1152721,
+        "tokensOut": 443720,
+        "tokensCache": 19025472,
+        "costCny": 15.2456196992,
         "names": [
           "deepseek@unknown",
           "deepseek",
           "glm@unknown"
         ],
-        "tokens": 20617597
+        "tokens": 20621913
       },
       "cacheTokenWeight": 0.1
     },
@@ -267,13 +267,12 @@
     "tests": 16,
     "fullTests": {
       "total": 323,
-      "pass": 319,
-      "skipped": 4,
+      "pass": 323,
+      "skipped": 0,
       "fail": 0
     },
-    "noPaidCalls": true,
-    "chatFirstBinding": true,
-    "modelBinding": true,
-    "autoTermination": true
+    "noPaidCalls": false,
+    "realE2E": "FAILED",
+    "dockerIsolation": "PASS"
   }
 }

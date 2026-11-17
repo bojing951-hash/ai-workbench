@@ -1,0 +1,164 @@
+{
+  "status": "FAILED",
+  "reason": "Real E2E attempted under user-authorized budget and Docker. Coding Agent (Claude Code/GLM) produced a partial product but exceeded the 15-minute no-progress watchdog window; retries and auto-repair tasks were blocked by the authorized-model guard; no final product audit or acceptance. No PASS is claimed.",
+  "project": {
+    "id": "proj_mwk6j7n9bbd7f450",
+    "path": "projects/chat-本地消费记录小站-mwk6j7is",
+    "conversation": "conv_mwk6imxy5gfaz"
+  },
+  "loop": {
+    "id": "loop_mwk6j7rw263f3c67",
+    "status": "paused",
+    "stop_reason": "第 1 轮运行 run_mwk6wr0ye80cf236 状态为 paused：写租约丢失：当前执行者没有项目写租约，拒绝继续写入"
+  },
+  "runs": [
+    {
+      "id": "run_mwk6wr0ye80cf236",
+      "status": "paused",
+      "stop_reason": "写租约丢失：当前执行者没有项目写租约，拒绝继续写入"
+    },
+    {
+      "id": "run_mwk6sr4d13ad7951",
+      "status": "failed",
+      "stop_reason": "自动修复已接管：实验授权 Coding Agent=claude，实际候选=dsh；拒绝自动切换；任务「[Auto Repair 1/2] 实现记账单页应用骨架：记录增删改与 localStorage 持久化」未通过：实验授权 Coding Agent=claude，实际候选=dsh；拒绝自动切换"
+    },
+    {
+      "id": "run_mwk6oriy87ec16f1",
+      "status": "failed",
+      "stop_reason": "自动修复已接管：实验授权 Coding Agent=claude，实际候选=dsh；拒绝自动切换；任务「实现记账单页应用骨架：记录增删改与 localStorage 持久化」未通过：实验授权 Coding Agent=claude，实际候选=dsh；拒绝自动切换"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task_mwk6orj207bd1a27",
+      "status": "blocked",
+      "title": "实现记账单页应用骨架：记录增删改与 localStorage 持久化"
+    },
+    {
+      "id": "task_mwk6sr4f63423800",
+      "status": "blocked",
+      "title": "[Auto Repair 1/2] 实现记账单页应用骨架：记录增删改与 localStorage 持久化"
+    },
+    {
+      "id": "task_mwk6wr11088bbad3",
+      "status": "coding",
+      "title": "[Auto Repair 2/2] [Auto Repair 1/2] 实现记账单页应用骨架：记录增删改与 localStorage 持久化"
+    }
+  ],
+  "experiments": [
+    {
+      "id": "exp_mwk6iqcmtdt0me",
+      "status": "failed",
+      "contract_hash": "b5e2161384800c734123d9024d59d6d11f7fb72d99302d47254397137720f5f1",
+      "project_id": "proj_mwk6j7n9bbd7f450",
+      "usage": {
+        "calls": 10,
+        "tokens": 1300141,
+        "costCny": 8.676445545600002,
+        "byScope": {
+          "glm": {
+            "calls": 4,
+            "tokens": 1295825,
+            "costCny": 8.668312800000002
+          },
+          "global": {
+            "calls": 6,
+            "tokens": 4316,
+            "costCny": 0.008132745600000001
+          }
+        },
+        "rows": [
+          {
+            "scope": "glm",
+            "status": "settled",
+            "calls": 1,
+            "tokens": 1259825,
+            "cost": 8.608312800000002
+          },
+          {
+            "scope": "glm",
+            "status": "unknown",
+            "calls": 3,
+            "tokens": 36000,
+            "cost": 0.06
+          },
+          {
+            "scope": "global",
+            "status": "settled",
+            "calls": 6,
+            "tokens": 4316,
+            "cost": 0.008132745600000001
+          }
+        ]
+      }
+    },
+    {
+      "id": "exp_mwk8big22iji92",
+      "status": "failed",
+      "contract_hash": "53d4de85d0ee99a35118f2c98b08d06c345385711cbeb33d3a6f46c85aede5a7",
+      "project_id": "proj_mwk6j7n9bbd7f450",
+      "usage": {
+        "calls": 4,
+        "tokens": 48000,
+        "costCny": 0.08,
+        "byScope": {
+          "glm": {
+            "calls": 4,
+            "tokens": 48000,
+            "costCny": 0.08
+          }
+        },
+        "rows": [
+          {
+            "scope": "glm",
+            "status": "unknown",
+            "calls": 4,
+            "tokens": 48000,
+            "cost": 0.08
+          }
+        ]
+      }
+    }
+  ],
+  "budget": {
+    "maxTokens": 3620000,
+    "usedBudgetTokens": 3498988,
+    "remainingTokens": 121011.80000000028,
+    "maxCostCny": 40,
+    "usedBudgetCostCny": 15.2456,
+    "remainingCostCny": 24.7543803008
+  },
+  "docker": {
+    "available": true,
+    "version": "29.9.3",
+    "image": "ai-workbench-runtime:2.2",
+    "imageId": "sha256:9e49b11629a0fc1ec714905a404c04f315089ff12987578e9964c0df77879b69",
+    "testExecution": true,
+    "agentExecution": true,
+    "containerTests": "5/5 PASS"
+  },
+  "partialProduct": {
+    "path": "data/worktrees/proj_mwk6j7n9bbd7f450/run_mwk6wr0ye80cf236/task-1",
+    "checkpointCommit": "76cbd8b2ffa694bfd0ec2662370d37c06c257acd",
+    "tests": {
+      "total": 25,
+      "pass": 24,
+      "fail": 1,
+      "failure": "alerts.test.mjs: 无记录或无设置时无任何提示"
+    },
+    "finalProductAudit": false,
+    "finalSha": null
+  },
+  "authorization": {
+    "source": "user_chat_approval",
+    "approvedBy": "user:conversation-approval-2026-11-17",
+    "currentStatus": "FAILED_ATTEMPT_CONSUMED",
+    "newE2E": "requires fresh explicit user authorization"
+  },
+  "fullEngineeringTests": {
+    "total": 323,
+    "pass": 323,
+    "skipped": 0,
+    "fail": 0
+  }
+}

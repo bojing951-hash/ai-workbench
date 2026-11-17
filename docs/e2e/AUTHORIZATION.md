@@ -2,7 +2,9 @@
 
 ## 当前状态
 
-**AUTHORIZATION_REQUIRED / NOT APPROVED**
+**USER_APPROVED_2026-11-17 / ATTEMPT_CONSUMED / FAILED**
+
+用户已在本次对话明确批准全部预算参数，并授权安装 Docker。真实 E2E 已执行并失败（见 REAL-E2E-ATTEMPT.md）。**再次启动需要新的明确授权**。
 
 - 没有 `experiment_contracts` 有效授权记录；
 - 没有新增 E2E 付费调用；

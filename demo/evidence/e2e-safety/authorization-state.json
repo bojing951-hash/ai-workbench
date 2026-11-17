@@ -6,8 +6,10 @@
   "dockersAvailable": false,
   "fullTests": {
     "total": 323,
-    "pass": 319,
-    "skipped": 4,
+    "pass": 323,
+    "skipped": 0,
     "fail": 0
-  }
+  },
+  "realE2E": "FAILED",
+  "dockerIsolation": "PASS"
 }
