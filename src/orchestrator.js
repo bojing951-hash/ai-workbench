@@ -1220,6 +1220,12 @@ export class Orchestrator {
         baseCommit = await gitops.currentHead(worktree);
       }
       this.store.updateTask(task.id, { status: TaskStatus.PREPARING, worktree_path: worktree, branch, base_commit: baseCommit });
+      // 若上次已生成检查点但 Worktree 不存在/被重建，先校验并恢复所有未提交文件。
+      const savedCheckpoint = task.verification_json?.checkpoint || this.store.getTask(task.id)?.verification_json?.checkpoint;
+      if (savedCheckpoint?.archive) {
+        try { this.verifyAndRestoreCheckpoint(savedCheckpoint, worktree); this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'checkpoint_restored', message: `已从检查点恢复 ${savedCheckpoint.files || 0} 个文件（manifest ${String(savedCheckpoint.manifestHash || '').slice(0, 12)}）`, data: savedCheckpoint }); }
+        catch (err) { return this.failTask(run, task, `检查点损坏，拒绝继续：${err.message}`, 'blocked'); }
+      }
       this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'worktree_ready', message: `工作副本就绪：${branch}`, data: { worktree, baseCommit, planBranch } });
 
       const agentCandidates = await this.resolveAgentCandidates(project, task);
@@ -2332,6 +2338,56 @@ export class Orchestrator {
     return stopped;
   }
 
+  async saveWorktreeCheckpoint({ run, task, project, worktree }) {
+    if (!worktree) return null;
+    let st;
+    try { st = fs.statSync(worktree); } catch { return task.verification_json?.checkpoint || null; }
+    if (!st.isDirectory()) return task.verification_json?.checkpoint || null;
+    const base = path.join(this.config.paths.dataDir, 'checkpoints', run.id, task.id);
+    const tmpDir = path.join(base, `.tmp-${Date.now().toString(36)}`);
+    const finalDir = path.join(base, `checkpoint-${Date.now().toString(36)}`);
+    ensureDir(tmpDir);
+    const manifest = [];
+    const walk = (dir, rel = '') => {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (ent.name === '.git' || ent.name === 'node_modules' || ent.name === '.workbench') continue;
+        const abs = path.join(dir, ent.name); const r = rel ? `${rel}/${ent.name}` : ent.name;
+        if (ent.isDirectory()) { walk(abs, r); continue; }
+        if (!ent.isFile()) continue;
+        const buf = fs.readFileSync(abs);
+        manifest.push({ path: r, size: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex') });
+        fs.mkdirSync(path.dirname(path.join(tmpDir, r)), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, r), buf);
+      }
+    };
+    try { walk(worktree); } catch (err) { fs.rmSync(tmpDir, { recursive: true, force: true }); throw new PolicyError('CHECKPOINT_CAPTURE_FAILED', `工作副本检查点保存失败：${err.message}`); }
+    let head = ''; let tree = ''; let branch = task.branch || '';
+    try { head = await gitops.currentHead(worktree); tree = (await gitops.git(worktree, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim(); branch = (await gitops.git(worktree, ['branch', '--show-current'], { allowFail: true })).stdout.trim() || branch; } catch { /* best effort */ }
+    const meta = { version: 1, runId: run.id, taskId: task.id, projectId: project.id, attempt: task.attempt || 0, sessionId: task.session_id || '', branch, head, tree, worktree, files: manifest.length, manifestHash: crypto.createHash('sha256').update(JSON.stringify(manifest)).digest('hex'), createdAt: nowIso() };
+    fs.writeFileSync(path.join(tmpDir, 'checkpoint.json'), JSON.stringify({ ...meta, manifest }, null, 2));
+    fs.renameSync(tmpDir, finalDir);
+    return { ...meta, archive: finalDir, manifestFile: path.join(finalDir, 'checkpoint.json') };
+  }
+
+  verifyAndRestoreCheckpoint(meta, targetWorktree) {
+    if (!meta?.archive || !fs.existsSync(meta.manifestFile)) throw new PolicyError('CHECKPOINT_MISSING', '恢复检查点不存在');
+    let parsed;
+    try { parsed = JSON.parse(fs.readFileSync(meta.manifestFile, 'utf8')); } catch { throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 无法解析'); }
+    if (!Array.isArray(parsed.manifest)) throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 结构非法');
+    const manifestHash = crypto.createHash('sha256').update(JSON.stringify(parsed.manifest)).digest('hex');
+    if (manifestHash !== meta.manifestHash) throw new PolicyError('CHECKPOINT_CORRUPT', '检查点 manifest 哈希不匹配');
+    ensureDir(targetWorktree);
+    for (const f of parsed.manifest) {
+      const src = path.join(meta.archive, f.path);
+      const buf = fs.readFileSync(src);
+      if (crypto.createHash('sha256').update(buf).digest('hex') !== f.sha256) throw new PolicyError('CHECKPOINT_CORRUPT', `检查点文件哈希不匹配：${f.path}`);
+      const dest = path.join(targetWorktree, f.path);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, buf);
+    }
+    return { files: parsed.manifest.length, manifestHash };
+  }
+
   async resumeRun(runId, { retryFailed = false, authorizeBudget = false } = {}) {
     const run = this.store.getRun(runId);
     if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
@@ -2359,9 +2415,15 @@ export class Orchestrator {
       ].includes(task.status);
       const needReset = intermediate || (retryFailed && [TaskStatus.FAILED, TaskStatus.BLOCKED].includes(task.status));
       if (!needReset) continue;
-      // 无损续跑：有效 worktree 必须保留；只有已损坏/不存在的工作副本才丢弃。
+      // 无损续跑：先保存完整检查点；有效 worktree 必须保留，损坏/不存在时也保留其恢复归档。
       let keepWorktree = false;
+      let checkpoint = task.verification_json?.checkpoint || null;
       if (task.worktree_path) {
+        if (checkpoint?.archive && !fs.existsSync(task.worktree_path)) {
+          // 已有归档，保留供 runTask 重建后恢复。
+        } else {
+          checkpoint = await this.saveWorktreeCheckpoint({ run, task, project: resumeProject, worktree: task.worktree_path });
+        }
         keepWorktree = (() => { try { return fs.existsSync(task.worktree_path) && fs.existsSync(path.join(task.worktree_path, '.git')); } catch { return false; } })();
         if (!keepWorktree) {
           await gitops.removeWorktree(resumeProject?.local_path || '', task.worktree_path).catch(() => {});
@@ -2378,6 +2440,7 @@ export class Orchestrator {
         session_id: task.session_id || '',
         head_commit: '',
         result_json: keepWorktree ? (task.result_json || {}) : {},
+        verification_json: { ...(task.verification_json && typeof task.verification_json === 'object' ? task.verification_json : {}), checkpoint: keepWorktree ? (checkpoint || task.verification_json?.checkpoint || null) : (checkpoint || task.verification_json?.checkpoint || null) },
       });
       this.emit({ runId, taskId: task.id, type: 'task_requeued', message: `任务 #${task.seq} 已重新排队，准备继续` });
     }

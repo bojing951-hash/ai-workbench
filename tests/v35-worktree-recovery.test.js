@@ -20,7 +20,9 @@ test('v3.5 恢复保留有效 worktree、文件与 session/checkpoint，不重�
   const config = getConfig({ root, paths: { root, dataDir, dbPath: path.join(dataDir, 'test.db'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(dataDir, 'worktrees'), artifactsDir: path.join(dataDir, 'artifacts'), logsDir: path.join(dataDir, 'logs'), agentsDir: path.join(dataDir, 'agents'), dshHome: path.join(dataDir, 'agents/dsh'), claudeHome: path.join(dataDir, 'agents/claude') }, llm: { openai: { apiKey: '' }, glm: { apiKey: 'g', baseUrl: 'https://open.bigmodel.cn/api/anthropic', model: 'glm-5.3' }, deepseek: { apiKey: 'd', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' } }, github: { token: '', createPr: false, push: false }, budget: { maxTotalTokens: 3_000_000, maxCostCny: 30, minReserveTokens: 0 } });
   const store = openStore(config.paths.dbPath);
   const worktree = path.join(dataDir, 'preserved-worktree');
-  fs.mkdirSync(worktree, { recursive: true }); fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: /tmp/nonexistent\n'); fs.writeFileSync(path.join(worktree, 'partial.js'), 'const partial = true;\n');
+  const add = spawnSync('git', ['worktree', 'add', '-b', 'wb/preserve', worktree, 'HEAD'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(add.status, 0, add.stderr);
+  fs.writeFileSync(path.join(worktree, 'partial.js'), 'const partial = true;\n');
   let orch;
   try {
     orch = new Orchestrator({ config, store, bus: new EventBus(), deps: { checkAgents: async () => [], chooseAgent: async () => 'claude', runAgent: async () => new Promise(() => {}), runAudit: async () => ({}) } });
@@ -36,7 +38,8 @@ test('v3.5 恢复保留有效 worktree、文件与 session/checkpoint，不重�
     assert.equal(task.status, 'queued');
     assert.equal(task.worktree_path, worktree);
     assert.equal(task.session_id, 'sess-preserve');
-    assert.equal(task.verification_json.checkpoint.head, 'abc123');
+    assert.ok(task.verification_json.checkpoint?.archive, '必须保存可校验检查点归档');
+    assert.ok(fs.existsSync(task.verification_json.checkpoint.manifestFile), '检查点 manifest 必须存在');
   } finally {
     try { await orch?.cancelRun('r-wt'); } catch { /* ignore */ }
     store.close(); fs.rmSync(root, { recursive: true, force: true });

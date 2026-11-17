@@ -19,6 +19,16 @@ import { PolicyError } from './policy.js';
 
 export const DEFAULT_IMAGE = 'ai-workbench-runtime:2.2';
 const RUN_LABEL = 'ai-workbench.container';
+const ACTIVE_WORKTREES = new Set();
+
+async function removeContainerVerified(bin, name) {
+  const rm = await execCapture(bin, ['rm', '-f', name], { env: safeDockerEnv(), timeoutMs: 30_000 });
+  if (rm.code !== 0 && !/No such container|not found/i.test(String(rm.stderr || ''))) {
+    throw new PolicyError('CONTAINER_CLEANUP_FAILED', `容器清理失败（rm exit=${rm.code}）：${String(rm.stderr || '').slice(0, 500)}`);
+  }
+  const inspect = await execCapture(bin, ['inspect', name], { env: safeDockerEnv(), timeoutMs: 10_000 });
+  if (inspect.code === 0) throw new PolicyError('CONTAINER_CLEANUP_UNCONFIRMED', `容器 ${name} 仍存在，拒绝启动新 Agent`);
+}
 
 export function containerConfig(config) {
   const c = config?.isolation?.container || {};
@@ -210,12 +220,8 @@ export async function runTestInContainer({
     };
   } finally {
     cleanupEnvFile(tmp);
-    // --rm 已处理正常退出；超时/abort 时强制清理可能残留的容器
-    try {
-      execCapture(bin, ['rm', '-f', name], { env: safeDockerEnv(), timeoutMs: 10_000 }).catch(() => {});
-    } catch {
-      /* ignore */
-    }
+    // --rm 已处理正常退出；超时/abort 时强制清理并确认容器消失。
+    await removeContainerVerified(bin, name).catch((err) => { throw err; });
   }
 }
 
@@ -261,6 +267,12 @@ export async function runAgentInContainer({
     });
   } catch (err) { cleanupEnvFile(tmp); throw err; }
   const name = args[args.indexOf('--name') + 1];
+  const lockKey = path.resolve(worktree);
+  if (ACTIVE_WORKTREES.has(lockKey)) {
+    cleanupEnvFile(tmp);
+    throw new PolicyError('CONTAINER_WORKTREE_BUSY', `同一 Worktree 已有 Coding Agent 容器在运行：${worktree}`);
+  }
+  ACTIVE_WORKTREES.add(lockKey);
   try {
     const startedAt = Date.now();
     const res = await execCapture(bin, args, {
@@ -273,7 +285,7 @@ export async function runAgentInContainer({
     };
   } finally {
     cleanupEnvFile(tmp);
-    try { execCapture(bin, ['rm', '-f', name], { env: safeDockerEnv(), timeoutMs: 10_000 }).catch(() => {}); } catch { /* ignore */ }
+    try { await removeContainerVerified(bin, name); } finally { ACTIVE_WORKTREES.delete(lockKey); }
   }
 }
 
