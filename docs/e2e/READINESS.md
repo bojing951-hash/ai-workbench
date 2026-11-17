@@ -7,7 +7,7 @@ Draft PR：https://github.com/bojing951-hash/ai-workbench/pull/15
 
 ## 结论
 
-**REAL_E2E_FAILED / RELIABILITY_REMEDIATED_NOT_RETRIED**
+**ENGINEERING_READY_FOR_REAL_E2E / REAL_E2E_HISTORICAL_FAILED**
 
 用户已于 2026-11-17 明确批准预算并授权安装 Docker。真实 E2E 已实际执行，但 Coding Agent 在 15 分钟无进展 watchdog 边界被中止，自动修复耗尽，产品未达到最终审计/验收。不是 PASS，也不是 BLOCKED；是真实的 FAILED。
 

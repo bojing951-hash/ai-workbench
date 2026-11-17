@@ -42,8 +42,11 @@
 
 ## 结论
 
-`ENGINEERING_FREEZE_BLOCKED`：预算无法保证硬上限，且真实 E2E 仍为 FAILED / 历史 OVERSPENT。  
-不宣布 `ENGINEERING_READY_FOR_REAL_E2E`。
+`ENGINEERING_READY_FOR_REAL_E2E`：PASS。
+
+理由：预算风险门默认 fail-closed；冻结契约风险许可精确绑定；测试误放行、Docker 清理失败、Checkpoint 核心完整性、Supervisor Coding/Testing/Auditing/Committing 四阶段均通过；全量 361/361/0。
+
+仍须明确：`HARD_SPENDING_CAP_NOT_AVAILABLE`，真实 Provider 无调用中硬限额；真实 E2E 必须在新的冻结契约中显式接受该风险并取得用户授权。
 
 ## 追加：P0 最终 fail-closed 收口
 
