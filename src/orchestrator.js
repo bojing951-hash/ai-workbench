@@ -2535,7 +2535,7 @@ export class Orchestrator {
       const journalDir = path.join(this.config.paths.dataDir, 'checkpoints', '.publish');
       ensureDir(journalDir);
       const journalFile = path.join(journalDir, `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.json`);
-      const journal = { target, staging, backup: '', state: 'prepared', stagingIndex, indexTarget, indexTree: parsed.indexTree || '', at: nowIso() };
+      const journal = { target, staging, backup: '', state: 'prepared', stagingIndex, indexTarget, indexTree: parsed.indexTree || '', manifest: parsed.manifest, at: nowIso() };
       const writeJournal = (state) => { journal.state = state; fs.writeFileSync(journalFile, JSON.stringify(journal), { mode: 0o600 }); };
       writeJournal('prepared');
       await this.checkpointPause('prepared');
@@ -2579,6 +2579,26 @@ export class Orchestrator {
         if (!target || !staging) throw new Error('journal-paths-missing');
         const stagingIndex = j.stagingIndex ? path.resolve(String(j.stagingIndex)) : '';
         const indexTarget = j.indexTarget ? path.resolve(String(j.indexTarget)) : '';
+        const diskMatchesManifest = () => {
+          if (!Array.isArray(j.manifest) || !j.manifest.length) return false;
+          try {
+            for (const f of j.manifest) {
+              if (!f || !f.path) return false;
+              const dest = path.resolve(target, String(f.path));
+              if (!dest.startsWith(target + path.sep)) return false;
+              if (f.type === 'symlink') {
+                if (!fs.lstatSync(dest).isSymbolicLink()) return false;
+                if (fs.readlinkSync(dest) !== String(f.target || '')) return false;
+              } else {
+                const st = fs.lstatSync(dest);
+                if (!st.isFile() || st.size !== Number(f.size)) return false;
+                const hash = crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
+                if (hash !== f.sha256) return false;
+              }
+            }
+            return true;
+          } catch { return false; }
+        };
         const diskTree = () => {
           if (!j.indexTree || !indexTarget) return '';
           const tmpIndex = path.join(path.dirname(target), `.wb-recover-index-${process.pid}-${Date.now().toString(36)}`);
@@ -2594,7 +2614,7 @@ export class Orchestrator {
           // 原目标仍在：staging 未发布，删除临时目录/独立 index，保留原目标。
           if (staging !== target && fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
           // 关键窗口：staging 已改名为 target（磁盘新版），但日志仍 backed-up、真实 Index 仍旧版。
-          const newDiskPendingIndex = j.indexTree && diskTree() === j.indexTree && stagingIndex && fs.existsSync(stagingIndex) && indexTarget;
+          const newDiskPendingIndex = (diskMatchesManifest() || (j.indexTree && diskTree() === j.indexTree)) && stagingIndex && fs.existsSync(stagingIndex) && indexTarget;
           if (newDiskPendingIndex) {
             fs.mkdirSync(path.dirname(indexTarget), { recursive: true });
             fs.copyFileSync(stagingIndex, indexTarget);
