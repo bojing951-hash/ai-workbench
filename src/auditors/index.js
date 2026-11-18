@@ -7,6 +7,7 @@
  * - 结论区分 PASS / FAIL / UNKNOWN，由代码硬校验，不信任模型自述。
  */
 import { completeJson, availableProviders } from '../llm.js';
+import { assertModelBudget } from '../budget.js';
 import {
   PolicyError,
   finalizeAuditVerdict,
@@ -200,6 +201,7 @@ export async function runAudit({
   signal = null,
   worktree = '',
   commit = '',
+  budget = null,
 }) {
   const acceptance = Array.isArray(task.acceptance_json) ? task.acceptance_json : [];
   if (acceptance.length === 0) {
@@ -241,6 +243,18 @@ export async function runAudit({
   const chunkResults = [];
   for (const chunk of chunks) {
     if (signal?.aborted) throw new PolicyError('AUDIT_ABORTED', '审计被取消');
+    let reservation = null;
+    if (budget?.store) {
+      reservation = assertModelBudget({
+        config, store: budget.store, provider: budget.provider, model: budget.model,
+        estimatedTokens: Number(budget.estimatedTokens || config.audit.resourceEstimateTokens || 8_000),
+        estimatedCostCny: Number(budget.estimatedCostCny || 0),
+        label: `审计分块 ${chunk.index + 1}/${chunks.length}`, reserve: true,
+        requestKey: `${budget.requestKey || `audit:${task?.id || 'task'}:${Date.now()}`}:chunk:${chunk.index}`,
+        experimentId: budget.experimentId || '', experimentScope: budget.experimentScope || '',
+        experimentRole: 'audit', experimentClient: budget.client || budget.provider,
+      });
+    }
     const prompt = buildAuditPrompt({
       project,
       task,
@@ -253,7 +267,17 @@ export async function runAudit({
       chunkMeta: chunks.length > 1 ? { index: chunk.index, total: chunk.total } : null,
       contextFiles,
     });
-    const res = await callAuditOnce({ config, provider, prompt, acceptance: chunks.length > 1 ? [] : acceptance, signal });
+    let res;
+    try {
+      res = await callAuditOnce({ config, provider, prompt, acceptance: chunks.length > 1 ? [] : acceptance, signal });
+    } catch (err) {
+      if (reservation?.reservation?.id) budget.store.markModelReservationUnknown(reservation.reservation.id);
+      throw err;
+    }
+    if (reservation?.reservation?.id) {
+      const u = summarizeUsage(res.usage || {});
+      budget.store.settleModelReservation(reservation.reservation.id, { actualTokens: u.total, actualCostCny: res.costCny || 0, usageKnown: !!(res.usage && u.total > 0) });
+    }
     chunkResults.push(res);
   }
 

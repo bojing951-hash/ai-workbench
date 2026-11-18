@@ -20,7 +20,7 @@ async function waitHealth(port, ms = 30_000) { const end = Date.now() + ms; whil
 async function api(port, token, method, p, body) { const res = await fetch(`http://127.0.0.1:${port}${p}`, { method, headers: { 'x-workbench-token': token, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }); let data = null; try { data = await res.json(); } catch { /* ignore */ } return { status: res.status, data }; }
 async function waitFor(fn, ms = 60_000) { const end = Date.now() + ms; let last; while (Date.now() < end) { try { last = await fn(); if (last) return last; } catch (err) { last = err; } await sleep(200); } throw new Error('timeout: ' + String(last)); }
 
-test('v3.5 Supervisor 自主重启并恢复 Auditing 阶段', { timeout: 180_000 }, async () => {
+test('v3.5 Supervisor 自主重启后审计发送未确认：不得未经授权重复发送（BLOCKED/PAUSED）', { timeout: 180_000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-supervisor-'));
   // Supervisor 以 root 为 cwd 启动 bin/workbench.js；用真实代码目录的符号链接，数据目录独立。
   fs.symlinkSync(path.join(REPO, 'bin'), path.join(root, 'bin'));
@@ -67,13 +67,11 @@ test('v3.5 Supervisor 自主重启并恢复 Auditing 阶段', { timeout: 180_000
     const afterState = await waitFor(() => { try { const s = JSON.parse(fs.readFileSync(statePath, 'utf8')); return s.childPid && s.childPid !== before.childPid && s.restarts?.length >= 1 ? s : null; } catch { return null; } }, 60_000);
     assert.ok(afterState.crashes.length >= 1, '必须记录 Workbench 崩溃');
     assert.equal(await waitHealth(port, 40_000), true, logText().slice(-3000));
-    const run = await waitFor(async () => { const d = await api(port, token, 'GET', `/api/runs/${runId}`); return d.data?.data?.status === 'awaiting_acceptance' ? d.data.data : null; }, 60_000);
+    const run = await waitFor(async () => { const d = await api(port, token, 'GET', `/api/runs/${runId}`); const st = d.data?.data?.status; return ['paused', 'failed', 'blocked'].includes(st) ? d.data.data : null; }, 50_000);
+    assert.notEqual(run.status, 'awaiting_acceptance');
     assert.equal(run.tasks.length, 1, '不得重复创建 Task');
-    assert.equal(run.tasks[0].status, 'passed');
-    const shown = spawnSync('git', ['show', `${run.tasks[0].head_commit}:implemented.js`], { cwd: repo, encoding: 'utf8' });
-    assert.equal(shown.status, 0, shown.stderr); assert.equal(shown.stdout.trim(), 'const implemented = true;');
-    const recoveredState = await waitFor(() => { try { const s = JSON.parse(fs.readFileSync(statePath, 'utf8')); return s.recoveries?.length >= 1 ? s : null; } catch { return null; } }, 20_000);
-    assert.ok(recoveredState.recoveries.length >= 1, 'Supervisor 必须记录恢复调用');
+    assert.notEqual(run.tasks[0].status, 'passed', '未确认审计不得被标记 passed');
+
     assert.ok(logText().includes('计划重启'), 'Supervisor 必须记录自动重启');
   } finally {
     try { supervisor.kill('SIGKILL'); } catch { /* ignore */ }

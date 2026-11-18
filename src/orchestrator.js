@@ -1621,9 +1621,16 @@ export class Orchestrator {
         let auditCommit = '';
         let provisionalCommit = null;
         try {
+          let auditBudget = null;
           if (this.deps.runAudit === runAudit && auditResourceInfo && ((!auditResourceInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
             const mainAuditProvider = this.isDshAuditProject(project) ? 'deepseek' : auditResourceInfo.provider;
-            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: mainAuditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, mainAuditProvider), experimentRole: 'audit', experimentClient: this.isDshAuditProject(project) ? 'dsh' : mainAuditProvider });
+            if (this.isDshAuditProject(project)) {
+              // DSH CLI 是单次外部审计；保留外层单笔预留。
+              auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: mainAuditProvider, model: 'deepseek', estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, mainAuditProvider), experimentRole: 'audit', experimentClient: 'dsh' });
+            } else {
+              // 分块审计：每个实际分块独立预留，避免外层再记一次。
+              auditBudget = { config: this.config, store: this.store, provider: mainAuditProvider, model: auditResourceInfo.model || '', estimatedTokens: Number(auditResourceInfo.estimate || 8_000), experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, mainAuditProvider), client: mainAuditProvider, requestKey: `audit:${run.id}:${task.id}:${attemptNo}` };
+            }
           }
           const repoFiles = await gitops.listTree(worktree, 'HEAD', { max: 150 });
           const diffStat = await gitops.diffStat(worktree, baseCommit);
@@ -1642,7 +1649,7 @@ export class Orchestrator {
             diff, diffStat, testResult: lastTest, repoFiles, coderFamily,
             versionInfo: { baseCommit, worktreeHash: testedHash, testedHash },
             worktree, commit: auditCommit,
-            signal,
+            signal, budget: auditBudget,
           });
         } catch (err) {
           if (auditReservation?.reservation?.id) this.store.markModelReservationUnknown(auditReservation.reservation.id);
@@ -2538,8 +2545,13 @@ export class Orchestrator {
       }
       const audit = this.store.listAudits(task.id).find((a) => a.id === v.auditId);
       if (!audit || String(audit.verification_status || '').toUpperCase() !== 'PASS') return false;
-      const planBranch = v.planBranch || `wb/plan-${run.id.slice(-6)}`;
-      await gitops.updateRef(project.local_path, planBranch, head);
+      const taskBranch = task.branch || '';
+      let planBranch = v.planBranch || '';
+      if (!planBranch || planBranch === taskBranch || !planBranch.startsWith('wb/plan-')) {
+        planBranch = (run.result_json?.planBranch && run.result_json.planBranch.startsWith('wb/plan-')) ? run.result_json.planBranch : `wb/plan-${run.id.slice(-6)}`;
+      }
+      // 只推进计划分支；任务分支可能正被 Worktree 检出，禁止 branch -f 到检出的任务分支（Git 128）。
+      if (planBranch !== taskBranch) await gitops.updateRef(project.local_path, planBranch, head);
       this.store.updateTask(task.id, {
         status: TaskStatus.PASSED,
         head_commit: head,
@@ -2798,16 +2810,21 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
     try { auditInfo = this.deps.runAudit === runAudit ? this.auditResourcePreflight(project, coderFamily) : { provider: 'fake', model: 'fake', exempt: true, estimate: 0 }; } catch (err) { return { ok: false, required: true, status: 'BLOCKED', reason: err.message, missing: expected }; }
     let audit;
     try {
+      let productAuditBudget = null;
       if (this.deps.runAudit === runAudit && auditInfo && ((!auditInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
         const paProvider = this.isDshAuditProject(project) ? 'deepseek' : auditInfo.provider;
-        reservation = assertModelBudget({ config: this.config, store: this.store, provider: paProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditInfo.model || ''), estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, paProvider), experimentRole: 'audit', experimentClient: this.isDshAuditProject(project) ? 'dsh' : paProvider });
+        if (this.isDshAuditProject(project)) {
+          reservation = assertModelBudget({ config: this.config, store: this.store, provider: paProvider, model: 'deepseek', estimatedTokens: Number(auditInfo.estimate || 8_000), label: 'Product Acceptance Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, paProvider), experimentRole: 'audit', experimentClient: 'dsh' });
+        } else {
+          productAuditBudget = { config: this.config, store: this.store, provider: paProvider, model: auditInfo.model || '', estimatedTokens: Number(auditInfo.estimate || 8_000), experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, paProvider), client: paProvider, requestKey: `product-audit:${project.id}:${planHead}` };
+        }
       }
       audit = await this.deps.runAudit({
         config: this.config, project,
         task: { id: latestTask?.id || 'product-acceptance', seq: 999, title: 'Product acceptance', acceptance_json: expected, agent_kind: latestTask?.agent_kind || 'auto' },
         diff, diffStat, testResult: latestTask?.result_json || {}, repoFiles, coderFamily, contextFiles,
         versionInfo: { commit: planHead, planHead, worktreeHash: planHead, testedHash: planHead },
-        worktree: project.local_path, commit: planHead,
+        worktree: project.local_path, commit: planHead, budget: productAuditBudget,
       });
     } catch (err) {
       if (reservation?.reservation?.id) this.store.markModelReservationUnknown(reservation.reservation.id);
@@ -2951,16 +2968,21 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
       const contextFiles = await this.collectAuditContext(worktree);
       this.assertProjectLease(project.id);
       let auditReservation = null;
+      let retryAuditBudget = null;
       let audit;
       try {
         if (this.deps.runAudit === runAudit && auditResourceInfo && ((!auditResourceInfo.exempt && !this.isDshAuditProject(project)) || this.experimentIdForProject(project.id))) {
           const auditProvider = this.isDshAuditProject(project) ? 'deepseek' : auditResourceInfo.provider;
-          auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditProvider, model: this.isDshAuditProject(project) ? 'deepseek' : (auditResourceInfo.model || ''), estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, auditProvider), experimentRole: 'audit', experimentClient: this.isDshAuditProject(project) ? 'dsh' : auditProvider });
+          if (this.isDshAuditProject(project)) {
+            auditReservation = assertModelBudget({ config: this.config, store: this.store, provider: auditProvider, model: 'deepseek', estimatedTokens: Number(auditResourceInfo.estimate || 8_000), label: 'Independent Audit', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, auditProvider), experimentRole: 'audit', experimentClient: 'dsh' });
+          } else {
+            retryAuditBudget = { config: this.config, store: this.store, provider: auditProvider, model: auditResourceInfo.model || '', estimatedTokens: Number(auditResourceInfo.estimate || 8_000), experimentId: this.experimentIdForProject(project.id), experimentScope: this.experimentScopeForProvider(project, auditProvider), client: auditProvider, requestKey: `retry-audit:${run.id}:${task.id}` };
+          }
         }
         audit = await this.deps.runAudit({
           config: this.config, project, task: { ...task, acceptance_json: task.acceptance_json },
           diff, diffStat, testResult, repoFiles, coderFamily, contextFiles,
-          versionInfo: { baseCommit, worktreeHash: testedHash, testedHash }, worktree, commit: '', signal: retrySignal,
+          versionInfo: { baseCommit, worktreeHash: testedHash, testedHash }, worktree, commit: '', signal: retrySignal, budget: retryAuditBudget,
         });
       } catch (err) {
         if (auditReservation?.reservation?.id) this.store.markModelReservationUnknown(auditReservation.reservation.id);
@@ -2996,7 +3018,11 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
         this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
         return { ok: false, reason, auditStatus };
       }
-      const planBranchForIntent = task.verification_json?.planBranch || run.result_json?.planBranch || task.branch || `wb/plan-${run.id.slice(-6)}`;
+      const taskBranch = task.branch || '';
+      const planBranchForIntent = (() => {
+        const candidate = task.verification_json?.planBranch || run.result_json?.planBranch || '';
+        return candidate && candidate !== taskBranch && candidate.startsWith('wb/plan-') ? candidate : `wb/plan-${run.id.slice(-6)}`;
+      })();
       this.store.updateTask(task.id, {
         status: TaskStatus.COMMITTING,
         verification_json: {
