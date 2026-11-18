@@ -2513,20 +2513,28 @@ export class Orchestrator {
       }
       // 只复制 Worktree 的 .git 文件（不是目录）；.git 目录目标拒绝整体替换，避免丢仓库元数据。
       const gitEntry = path.join(target, '.git');
+      let gitDir = ''; let stagingIndex = ''; let indexTarget = '';
       if (fs.existsSync(gitEntry)) {
         const stEntry = fs.lstatSync(gitEntry);
         if (stEntry.isDirectory()) throw new PolicyError('CHECKPOINT_TARGET_GIT_UNSUPPORTED', '目标 Worktree 的 .git 是目录，拒绝整体恢复');
         if (stEntry.isSymbolicLink()) throw new PolicyError('CHECKPOINT_TARGET_SYMLINK', '目标 .git 是符号链接，拒绝恢复');
+        const gitFileText = fs.readFileSync(gitEntry, 'utf8');
+        const m = gitFileText.match(/^gitdir:\s*(.+)$/m);
+        if (!m) throw new PolicyError('CHECKPOINT_TARGET_GIT_INVALID', '目标 .git 文件缺少 gitdir');
+        gitDir = path.resolve(path.dirname(target), m[1].trim());
+        stagingIndex = path.join(parentReal, `.wb-index-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+        indexTarget = path.join(gitDir, 'index');
         fs.copyFileSync(gitEntry, path.join(staging, '.git'));
       }
-      if (parsed.indexTree && fs.existsSync(path.join(staging, '.git'))) {
-        const idx = await gitops.git(staging, ['read-tree', parsed.indexTree], { allowFail: true });
+      if (parsed.indexTree && stagingIndex) {
+        // 独立 index：绝不能通过共享 .git 指针提前改写真实 Worktree 的 index。
+        const idx = await gitops.git(staging, ['read-tree', parsed.indexTree], { allowFail: true, env: { GIT_INDEX_FILE: stagingIndex } });
         if (idx.code !== 0) throw new PolicyError('CHECKPOINT_INDEX_RESTORE_FAILED', `Git index 恢复失败：${idx.stderr || idx.stdout}`);
       }
       const journalDir = path.join(this.config.paths.dataDir, 'checkpoints', '.publish');
       ensureDir(journalDir);
       const journalFile = path.join(journalDir, `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.json`);
-      const journal = { target, staging, backup: '', state: 'prepared', at: nowIso() };
+      const journal = { target, staging, backup: '', state: 'prepared', stagingIndex, indexTarget, at: nowIso() };
       const writeJournal = (state) => { journal.state = state; fs.writeFileSync(journalFile, JSON.stringify(journal), { mode: 0o600 }); };
       writeJournal('prepared');
       await this.checkpointPause('prepared');
@@ -2538,6 +2546,15 @@ export class Orchestrator {
         await this.checkpointPause('backed-up');
       }
       try { fs.renameSync(staging, target); writeJournal('published'); await this.checkpointPause('published'); } catch (err) { if (backup && !fs.existsSync(target)) fs.renameSync(backup, target); try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ } throw err; }
+      if (stagingIndex && indexTarget) {
+        try {
+          fs.mkdirSync(path.dirname(indexTarget), { recursive: true });
+          fs.copyFileSync(stagingIndex, indexTarget);
+          fs.rmSync(stagingIndex, { force: true });
+        } catch (err) {
+          throw new PolicyError('CHECKPOINT_INDEX_PUBLISH_FAILED', `真实 Index 发布失败：${err.message}`);
+        }
+      }
       if (backup) fs.rmSync(backup, { recursive: true, force: true });
       try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ }
       return { files: parsed.manifest.length, manifestHash, indexTree: parsed.indexTree || '' };
@@ -2559,13 +2576,26 @@ export class Orchestrator {
       const target = path.resolve(String(j.target || '')); const staging = path.resolve(String(j.staging || '')); const backup = j.backup ? path.resolve(String(j.backup)) : '';
       try {
         if (!target || !staging) throw new Error('journal-paths-missing');
+        const stagingIndex = j.stagingIndex ? path.resolve(String(j.stagingIndex)) : '';
+        const indexTarget = j.indexTarget ? path.resolve(String(j.indexTarget)) : '';
         if (fs.existsSync(target)) {
-          // 原目标仍在：staging 未发布，删除临时目录，保留原目标。
+          // 原目标仍在：staging 未发布，删除临时目录/独立 index，保留原目标。
           if (staging !== target && fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
+          if (stagingIndex && fs.existsSync(stagingIndex) && j.state !== 'published') fs.rmSync(stagingIndex, { force: true });
+          if (j.state === 'published' && stagingIndex && indexTarget && fs.existsSync(stagingIndex)) {
+            fs.mkdirSync(path.dirname(indexTarget), { recursive: true });
+            fs.copyFileSync(stagingIndex, indexTarget);
+            fs.rmSync(stagingIndex, { force: true });
+          }
           if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
           recovered.push({ file, result: 'kept-existing-target', state: j.state });
         } else if (fs.existsSync(staging)) {
           fs.renameSync(staging, target);
+          if (stagingIndex && indexTarget && fs.existsSync(stagingIndex)) {
+            fs.mkdirSync(path.dirname(indexTarget), { recursive: true });
+            fs.copyFileSync(stagingIndex, indexTarget);
+            fs.rmSync(stagingIndex, { force: true });
+          }
           if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
           recovered.push({ file, result: 'completed-publish', state: j.state });
         } else if (backup && fs.existsSync(backup)) {
