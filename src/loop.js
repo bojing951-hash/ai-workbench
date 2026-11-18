@@ -13,7 +13,7 @@ import * as gitops from './git.js';
 import { nowIso, newId } from './util.js';
 import { PolicyError, redact, modelFamily } from './policy.js';
 import { planNextTask } from './planner.js';
-import { assertModelBudget } from './budget.js';
+import { assertModelBudget, recordModelUsage } from './budget.js';
 import { buildCoverageMatrix, qualityConfig, repairTasksFromQuality, runQualityCommand } from './quality.js';
 
 function lastAttemptFamily(loop, store) {
@@ -405,7 +405,9 @@ export class LoopManager {
       } else {
         let plannerReservation = null;
         try {
-          plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner', reserve: true, experimentId: this.orchestrator?.experimentIdForProject?.(project.id) || '', experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
+          const plannerProvider = this.config.planner.provider || 'deepseek';
+          const plannerRequestKey = `planner:${id}:round:${loop.round}`;
+          plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: plannerProvider, model: this.config.planner.model || '', estimatedTokens: 5000, label: 'Planner', reserve: true, requestKey: plannerRequestKey, experimentId: this.orchestrator?.experimentIdForProject?.(project.id) || '', experimentScope: plannerProvider === 'glm' ? 'glm' : 'global', experimentRole: 'planner', experimentClient: plannerProvider });
           const planned = await this.planNextTask({
             config: this.config, project, goal: loop.goal,
             history: loop.history_json || [],
@@ -413,20 +415,29 @@ export class LoopManager {
             previousTasks: this.store.listTasks({ projectId: project.id }).slice(-20),
             plannerBinding: this.store.getExperimentForProject?.(project.id)?.provider_json?.planner || null,
           });
+          const plannerUsage = planned.usage || {};
+          const usageKnown = planned.usageKnown === true;
           if (plannerReservation?.reservation?.id) {
-            this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: Number(planned.usage?.input || 0) + Number(planned.usage?.output || 0) + Number(planned.usage?.cacheRead || 0) + Number(planned.usage?.cacheWrite || 0), actualCostCny: planned.costCny || 0, usageKnown: planned.usageKnown !== false });
+            // 生产结算入口：一次调用同时写 reservation、全局 llm_usage、实验账本；未知费用保持 UNKNOWN。
+            recordModelUsage({
+              store: this.store, config: this.config, source: 'planner', sourceId: plannerRequestKey,
+              provider: planned.provider || plannerProvider, model: planned.model || this.config.planner.model || '',
+              usage: plannerUsage, usageKnown, costCny: planned.costCny || 0,
+              runId: '', taskId: '', projectId: project.id,
+              experimentId: this.orchestrator?.experimentIdForProject?.(project.id) || '',
+              reservationId: plannerReservation.reservation.id,
+              costSource: usageKnown ? 'estimated' : 'unknown', budgetScope: plannerProvider === 'glm' ? 'glm' : 'global',
+            });
             plannerReservation = null;
           }
-          if (planned.usage) {
-            this.store.createAttempt({
-              id: newId('att'), runId: '', taskId: '', attemptNo: 0, stage: 'loop-planning',
-              agentKind: 'planner', provider: planned.provider || 'deepseek', model: planned.model || '',
-              status: 'completed', tokensIn: planned.usage.input || 0, tokensOut: planned.usage.output || 0,
-              tokensCache: (planned.usage.cacheRead || 0) + (planned.usage.cacheWrite || 0),
-              costCny: planned.costCny || 0, costReported: false, costSource: 'estimated',
-              durationMs: 0, logPath: '',
-            });
-          }
+          this.store.createAttempt({
+            id: newId('att'), runId: '', taskId: '', attemptNo: 0, stage: 'loop-planning',
+            agentKind: 'planner', provider: planned.provider || plannerProvider, model: planned.model || this.config.planner.model || '',
+            status: 'completed', tokensIn: Number(plannerUsage.input || 0), tokensOut: Number(plannerUsage.output || 0),
+            tokensCache: Number(plannerUsage.cacheRead || 0) + Number(plannerUsage.cacheWrite || 0),
+            costCny: planned.costCny || 0, costReported: false, costSource: usageKnown ? 'estimated' : 'unknown',
+            durationMs: 0, logPath: '',
+          });
           if (planned.action === 'no_task') {
             // no_task 触发产品级验收，而不是无条件完成或阻塞。
             const product = await this.productGate(loop, project);
