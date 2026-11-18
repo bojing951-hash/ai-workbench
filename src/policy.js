@@ -195,13 +195,18 @@ export function mergeAuditChunks(chunks = []) {
   if (!chunks.length) return { status: 'UNKNOWN', verdict: 'fail', score: 0, criteria: [], findings: [], highFindings: [], requiredFixes: ['没有可审计的变更分段'], unknownReasons: ['没有可审计的变更分段'], summary: '' };
   const status = chunks.some((c) => c.status === 'FAIL') ? 'FAIL' : chunks.some((c) => c.status !== 'PASS') ? 'UNKNOWN' : 'PASS';
   const mergedCriteria = [];
-  const seen = new Set();
+  const byKey = new Map();
   for (const chunk of chunks) {
     for (const c of chunk.criteria || []) {
       const key = normalizeCriterion(c.criterion);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      mergedCriteria.push(c);
+      const prev = byKey.get(key);
+      if (!prev) { byKey.set(key, { ...c }); mergedCriteria.push(byKey.get(key)); continue; }
+      // 同一冻结条款在多块出现：fail 必须压过 pass；任何未证实都不能被另一块静默覆盖。
+      if (String(c.status) === 'fail' || (String(prev.status) !== 'fail' && String(c.status) === 'unproven')) {
+        prev.status = c.status;
+        prev.evidence = String(c.evidence || prev.evidence || '');
+        if (c.reason) prev.reason = c.reason;
+      }
     }
   }
   return {

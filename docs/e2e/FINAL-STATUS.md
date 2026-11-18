@@ -14,3 +14,12 @@
 
 
 最终：ENGINEERING_READY_FOR_REAL_E2E = PASS；REAL_E2E = HISTORICAL_FAILED；NEW_E2E_AUTHORIZATION = REQUIRED；24H = NOT_VERIFIED。
+
+## 独审交接包复跑（2026-11-18）
+
+- 包内 8 个测试文件与 `scripts/check-handoff.mjs` 已纳入仓库；
+- 基线 23 项 / 10 通过 / 13 失败 → 修复后 **23 项 / 23 通过 / 0 失败 / 0 跳过**；
+- 原失败逐项修复：分块审计同条款 fail 聚合、TAP pass 计数、Planner 全局/项目/实验 13 一致、默认模型风险许可、产品 no_task 终态、Checkpoint 缺 index 时 BLOCKED、提交 hook/worktree 冲突不得重派 Coding、Supervisor 503 重试；
+- `npm test`（串行）：402/402/0；真实 Docker 10/10；
+- `npm run accept:freeze`：第 1-6 组全部 PASS，真实 Docker 可用；唯一未执行项为**连续离线产品 E2E**（缺产品 SHA）；
+- 因此工程状态仍为 **ENGINEERING_FREEZE_BLOCKED**。

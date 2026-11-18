@@ -430,7 +430,7 @@ export class LoopManager {
             });
             plannerReservation = null;
           }
-          this.store.createAttempt({
+          const plannerAttempt = this.store.createAttempt({
             id: newId('att'), runId: '', taskId: '', attemptNo: 0, stage: 'loop-planning',
             agentKind: 'planner', provider: planned.provider || plannerProvider, model: planned.model || this.config.planner.model || '',
             status: 'completed', tokensIn: Number(plannerUsage.input || 0), tokensOut: Number(plannerUsage.output || 0),
@@ -438,6 +438,8 @@ export class LoopManager {
             costCny: planned.costCny || 0, costReported: false, costSource: usageKnown ? 'estimated' : 'unknown',
             durationMs: 0, logPath: '',
           });
+          // attempt 触发器只为诊断，不应与正式 llm_usage 形成双账；保留 attempt 自身计数字段，删除触发器镜像。
+          this.store.deleteLlmUsageBySource(`attempt:${plannerAttempt.id}`);
           if (planned.action === 'no_task') {
             // no_task 触发产品级验收，而不是无条件完成或阻塞。
             const product = await this.productGate(loop, project);
@@ -551,7 +553,7 @@ export class LoopManager {
     const history = Array.isArray(loop.history_json) ? loop.history_json : [];
     const base = baseCommit || history.find((h) => h.baseCommit)?.baseCommit || latestTask?.base_commit || '';
     const planHead = latestRun?.result_json?.planHead || latestTask?.head_commit || (history.length ? history.at(-1).commit : '') || '';
-    if (!planHead) return { ok: false, blocked: true, reason: '没有最终 Git Commit，无法进行产品级验收' };
+    if (!planHead) return { ok: false, blocked: true, required: true, reason: '没有最终 Git Commit，无法进行产品级验收' };
     let audit;
     try {
       audit = await this.orchestrator.productAcceptanceAudit({ project, expected, planHead, baseCommit: base, latestRun, latestTask });
@@ -578,19 +580,19 @@ export class LoopManager {
     if (auditStatus !== 'FAIL') {
       const reason = `产品级验收无法判定（${auditStatus}）：${(audit?.missing || []).join('；').slice(0, 800) || audit?.reason || '证据不足/审计不可用'}；保留候选并阻塞，不创建产品修复任务`;
       this.emit(loop, 'product_acceptance_blocked', reason, 'warn', { status: auditStatus, missing: audit?.missing || [] });
-      return { ok: false, blocked: true, reason, audit };
+      return { ok: false, blocked: true, required: true, reason, audit };
     }
     if (!allowRepair) {
       const reason = `产品级验收未通过：${(audit?.missing || []).join('；').slice(0, 800) || audit?.status || 'UNKNOWN'}；max_rounds 已耗尽，保留检查点 BLOCKED`;
       this.emit(loop, 'product_acceptance_blocked', reason, 'warn', { status: audit?.status, missing: audit?.missing || [] });
-      return { ok: false, blocked: true, reason, audit };
+      return { ok: false, blocked: true, required: true, reason, audit };
     }
     const maxProductRepair = Math.max(0, Math.min(3, Number(project?.config_json?.max_product_repairs ?? 2)));
     const count = Number(loop.product_repair_count || 0);
     if (count >= maxProductRepair) {
       const reason = `产品级验收未通过且达到修复上限：${(audit?.missing || []).join('；').slice(0, 800) || audit?.status || 'UNKNOWN'}`;
       this.emit(loop, 'product_acceptance_blocked', reason, 'warn', { status: audit?.status, missing: audit?.missing || [] });
-      return { ok: false, blocked: true, reason, audit };
+      return { ok: false, blocked: true, required: true, reason, audit };
     }
     const n = this.store.incrementLoopProductRepair(loop.id);
     const acceptance = (audit?.missing?.length ? audit.missing : expected).slice(0, 8);
@@ -608,7 +610,7 @@ export class LoopManager {
     if (!queue.some((t) => t && t.productAcceptanceRepair)) queue.unshift(repair);
     this.store.updateLoop(loop.id, { status: 'running', current_run_id: '', stop_reason: `产品级验收未通过，已生成第 ${n} 个产品验收修复任务`, queue_json: queue, product_repair_count: n });
     this.emit(loop, 'product_repair_queued', `产品级验收未通过，已生成产品修复任务 ${n}/${maxProductRepair}（最终 Commit ${planHead.slice(0, 8)}）`, 'warn', { missing: acceptance, status: audit?.status });
-    return { ok: false, queued: true, audit, planHead };
+    return { ok: false, queued: true, required: true, audit, planHead };
   }
 
   /**

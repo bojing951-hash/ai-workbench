@@ -2614,7 +2614,13 @@ export class Orchestrator {
           // 原目标仍在：staging 未发布，删除临时目录/独立 index，保留原目标。
           if (staging !== target && fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
           // 关键窗口：staging 已改名为 target（磁盘新版），但日志仍 backed-up、真实 Index 仍旧版。
-          const newDiskPendingIndex = (diskMatchesManifest() || (j.indexTree && diskTree() === j.indexTree)) && stagingIndex && fs.existsSync(stagingIndex) && indexTarget;
+          const diskIsNew = diskMatchesManifest() || (j.indexTree && diskTree() === j.indexTree);
+          if (diskIsNew && (!stagingIndex || !fs.existsSync(stagingIndex) || !indexTarget)) {
+            // 无法重建应恢复的 staged Index：必须保留磁盘、备份和 journal，交由人工/后续恢复，不能报成功。
+            blocked.push({ file, reason: 'published-disk-but-index-source-missing', state: j.state });
+            continue;
+          }
+          const newDiskPendingIndex = diskIsNew && stagingIndex && fs.existsSync(stagingIndex) && indexTarget;
           if (newDiskPendingIndex) {
             fs.mkdirSync(path.dirname(indexTarget), { recursive: true });
             fs.copyFileSync(stagingIndex, indexTarget);
@@ -2770,6 +2776,11 @@ export class Orchestrator {
         if (adopted === 'not-committed') {
           const completed = await this.completeCommittedTaskAfterAudit(run, task, resumeProject);
           if (completed) continue;
+          // 提交未成功或工作树已偏离已审 tree：保留 COMMITTING/attempt/证据现场并阻断，绝不能退回 queued 重派 Coding。
+          const reason = '提交恢复未完成：pre-commit 失败或工作树与已审 testedHash 不一致；保留原 attempt/证据并 BLOCKED';
+          this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason });
+          this.emit({ runId, taskId: task.id, type: 'commit_recovery_blocked', level: 'error', message: reason });
+          continue;
         }
         if (adopted === false) {
           const reason = '提交恢复冲突：COMMITTING 任务缺少匹配的 Git tree/独立审计证据，拒绝自动重做/冒充成功';

@@ -1,0 +1,13 @@
+
+> ai-dev-workbench@3.3.0 accept:freeze
+> node --no-warnings=ExperimentalWarning scripts/accept-freeze.mjs
+
+{"name":"1-product-completion","status":"PASS","tests":19,"pass":19,"fail":0,"skipped":0}
+{"name":"2-billing-unknown","status":"PASS","tests":7,"pass":7,"fail":0,"skipped":0}
+{"name":"3-paid-identity","status":"PASS","tests":7,"pass":7,"fail":0,"skipped":0}
+{"name":"4-checkpoint","status":"PASS","tests":11,"pass":11,"fail":0,"skipped":0}
+{"name":"5-git-sqlite","status":"PASS","tests":5,"pass":5,"fail":0,"skipped":0}
+{"name":"6-supervisor-docker-e2e","status":"PASS","tests":6,"pass":6,"fail":0,"skipped":0}
+{"name":"6a-real-docker","status":"AVAILABLE","reason":""}
+{"name":"6b-offline-product-e2e","status":"UNEXECUTED","reason":"缺少同一候选 SHA 的连续离线产品 E2E 证据"}
+{"ok":false,"groups":8,"at":"2026-11-18T15:55:01.961Z"}

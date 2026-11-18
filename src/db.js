@@ -979,6 +979,12 @@ export class Store {
   }
 
   // ---------------- attempts ----------------
+  deleteLlmUsageBySource(sourceId) {
+    if (!sourceId) return 0;
+    const r = this.db.prepare('DELETE FROM llm_usage WHERE source_id=?').run(String(sourceId));
+    return Number(r.changes || 0);
+  }
+
   createAttempt(a) {
     const now = nowIso();
     this.db

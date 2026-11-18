@@ -155,6 +155,7 @@ async function recoverAfterHealth() {
     saveState(s);
     if (res.ok) log(`健康恢复后对账/续跑完成：${JSON.stringify(res.data?.data || {})}`);
     else log(`恢复 API 失败：${res.error || res.status}`);
+    return res.ok;
   } finally {
     restoreInFlight = false;
   }
@@ -173,7 +174,11 @@ function monitor() {
       if (!recoveredForThisStart) {
         recoveredForThisStart = true;
         // 给 Workbench 启动后恢复逻辑一点时间，再调用受管项目恢复
-        setTimeout(() => recoverAfterHealth(), 1500);
+        setTimeout(async () => {
+          const ok = await recoverAfterHealth();
+          // 首次恢复失败（例如 503）时允许下一次健康检查重试；成功后不再重复。
+          if (!ok) recoveredForThisStart = false;
+        }, 1500);
       }
       return;
     }

@@ -202,12 +202,17 @@ export function trustedProductTestCommand(root, productFiles, { nodeBin = 'node'
 
 export function parseTestCount(stdout = '', stderr = '') {
   const text = `${stdout}\n${stderr}`;
+  // TAP 必须使用“实际 pass 数”，不能用 tests 总数（skipped/todo 会虚增通过数）。
+  const passTap = text.match(/^#\s*pass\s+(\d+)$/im);
+  if (passTap) return Number(passTap[1]);
+  const passLine = text.match(/^.*\bpass\s+(\d+)\s*$/im);
+  if (passLine) return Number(passLine[1]);
   const patterns = [
-    /(?:^|\s)tests?\s+(\d+)\s*(?:pass|passed|通过)?/im,
-    /#\s*tests\s+(\d+)/i,
+    /(?:^|\s)tests?\s+(\d+)\s+pass(?:ed)?/im,
     /(\d+)\s+passed/i,
     /ok\s+\d+\s+passed/i,
     /Test Files\s+\d+\s+passed/i,
+    /#\s*tests\s+(\d+)/i,
   ];
   for (const re of patterns) { const m = text.match(re); if (m) return Number(m[1]); }
   const nodeTotal = text.match(/(?:pass|fail)\s+\d+/gi);

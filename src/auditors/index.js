@@ -269,7 +269,7 @@ export async function runAudit({
     });
     let res;
     try {
-      res = await callAuditOnce({ config, provider, prompt, acceptance: chunks.length > 1 ? [] : acceptance, signal });
+      res = await callAuditOnce({ config, provider, prompt, acceptance, signal });
     } catch (err) {
       if (reservation?.reservation?.id) budget.store.markModelReservationUnknown(reservation.reservation.id);
       throw err;

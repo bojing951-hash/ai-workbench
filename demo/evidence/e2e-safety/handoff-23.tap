@@ -1,0 +1,158 @@
+TAP version 13
+# (node:11359) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: formal runAudit aggregates one complete chunk
+ok 1 - formal runAudit aggregates one complete chunk
+  ---
+  duration_ms: 283.722542
+  type: 'test'
+  ...
+# Subtest: formal runAudit aggregates two complete passing chunks
+ok 2 - formal runAudit aggregates two complete passing chunks
+  ---
+  duration_ms: 1434.417416
+  type: 'test'
+  ...
+# Subtest: formal runAudit aggregates a failure reported only in the later chunk
+ok 3 - formal runAudit aggregates a failure reported only in the later chunk
+  ---
+  duration_ms: 588.942792
+  type: 'test'
+  ...
+# Subtest: formal runAudit aggregates neither chunk supplies evidence
+ok 4 - formal runAudit aggregates neither chunk supplies evidence
+  ---
+  duration_ms: 365.344333
+  type: 'test'
+  ...
+# (node:11360) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: one Planner receipt with 8 input + 5 output adds exactly 13 to global, project and experiment totals
+ok 5 - one Planner receipt with 8 input + 5 output adds exactly 13 to global, project and experiment totals
+  ---
+  duration_ms: 481.056875
+  type: 'test'
+  ...
+# Subtest: Planner with missing usage keeps the original reservation unknown and retains a nonzero budget hold
+ok 6 - Planner with missing usage keeps the original reservation unknown and retains a nonzero budget hold
+  ---
+  duration_ms: 1919.776459
+  type: 'test'
+  ...
+# Subtest: Planner without matching risk consent sends zero HTTP requests
+ok 7 - Planner without matching risk consent sends zero HTTP requests
+  ---
+  duration_ms: 219.141292
+  type: 'test'
+  ...
+# (node:11361) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Paid identity / explicit Planner model and exact consent reach that model once
+ok 8 - Paid identity / explicit Planner model and exact consent reach that model once
+  ---
+  duration_ms: 2826.224041
+  type: 'test'
+  ...
+# Subtest: Paid identity / default Planner slot and exact consent reach that model once
+ok 9 - Paid identity / default Planner slot and exact consent reach that model once
+  ---
+  duration_ms: 1089.960333
+  type: 'test'
+  ...
+# Subtest: Paid identity / Chat-only consent does not dispatch Planner
+ok 10 - Paid identity / Chat-only consent does not dispatch Planner
+  ---
+  duration_ms: 238.455
+  type: 'test'
+  ...
+# (node:11362) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: plan/no_task resolves a frozen product contract: ready
+ok 11 - plan/no_task resolves a frozen product contract: ready
+  ---
+  duration_ms: 4328.950542
+  type: 'test'
+  ...
+# Subtest: plan/no_task resolves a frozen product contract: defect
+ok 12 - plan/no_task resolves a frozen product contract: defect
+  ---
+  duration_ms: 644.90075
+  type: 'test'
+  ...
+# Subtest: plan/no_task resolves a frozen product contract: unavailable
+ok 13 - plan/no_task resolves a frozen product contract: unavailable
+  ---
+  duration_ms: 450.2575
+  type: 'test'
+  ...
+# Subtest: plan/no_task resolves a frozen product contract: missing-head
+ok 14 - plan/no_task resolves a frozen product contract: missing-head
+  ---
+  duration_ms: 447.82225
+  type: 'test'
+  ...
+# Subtest: checkpoint publication after rename, staged index present
+ok 15 - checkpoint publication after rename, staged index present
+  ---
+  duration_ms: 1763.246291
+  type: 'test'
+  ...
+# Subtest: checkpoint publication after rename, staged index missing
+ok 16 - checkpoint publication after rename, staged index missing
+  ---
+  duration_ms: 1347.690625
+  type: 'test'
+  ...
+# (node:11457) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: REST resume from committing: normal
+ok 17 - REST resume from committing: normal
+  ---
+  duration_ms: 1692.580375
+  type: 'test'
+  ...
+# Subtest: REST resume from committing: commit hook rejects
+ok 18 - REST resume from committing: commit hook rejects
+  ---
+  duration_ms: 1693.479292
+  type: 'test'
+  ...
+# Subtest: REST resume from committing: worktree changed
+ok 19 - REST resume from committing: worktree changed
+  ---
+  duration_ms: 909.441375
+  type: 'test'
+  ...
+# Subtest: a healthy child retries reconciliation after one 503 and stops retrying once it succeeds
+ok 20 - a healthy child retries reconciliation after one 503 and stops retrying once it succeeds
+  ---
+  duration_ms: 21992.158792
+  type: 'test'
+  ...
+# Subtest: three passes meet a minimum of two
+ok 21 - three passes meet a minimum of two
+  ---
+  duration_ms: 412.482083
+  type: 'test'
+  ...
+# Subtest: one pass and two skips fall below a minimum of two
+ok 22 - one pass and two skips fall below a minimum of two
+  ---
+  duration_ms: 389.829084
+  type: 'test'
+  ...
+# Subtest: three skips cannot satisfy a minimum of two
+ok 23 - three skips cannot satisfy a minimum of two
+  ---
+  duration_ms: 305.787875
+  type: 'test'
+  ...
+1..23
+# tests 23
+# suites 0
+# pass 23
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 27052.634291

@@ -45,11 +45,12 @@ export function budgetSnapshot(store, config) {
 }
 
 export function assertModelBudget({ config, store, provider, model = '', estimatedTokens = 2000, estimatedCostCny = 0.02, label = '模型调用', reserve = false, requestKey = '', reservationId = '', experimentId = '', experimentScope = '', experimentRole = '', experimentClient = '' }) {
+  const identity = resolveLlmIdentity({ config, provider });
+  const effectiveModel = model || identity.model || '';
   if (experimentId && experimentRole) {
-    const gate = evaluateProviderRiskGate({ store, experimentId, binding: { client: experimentClient || provider, provider, model, role: experimentRole } });
+    const gate = evaluateProviderRiskGate({ store, experimentId, binding: { client: experimentClient || provider, provider, model: effectiveModel, role: experimentRole } });
     if (!gate.ok) throw new PolicyError('BUDGET_RISK_BLOCKED', `${label}: 实验 Provider 风险准入失败（${gate.code}），禁止付费调用`, { experimentId, role: experimentRole });
   }
-  const identity = resolveLlmIdentity({ config, provider });
   const estimate = Math.max(1, Number(estimatedTokens || 0));
   const estCost = Number(estimatedCostCny || 0) || estimateCostCny(identity.provider, model || identity.model, { input: Math.round(estimate * 0.75), output: Math.round(estimate * 0.25) });
   const snap = budgetSnapshot(store, config);

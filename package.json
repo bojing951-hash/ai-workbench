@@ -10,13 +10,14 @@
   "scripts": {
     "start": "node --no-warnings=ExperimentalWarning bin/workbench.js serve",
     "workbench": "node --no-warnings=ExperimentalWarning bin/workbench.js",
-    "test": "node --no-warnings=ExperimentalWarning --test tests/*.test.js",
+    "test": "node --no-warnings=ExperimentalWarning --test --test-concurrency=1 tests/*.test.js",
     "test:e2e": "node --no-warnings=ExperimentalWarning --test tests/e2e/*.test.js",
     "demo:phase1": "node --no-warnings=ExperimentalWarning scripts/demo-phase1.mjs",
     "demo:phase2": "node --no-warnings=ExperimentalWarning scripts/demo-phase2.mjs",
     "demo:phase3": "node --no-warnings=ExperimentalWarning scripts/demo-phase3.mjs",
     "demo:phase3:evidence": "node --no-warnings=ExperimentalWarning scripts/phase3-evidence.mjs",
-    "screenshot": "node --no-warnings=ExperimentalWarning scripts/screenshot.mjs"
+    "screenshot": "node --no-warnings=ExperimentalWarning scripts/screenshot.mjs",
+    "accept:freeze": "node --no-warnings=ExperimentalWarning scripts/accept-freeze.mjs"
   },
   "license": "Apache-2.0",
   "keywords": [
