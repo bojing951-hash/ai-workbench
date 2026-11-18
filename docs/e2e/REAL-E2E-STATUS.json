@@ -26,6 +26,6 @@
   "budgetRiskGate": "PASS",
   "githubCi": "PASS",
   "gitDbRecovery": "PASS_CONTROLLED",
-  "unknownBillingRecovery": "UNKNOWN",
+  "unknownBillingRecovery": "PASS",
   "offlineE2E": "UNKNOWN"
 }
