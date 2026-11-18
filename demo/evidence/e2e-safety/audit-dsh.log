@@ -1,0 +1,4 @@
+(node:29594) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"checkout":"plan","pinnedFile":"ready","fileSeen":"ready","pass":true,"status":"PASS","id":"97f69ecf64a09fcbcb48e6fa38fee616b04fce38","promptBindsTree":true,"promptBindsCommit":true,"trueTree":"0fcfd34346068b2ff4f72fc0e0e3475aaee3c95b","commandLine":"命令：node --test","exitLine":"退出码：0"}
+{"checkout":"main","pinnedFile":"ready","fileSeen":"ready","pass":true,"status":"PASS","id":"97f69ecf64a09fcbcb48e6fa38fee616b04fce38","promptBindsTree":true,"promptBindsCommit":true,"trueTree":"0fcfd34346068b2ff4f72fc0e0e3475aaee3c95b","commandLine":"命令：node --test","exitLine":"退出码：0"}

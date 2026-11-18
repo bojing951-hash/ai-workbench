@@ -10,6 +10,7 @@
  * 不允许 DSH 修改产品代码；审计提交失败/无法确认身份时 fail-closed。
  */
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { commandExists, execCapture } from '../runner.js';
@@ -30,6 +31,17 @@ function copyAuditWorkspace(worktree, dest) {
       return true;
     },
   });
+}
+
+function materializeCommit(repo, commit, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  const tar = path.join(path.dirname(dest), `candidate-${Date.now().toString(36)}.tar`);
+  try {
+    const pack = spawnSync('git', ['-C', repo, 'archive', '--format=tar', '-o', tar, commit], { encoding: 'utf8' });
+    if (pack.status !== 0) throw new PolicyError('AUDIT_SNAPSHOT_FAILED', `无法读取候选 commit ${commit}：${pack.stderr || pack.stdout}`);
+    const extract = spawnSync('tar', ['-xf', tar, '-C', dest], { encoding: 'utf8' });
+    if (extract.status !== 0) throw new PolicyError('AUDIT_SNAPSHOT_FAILED', `无法解包候选 commit ${commit}：${extract.stderr || extract.stdout}`);
+  } finally { try { fs.rmSync(tar, { force: true }); } catch { /* ignore */ } }
 }
 
 export function dshAuditAvailable(config) {
@@ -115,7 +127,8 @@ export async function runDshAudit({ config, project, task, acceptance, diff, dif
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { recursive: true });
   try {
-    copyAuditWorkspace(worktree, work);
+    if (commit && project?.local_path) materializeCommit(project.local_path, commit, work);
+    else copyAuditWorkspace(worktree, work);
     const prompt = buildPrompt({ task, acceptance, diff, diffStat, testResult, repoFiles, versionInfo, commit });
     // 只读保护：审计工作区取消写权限（DSH 仍以 read-only permission preset 运行）
     try { fs.chmodSync(work, 0o555); } catch { /* ignore */ }

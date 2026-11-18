@@ -9,7 +9,7 @@ const groups = [
   { name: '3-paid-identity', files: ['tests/handoff-identity.test.js', 'tests/v35-paid-admission.test.js', 'tests/v35-audit-chunk-budget.test.js'] },
   { name: '4-checkpoint', files: ['tests/handoff-recovery-checkpoint.test.js', 'tests/v35-checkpoint.test.js', 'tests/v35-checkpoint-staged-rename.test.js', 'tests/v35-checkpoint-prepared-sigkill.test.js', 'tests/v35-checkpoint-publish-sigkill.test.js', 'tests/v35-checkpoint-published-sigkill.test.js', 'tests/v35-checkpoint-renamed-sigkill.test.js'] },
   { name: '5-git-sqlite', files: ['tests/handoff-recovery-commit.test.js', 'tests/v35-git-db-recovery.test.js'] },
-  { name: '6-supervisor-docker-e2e', files: ['tests/handoff-supervisor.test.mjs', 'tests/v35-container-recovery.test.js'] },
+  { name: '6-supervisor-docker-e2e', files: ['tests/handoff-supervisor.test.mjs', 'tests/audit-checkpoint.test.js', 'tests/audit-git-retry.test.js', 'tests/audit-hardening.test.js', 'tests/audit-plan-commit.test.js', 'tests/audit-reopen.test.js', 'tests/audit-supervisor.test.mjs', 'tests/v35-container-recovery.test.js'] },
 ];
 
 const results = [];
@@ -29,6 +29,13 @@ for (const group of groups) {
   if (!ok) hardFailure = true;
   results.push({ name: group.name, status: ok ? 'PASS' : 'FAIL', tests, pass, fail, skipped });
 }
+// 独立 DSH 版本绑定脚本必须自动判定；不能只打印观测。
+{
+  const dsh = spawnSync(process.execPath, ['audit-dsh.mjs'], { encoding: 'utf8', timeout: 120_000 });
+  const ok = dsh.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6a-dsh-version-binding', status: ok ? 'PASS' : 'FAIL', code: dsh.status, stderr: (dsh.stderr || '').slice(-500) });
+}
 // 真实 Docker 与连续离线产品 E2E 是第六组必跑项；未提供证据时明确标 UNEXECUTED，不得静默通过。
 try {
   const docker = spawnSync('docker', ['info'], { encoding: 'utf8', timeout: 10_000 });
@@ -38,7 +45,15 @@ try {
 } catch (err) { results.push({ name: '6a-real-docker', status: 'UNEXECUTED', reason: err.message }); hardFailure = true; }
 const e2eEvidence = ['demo/evidence/offline-e2e/run.json', 'demo/evidence/offline-e2e/report.json'].find((f) => fs.existsSync(f));
 if (!e2eEvidence) { results.push({ name: '6b-offline-product-e2e', status: 'UNEXECUTED', reason: '缺少同一候选 SHA 的连续离线产品 E2E 证据' }); hardFailure = true; }
-else results.push({ name: '6b-offline-product-e2e', status: 'AVAILABLE', path: e2eEvidence });
+else {
+  try {
+    const e = JSON.parse(fs.readFileSync(e2eEvidence, 'utf8'));
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+    const ok = e.candidateSha === head && e.productSha && e.projectId && e.contractHash && e.status === 'awaiting_acceptance' && e.runIds?.length > 0 && e.initialFailure && e.finalAudit === 'PASS';
+    if (!ok) hardFailure = true;
+    results.push({ name: '6b-offline-product-e2e', status: ok ? 'PASS' : 'FAIL', path: e2eEvidence, candidateSha: e.candidateSha, productSha: e.productSha, reason: ok ? '' : '证据未绑定当前候选 SHA/项目/契约/产品 SHA/awaiting_acceptance' });
+  } catch (err) { hardFailure = true; results.push({ name: '6b-offline-product-e2e', status: 'FAIL', reason: err.message }); }
+}
 
 for (const r of results) console.log(JSON.stringify(r));
 console.log(JSON.stringify({ ok: !hardFailure, groups: results.length, at: new Date().toISOString() }));

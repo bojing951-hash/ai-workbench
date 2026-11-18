@@ -153,9 +153,13 @@ async function recoverAfterHealth() {
     const s = state();
     s.recoveries = [...(s.recoveries || []), { at: new Date().toISOString(), ok: res.ok, result: res.data?.data || res.error || null }].slice(-100);
     saveState(s);
-    if (res.ok) log(`健康恢复后对账/续跑完成：${JSON.stringify(res.data?.data || {})}`);
+    const data = res.data?.data || {};
+    const runs = Array.isArray(data.recoveredRuns) ? data.recoveredRuns : [];
+    const retryable = runs.some((r) => r && r.resumed === false && !/blocked|permanent|manual|authorization|forbidden/i.test(String(r.reason || '')));
+    if (res.ok && !retryable) log(`健康恢复后对账/续跑完成：${JSON.stringify(data)}`);
+    else if (res.ok) log(`恢复 API 返回部分未完成（可重试）：${JSON.stringify(data)}`);
     else log(`恢复 API 失败：${res.error || res.status}`);
-    return res.ok;
+    return res.ok && !retryable;
   } finally {
     restoreInFlight = false;
   }

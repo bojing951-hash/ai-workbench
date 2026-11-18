@@ -348,10 +348,8 @@ async function main() {
     const checkpointPublish = orchestrator.recoverCheckpointPublications();
     if (checkpointPublish.recovered.length) console.log(`[recover] 已恢复 ${checkpointPublish.recovered.length} 个未完成 Checkpoint 发布`);
     if (checkpointPublish.blocked.length) {
-      console.error(`[recover] BLOCKED：${checkpointPublish.blocked.length} 个 Checkpoint 发布状态无法对账：${JSON.stringify(checkpointPublish.blocked.slice(0, 5))}`);
-      store.close();
-      process.exitCode = 1;
-      return;
+      // 保持服务可启动以便读取/人工恢复；但不得清理恢复材料，也不得把发布视为成功。
+      console.error(`[recover] BLOCKED：${checkpointPublish.blocked.length} 个 Checkpoint 发布状态无法对账，保留备份与 journal：${JSON.stringify(checkpointPublish.blocked.slice(0, 5))}`);
     }
     const recovered = orchestrator.recoverOrphans();
     const recoveredLoops = loops.recover();

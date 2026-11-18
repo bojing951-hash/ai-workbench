@@ -1,0 +1,362 @@
+TAP version 13
+# (node:29942) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# RECOVERY_AUDIT [{"restart":1,"health":200,"reportedRecovery":false,"disk":null,"index":null,"backup":true,"journal":true},{"restart":2,"health":200,"reportedRecovery":false,"disk":null,"index":null,"backup":true,"journal":true}]
+# Subtest: backed-up SIGKILL and two actual starts preserve staged/unstaged or block with evidence
+ok 1 - backed-up SIGKILL and two actual starts preserve staged/unstaged or block with evidence
+  ---
+  duration_ms: 2335.371084
+  type: 'test'
+  ...
+# (node:29943) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Resume after hook removal {
+#   scenario: 'default retry after corrected hook',
+#   first: 'blocked',
+#   firstAttempt: 3,
+#   second: 'passed',
+#   secondAttempt: 3,
+#   code: 200,
+#   commits: 1
+# }
+# Subtest: REST resume from committing: default retry after corrected hook
+ok 2 - REST resume from committing: default retry after corrected hook
+  ---
+  duration_ms: 2688.852792
+  type: 'test'
+  ...
+# Resume after hook removal {
+#   scenario: 'explicit retry after corrected hook',
+#   first: 'blocked',
+#   firstAttempt: 3,
+#   second: 'passed',
+#   secondAttempt: 3,
+#   code: 200,
+#   commits: 1
+# }
+# Subtest: REST resume from committing: explicit retry after corrected hook
+ok 3 - REST resume from committing: explicit retry after corrected hook
+  ---
+  duration_ms: 4773.351958
+  type: 'test'
+  ...
+# Subtest: finalizeAuditVerdict：PASS 必须有具体证据
+    # Subtest: 全部验收标准 pass 且 evidence 具体 -> PASS / verdict=pass
+    ok 1 - 全部验收标准 pass 且 evidence 具体 -> PASS / verdict=pass
+      ---
+      duration_ms: 2.568083
+      type: 'test'
+      ...
+    # Subtest: evidence 为空或泛化（无/unknown/N/A/未验证）-> UNKNOWN，不信任模型 pass 自述
+    ok 2 - evidence 为空或泛化（无/unknown/N/A/未验证）-> UNKNOWN，不信任模型 pass 自述
+      ---
+      duration_ms: 0.648208
+      type: 'test'
+      ...
+    # Subtest: evidence 过短（<4 字符）-> UNKNOWN
+    ok 3 - evidence 过短（<4 字符）-> UNKNOWN
+      ---
+      duration_ms: 0.206791
+      type: 'test'
+      ...
+    # Subtest: 大写 PASS 状态归一化后仍按证据校验
+    ok 4 - 大写 PASS 状态归一化后仍按证据校验
+      ---
+      duration_ms: 0.190125
+      type: 'test'
+      ...
+    # Subtest: 非法 status（非 pass/fail/unproven）视为 unproven -> UNKNOWN
+    ok 5 - 非法 status（非 pass/fail/unproven）视为 unproven -> UNKNOWN
+      ---
+      duration_ms: 0.126334
+      type: 'test'
+      ...
+    1..5
+ok 4 - finalizeAuditVerdict：PASS 必须有具体证据
+  ---
+  duration_ms: 4.838458
+  type: 'suite'
+  ...
+# Subtest: finalizeAuditVerdict：验收标准逐条精确匹配
+    # Subtest: 缺少某条验收标准 -> 该条 unproven，整体 UNKNOWN 且 verdict=fail
+    ok 1 - 缺少某条验收标准 -> 该条 unproven，整体 UNKNOWN 且 verdict=fail
+      ---
+      duration_ms: 0.282958
+      type: 'test'
+      ...
+    # Subtest: 重复声明同一条验收标准 -> unproven，整体 UNKNOWN 且 verdict=fail
+    ok 2 - 重复声明同一条验收标准 -> unproven，整体 UNKNOWN 且 verdict=fail
+      ---
+      duration_ms: 0.235375
+      type: 'test'
+      ...
+    # Subtest: 乱序返回时按内容对齐，不按下标错配：B=pass、A=fail -> criteria[0] 为 A 且 FAIL
+    ok 3 - 乱序返回时按内容对齐，不按下标错配：B=pass、A=fail -> criteria[0] 为 A 且 FAIL
+      ---
+      duration_ms: 0.273458
+      type: 'test'
+      ...
+    # Subtest: 乱序但内容逐字匹配且全部有证据 -> PASS（匹配按内容而非下标）
+    ok 4 - 乱序但内容逐字匹配且全部有证据 -> PASS（匹配按内容而非下标）
+      ---
+      duration_ms: 0.313125
+      type: 'test'
+      ...
+    # Subtest: 改写验收标准文本（非逐字一致）-> unproven / UNKNOWN
+    ok 5 - 改写验收标准文本（非逐字一致）-> unproven / UNKNOWN
+      ---
+      duration_ms: 0.229834
+      type: 'test'
+      ...
+    # Subtest: 没有可核对的验收标准 -> UNKNOWN 且 verdict=fail
+    ok 6 - 没有可核对的验收标准 -> UNKNOWN 且 verdict=fail
+      ---
+      duration_ms: 0.188916
+      type: 'test'
+      ...
+    1..6
+ok 5 - finalizeAuditVerdict：验收标准逐条精确匹配
+  ---
+  duration_ms: 2.013042
+  type: 'suite'
+  ...
+# Subtest: finalizeAuditVerdict：显式 fail 与 high finding 硬失败
+    # Subtest: 存在 fail criteria -> FAIL，并生成具体 requiredFixes
+    ok 1 - 存在 fail criteria -> FAIL，并生成具体 requiredFixes
+      ---
+      duration_ms: 1.120875
+      type: 'test'
+      ...
+    # Subtest: high finding 即使全部验收标准 pass 也判 FAIL，并记录文件/行号
+    ok 2 - high finding 即使全部验收标准 pass 也判 FAIL，并记录文件/行号
+      ---
+      duration_ms: 0.227875
+      type: 'test'
+      ...
+    # Subtest: 模型自述 verdict=pass / score=100 不能覆盖结构化的 fail 结论
+    ok 3 - 模型自述 verdict=pass / score=100 不能覆盖结构化的 fail 结论
+      ---
+      duration_ms: 0.104625
+      type: 'test'
+      ...
+    # Subtest: 模型自述 verdict=pass 但证据不足时仍为 UNKNOWN
+    ok 4 - 模型自述 verdict=pass 但证据不足时仍为 UNKNOWN
+      ---
+      duration_ms: 0.101375
+      type: 'test'
+      ...
+    1..4
+ok 6 - finalizeAuditVerdict：显式 fail 与 high finding 硬失败
+  ---
+  duration_ms: 1.81725
+  type: 'suite'
+  ...
+# Subtest: mergeAuditChunks：分块审计保守合并
+    # Subtest: 任一分块 FAIL -> 整体 FAIL
+    ok 1 - 任一分块 FAIL -> 整体 FAIL
+      ---
+      duration_ms: 0.555292
+      type: 'test'
+      ...
+    # Subtest: 存在 UNKNOWN（或缺失状态）-> 整体 UNKNOWN
+    ok 2 - 存在 UNKNOWN（或缺失状态）-> 整体 UNKNOWN
+      ---
+      duration_ms: 0.143875
+      type: 'test'
+      ...
+    # Subtest: 全部分块 PASS -> PASS，criteria 去重、findings 合并、分数取平均
+    ok 3 - 全部分块 PASS -> PASS，criteria 去重、findings 合并、分数取平均
+      ---
+      duration_ms: 0.193458
+      type: 'test'
+      ...
+    # Subtest: 空分块列表 -> UNKNOWN 且给出不可审计原因
+    ok 4 - 空分块列表 -> UNKNOWN 且给出不可审计原因
+      ---
+      duration_ms: 0.084958
+      type: 'test'
+      ...
+    1..4
+ok 7 - mergeAuditChunks：分块审计保守合并
+  ---
+  duration_ms: 1.159167
+  type: 'suite'
+  ...
+# Subtest: modelFamily：编码/审计模型族识别
+    # Subtest: 按 provider 识别 deepseek / glm / openai / anthropic
+    ok 1 - 按 provider 识别 deepseek / glm / openai / anthropic
+      ---
+      duration_ms: 0.397208
+      type: 'test'
+      ...
+    # Subtest: provider 缺失时按 model 名兜底识别
+    ok 2 - provider 缺失时按 model 名兜底识别
+      ---
+      duration_ms: 0.169834
+      type: 'test'
+      ...
+    # Subtest: 未知 provider/model -> unknown
+    ok 3 - 未知 provider/model -> unknown
+      ---
+      duration_ms: 0.1965
+      type: 'test'
+      ...
+    1..3
+ok 8 - modelFamily：编码/审计模型族识别
+  ---
+  duration_ms: 0.91925
+  type: 'suite'
+  ...
+# Subtest: verificationState：CI 闸门与 SHA 绑定
+    # Subtest: 项目未要求 CI -> LOCAL_VERIFIED
+    ok 1 - 项目未要求 CI -> LOCAL_VERIFIED
+      ---
+      duration_ms: 0.262542
+      type: 'test'
+      ...
+    # Subtest: CI pending / in_progress / queued / 缺失 -> CI_PENDING
+    ok 2 - CI pending / in_progress / queued / 缺失 -> CI_PENDING
+      ---
+      duration_ms: 0.124542
+      type: 'test'
+      ...
+    # Subtest: CI failed 或 conclusion=failure -> CI_FAILED
+    ok 3 - CI failed 或 conclusion=failure -> CI_FAILED
+      ---
+      duration_ms: 0.070667
+      type: 'test'
+      ...
+    # Subtest: CI success 但 SHA 不一致 -> CI_FAILED
+    ok 4 - CI success 但 SHA 不一致 -> CI_FAILED
+      ---
+      duration_ms: 0.096583
+      type: 'test'
+      ...
+    # Subtest: CI success 且 SHA 一致 -> CI_PASSED
+    ok 5 - CI success 且 SHA 一致 -> CI_PASSED
+      ---
+      duration_ms: 0.187458
+      type: 'test'
+      ...
+    # Subtest: CI 状态不明确（completed + neutral）-> CI_PENDING
+    ok 6 - CI 状态不明确（completed + neutral）-> CI_PENDING
+      ---
+      duration_ms: 0.126667
+      type: 'test'
+      ...
+    1..6
+ok 9 - verificationState：CI 闸门与 SHA 绑定
+  ---
+  duration_ms: 1.0885
+  type: 'suite'
+  ...
+# Subtest: assertProjectBudget：项目 / 运行预算硬上限
+    # Subtest: 未超限时通过，并返回生效的 token/成本上限
+    ok 1 - 未超限时通过，并返回生效的 token/成本上限
+      ---
+      duration_ms: 0.482167
+      type: 'test'
+      ...
+    # Subtest: 恰好等于上限时允许（边界不误杀）
+    ok 2 - 恰好等于上限时允许（边界不误杀）
+      ---
+      duration_ms: 0.367791
+      type: 'test'
+      ...
+    # Subtest: 预计消耗导致 token 超限 -> PROJECT_BUDGET_EXCEEDED
+    ok 3 - 预计消耗导致 token 超限 -> PROJECT_BUDGET_EXCEEDED
+      ---
+      duration_ms: 0.6805
+      type: 'test'
+      ...
+    # Subtest: 项目预算更严格时以较小值为准，超限 -> PROJECT_BUDGET_EXCEEDED
+    ok 4 - 项目预算更严格时以较小值为准，超限 -> PROJECT_BUDGET_EXCEEDED
+      ---
+      duration_ms: 0.238792
+      type: 'test'
+      ...
+    # Subtest: 成本超限 -> PROJECT_BUDGET_COST_EXCEEDED
+    ok 5 - 成本超限 -> PROJECT_BUDGET_COST_EXCEEDED
+      ---
+      duration_ms: 0.230791
+      type: 'test'
+      ...
+    1..5
+ok 10 - assertProjectBudget：项目 / 运行预算硬上限
+  ---
+  duration_ms: 2.30025
+  type: 'suite'
+  ...
+# Subtest: failureSignature：失败签名稳定且可区分
+    # Subtest: 相同失败输入得到相同的 16 位十六进制签名
+    ok 1 - 相同失败输入得到相同的 16 位十六进制签名
+      ---
+      duration_ms: 0.697417
+      type: 'test'
+      ...
+    # Subtest: 退出码 / 测试输出 / 审计摘要 / 失败标准任一变化都会改变签名
+    ok 2 - 退出码 / 测试输出 / 审计摘要 / 失败标准任一变化都会改变签名
+      ---
+      duration_ms: 0.166833
+      type: 'test'
+      ...
+    # Subtest: 空输入也有稳定的 16 位签名
+    ok 3 - 空输入也有稳定的 16 位签名
+      ---
+      duration_ms: 0.144958
+      type: 'test'
+      ...
+    1..3
+ok 11 - failureSignature：失败签名稳定且可区分
+  ---
+  duration_ms: 1.17525
+  type: 'suite'
+  ...
+# (node:29945) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# independent loop observation ready completed Planner 未发现真实任务；产品级验收 PASS 0 1
+# Subtest: plan/no_task resolves a frozen product contract: ready
+ok 12 - plan/no_task resolves a frozen product contract: ready
+  ---
+  duration_ms: 1415.161041
+  type: 'test'
+  ...
+# independent loop observation missing-revision blocked 最终验证 SHA 在 Git 中不存在：1111111111111111111111111111111111111111；拒绝进行产品验收 0 0
+# Subtest: plan/no_task resolves a frozen product contract: missing-revision
+ok 13 - plan/no_task resolves a frozen product contract: missing-revision
+  ---
+  duration_ms: 870.980417
+  type: 'test'
+  ...
+# (node:29946) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# {"kind":"known","sends":1,"live":{"total":13,"budget":13,"reserved":0,"project":13,"expTokens":13,"rows":[["planner",1]]},"reopened":{"total":13,"budget":13,"reserved":0,"project":13,"expTokens":13,"rows":[["planner",1]]},"twice":{"total":13,"budget":13,"reserved":0,"project":13,"expTokens":13,"rows":[["planner",1]]}}
+# Subtest: known after two ordinary DB opens
+ok 14 - known after two ordinary DB opens
+  ---
+  duration_ms: 123.996167
+  type: 'test'
+  ...
+# {"kind":"missing","sends":1,"live":{"total":0,"budget":0,"reserved":5000,"project":0,"expTokens":5000,"rows":[["planner",0]]},"reopened":{"total":0,"budget":0,"reserved":5000,"project":0,"expTokens":5000,"rows":[["planner",0]]},"twice":{"total":0,"budget":0,"reserved":5000,"project":0,"expTokens":5000,"rows":[["planner",0]]}}
+# Subtest: missing after two ordinary DB opens
+ok 15 - missing after two ordinary DB opens
+  ---
+  duration_ms: 136.0305
+  type: 'test'
+  ...
+# {"healthCount":4,"recoverCount":2,"recoverStatus":[200,200],"stableChild":true}
+# Subtest: a healthy child retries reconciliation after one 503 and stops retrying once it succeeds
+ok 16 - a healthy child retries reconciliation after one 503 and stops retrying once it succeeds
+  ---
+  duration_ms: 20176.958583
+  type: 'test'
+  ...
+1..16
+# tests 44
+# suites 8
+# pass 44
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 20324.79175

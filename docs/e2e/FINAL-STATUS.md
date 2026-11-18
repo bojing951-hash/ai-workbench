@@ -23,3 +23,12 @@
 - `npm test`（串行）：402/402/0；真实 Docker 10/10；
 - `npm run accept:freeze`：第 1-6 组全部 PASS，真实 Docker 可用；唯一未执行项为**连续离线产品 E2E**（缺产品 SHA）；
 - 因此工程状态仍为 **ENGINEERING_FREEZE_BLOCKED**。
+
+## 第二轮独立审计整改（2026-11-19）
+
+- 原版交接 23 项：基线 23/23 通过，已保留；
+- 新审计补充 `tests/audit-*.test.*`：44 项全部通过；
+- `audit-dsh.mjs` 已改为自动判定：主分支 checkout 两次均读取候选 commit 的 ready 快照，prompt 绑定真实 tree 与 commit，退出码 0；
+- `npm test`：409/409/0；
+- `npm run accept:freeze`：第 1-6 组、DSH 版本绑定、真实 Docker 均 PASS；唯一 UNEXECUTED 为连续离线产品 E2E（无产品 SHA）；
+- 结论：ENGINEERING_FREEZE_BLOCKED。

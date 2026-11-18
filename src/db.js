@@ -518,6 +518,7 @@ export class Store {
             'estimated', 1, COALESCE(NEW.budget_scope,'global'), NEW.created_at);
         END;
       `);
+      try { this.db.exec("ALTER TABLE attempts ADD COLUMN accounting_source TEXT DEFAULT ''"); } catch { /* column exists */ }
       this.backfillLlmUsage();
     } catch {
       /* ignore */
@@ -989,8 +990,8 @@ export class Store {
     const now = nowIso();
     this.db
       .prepare(
-        `INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,cost_reported,cost_source,provider,model,provider_known,provider_source,duration_ms,log_path,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO attempts (id,run_id,task_id,attempt_no,stage,agent_kind,session_id,prompt,exit_code,status,error,feedback,tokens_in,tokens_out,tokens_cache,cost_cny,cost_reported,cost_source,provider,model,provider_known,provider_source,duration_ms,log_path,accounting_source,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         a.id,
@@ -1017,6 +1018,7 @@ export class Store {
         a.providerSource || '',
         a.durationMs || 0,
         a.logPath || '',
+        a.accountingSource || '',
         now,
         now,
       );
@@ -1517,8 +1519,12 @@ export class Store {
     const now = nowIso();
     const insert = this.db.prepare(`INSERT OR IGNORE INTO llm_usage (id,source_id,source,run_id,task_id,project_id,conversation_id,provider,provider_known,provider_source,model,tokens_in,tokens_out,tokens_cache,cost_cny,cost_source,usage_known,budget_scope,created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-    const attempts = this.db.prepare(`SELECT a.id,a.run_id,a.task_id,r.project_id,a.provider,a.provider_known,a.provider_source,a.model,a.tokens_in,a.tokens_out,a.tokens_cache,a.cost_cny,a.stage,a.created_at FROM attempts a LEFT JOIN runs r ON r.id=a.run_id`).all();
-    for (const a of attempts) insert.run(`usage_legacy_att_${a.id}`, `attempt:${a.id}`, 'legacy_attempt', a.run_id || '', a.task_id || '', a.project_id || '', '', a.provider || 'unknown', a.provider_known ? 1 : 0, a.provider_source || 'legacy', a.model || '', Number(a.tokens_in || 0), Number(a.tokens_out || 0), Number(a.tokens_cache || 0), Number(a.cost_cny || 0), 'legacy', 1, 'global', a.created_at || now);
+    const attempts = this.db.prepare(`SELECT a.id,a.run_id,a.task_id,r.project_id,a.provider,a.provider_known,a.provider_source,a.model,a.tokens_in,a.tokens_out,a.tokens_cache,a.cost_cny,a.stage,a.created_at,a.accounting_source FROM attempts a LEFT JOIN runs r ON r.id=a.run_id`).all();
+    for (const a of attempts) {
+      // 已由正式结算身份记账的 attempt 不再做 legacy 回填，避免重开数据库双账。
+      if (String(a.accounting_source || '')) continue;
+      insert.run(`usage_legacy_att_${a.id}`, `attempt:${a.id}`, 'legacy_attempt', a.run_id || '', a.task_id || '', a.project_id || '', '', a.provider || 'unknown', a.provider_known ? 1 : 0, a.provider_source || 'legacy', a.model || '', Number(a.tokens_in || 0), Number(a.tokens_out || 0), Number(a.tokens_cache || 0), Number(a.cost_cny || 0), 'legacy', 1, 'global', a.created_at || now);
+    }
     const audits = this.db.prepare(`SELECT au.id,au.run_id,au.task_id,r.project_id,au.provider,au.provider_known,au.provider_source,au.model,au.tokens_in,au.tokens_out,au.cost_cny,au.budget_scope,au.created_at FROM audits au LEFT JOIN runs r ON r.id=au.run_id`).all();
     for (const a of audits) insert.run(`usage_legacy_aud_${a.id}`, `audit:${a.id}`, 'legacy_audit', a.run_id || '', a.task_id || '', a.project_id || '', '', a.provider || 'unknown', a.provider_known ? 1 : 0, a.provider_source || 'legacy', a.model || '', Number(a.tokens_in || 0), Number(a.tokens_out || 0), 0, Number(a.cost_cny || 0), 'legacy', 1, a.budget_scope || 'global', a.created_at || now);
     return this.db.prepare('SELECT COUNT(*) n FROM llm_usage').get().n;

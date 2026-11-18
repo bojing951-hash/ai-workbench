@@ -436,7 +436,7 @@ export class LoopManager {
             status: 'completed', tokensIn: Number(plannerUsage.input || 0), tokensOut: Number(plannerUsage.output || 0),
             tokensCache: Number(plannerUsage.cacheRead || 0) + Number(plannerUsage.cacheWrite || 0),
             costCny: planned.costCny || 0, costReported: false, costSource: usageKnown ? 'estimated' : 'unknown',
-            durationMs: 0, logPath: '',
+            durationMs: 0, logPath: '', accountingSource: 'planner',
           });
           // attempt 触发器只为诊断，不应与正式 llm_usage 形成双账；保留 attempt 自身计数字段，删除触发器镜像。
           this.store.deleteLlmUsageBySource(`attempt:${plannerAttempt.id}`);
@@ -554,11 +554,14 @@ export class LoopManager {
     const base = baseCommit || history.find((h) => h.baseCommit)?.baseCommit || latestTask?.base_commit || '';
     const planHead = latestRun?.result_json?.planHead || latestTask?.head_commit || (history.length ? history.at(-1).commit : '') || '';
     if (!planHead) return { ok: false, blocked: true, required: true, reason: '没有最终 Git Commit，无法进行产品级验收' };
+    const rev = await gitops.git(project.local_path, ['cat-file', '-e', `${planHead}^{commit}`], { allowFail: true }).catch(() => ({ code: 1 }));
+    if (rev.code !== 0) return { ok: false, blocked: true, required: true, reason: `最终验证 SHA 在 Git 中不存在：${planHead}；拒绝进行产品验收`, audit: null };
+
     let audit;
     try {
       audit = await this.orchestrator.productAcceptanceAudit({ project, expected, planHead, baseCommit: base, latestRun, latestTask });
     } catch (err) {
-      return { ok: false, blocked: true, reason: `产品级验收异常：${err.message}` };
+      return { ok: false, blocked: true, required: true, reason: `产品级验收异常：${err.message}` };
     }
     if (!loopStillRunning(this.store, loop.id)) return { ok: false, cancelled: true, audit };
     if (audit?.ok) {

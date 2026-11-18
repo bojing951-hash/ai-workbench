@@ -1749,6 +1749,10 @@ export class Orchestrator {
             result_json: {
               ...verification,
               testDurationMs: testRes.durationMs,
+              testCode: testRes.code,
+              testStdout: String(testRes.stdout || ''),
+              testStderr: String(testRes.stderr || ''),
+              testArtifactLog: path.join(this.logsDir(run.id, task.id), `verify-${Date.now()}-test.log`),
               criteria: audit.criteria,
             },
           });
@@ -2638,6 +2642,10 @@ export class Orchestrator {
           }
           if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
           recovered.push({ file, result: 'kept-existing-target', state: j.state });
+        } else if (stagingIndex && j.indexTree && !fs.existsSync(stagingIndex)) {
+          // backed-up 后目标已不存在、暂存 index 副本丢失：不能只发布磁盘 C 而留下旧 index A。
+          blocked.push({ file, reason: 'backed-up-index-source-missing', state: j.state });
+          continue;
         } else if (fs.existsSync(staging)) {
           fs.renameSync(staging, target);
           if (stagingIndex && indexTarget && fs.existsSync(stagingIndex)) {
@@ -2788,6 +2796,16 @@ export class Orchestrator {
           this.emit({ runId, taskId: task.id, type: 'commit_recovery_blocked', level: 'error', message: reason });
           continue;
         }
+      }
+      // 已阻断的提交恢复（例如临时 pre-commit 失败）在故障解除后应从提交阶段续做，不能退回 Coding。
+      const blockedCommitIntent = [TaskStatus.BLOCKED, TaskStatus.FAILED].includes(task.status)
+        && task.worktree_path && fs.existsSync(task.worktree_path)
+        && task.verification_json?.auditId && task.verification_json?.testedHash;
+      if (blockedCommitIntent) {
+        const completed = await this.completeCommittedTaskAfterAudit(run, task, resumeProject);
+        if (completed) continue;
+        this.emit({ runId, taskId: task.id, type: 'commit_recovery_still_blocked', level: 'warn', message: '提交恢复仍无法完成，保留尝试与证据' });
+        continue;
       }
       const needReset = intermediate || (retryFailed && [TaskStatus.FAILED, TaskStatus.BLOCKED].includes(task.status));
       if (!needReset) continue;
@@ -3006,8 +3024,19 @@ export class Orchestrator {
       audit = await this.deps.runAudit({
         config: this.config, project,
         task: { id: latestTask?.id || 'product-acceptance', seq: 999, title: 'Product acceptance', acceptance_json: expected, agent_kind: latestTask?.agent_kind || 'auto' },
-        diff, diffStat, testResult: latestTask?.result_json || {}, repoFiles, coderFamily, contextFiles,
-        versionInfo: { commit: planHead, planHead, worktreeHash: planHead, testedHash: planHead },
+        diff, diffStat, repoFiles, coderFamily, contextFiles,
+        versionInfo: {
+          commit: planHead, planHead,
+          worktreeHash: await gitops.git(project.local_path, ['rev-parse', `${planHead}^{tree}`], { allowFail: true }).then((r) => r.stdout.trim()).catch(() => planHead),
+          testedHash: latestTask?.result_json?.testedHash || latestTask?.verification_json?.testedHash || '',
+        },
+        testResult: latestTask?.result_json ? {
+          command: latestTask.result_json.testCommand || latestTask.verification_json?.testCommand || '',
+          code: latestTask.result_json.testCode,
+          stdout: latestTask.result_json.testStdout || '',
+          stderr: latestTask.result_json.testStderr || '',
+          durationMs: latestTask.result_json.testDurationMs,
+        } : {},
         worktree: project.local_path, commit: planHead, budget: productAuditBudget,
       });
     } catch (err) {

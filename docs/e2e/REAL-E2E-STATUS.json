@@ -20,7 +20,7 @@
   "productQualityLoop": "PASS_OFFLINE",
   "supervisorRecovery": "PASS_PARTIAL",
   "dockerFencing": "PASS",
-  "checkpointIntegrity": "PASS_PARTIAL_SIGKILL",
+  "checkpointIntegrity": "PASS_PARTIAL",
   "independentReview": "PENDING_INDEPENDENT_REVIEW",
   "historicalE2E": "FAILED",
   "budgetRiskGate": "PASS",
