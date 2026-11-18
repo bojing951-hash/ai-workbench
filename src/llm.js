@@ -191,7 +191,12 @@ export async function complete({
               .trim();
       const usage = normalizeUsage(spec, data);
       const rawUsage = data && data.usage && typeof data.usage === 'object' ? data.usage : null;
-      const usageKnown = !!(rawUsage && Object.keys(rawUsage).some((k) => ['prompt_tokens','completion_tokens','input_tokens','output_tokens','cache_read_input_tokens','cache_creation_input_tokens'].includes(k)));
+      const isNum = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
+      // 只接受供应商明确报告的完整输入+输出计数；null、缺失、只有部分字段都保持 UNKNOWN。
+      const usageKnown = !!(rawUsage && (
+        (isNum(rawUsage.prompt_tokens) && isNum(rawUsage.completion_tokens))
+        || (isNum(rawUsage.input_tokens) && isNum(rawUsage.output_tokens))
+      ));
       const costCny = estimateCostCny(spec.name, actualModel, usage);
       if (!text) throw new LlmError('LLM_EMPTY', `${spec.label} 返回空内容`);
       return {
