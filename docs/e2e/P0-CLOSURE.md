@@ -228,3 +228,10 @@
 - `scripts/e2e-authorize.mjs` 风险许可新增并强制 `--risk-role`，正式契约写入 role；
 - 两处 Planner 预留传入实际 `model`。
 - 全量 380/380/0。
+
+## 产品假完成与终态判定（2026-11-18）
+
+- `productGate` 仅在审计状态为 FAIL 时排队产品修复；
+- UNKNOWN/BLOCKED、缺 SHA、审计资源失败不增加 `product_repair_count`，保留候选并阻塞；
+- FAIL 才排一次修复并继续；
+- 全量 380/380/0。

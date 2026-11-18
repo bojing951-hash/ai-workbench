@@ -573,6 +573,13 @@ export class LoopManager {
       this.emit(loop, 'product_acceptance_passed', `产品级验收 PASS：${expected.length} 条冻结条款在最终 Commit ${planHead.slice(0, 8)} 有独立审计证据`, 'info', { planHead, auditId: audit.auditRow?.id || '' });
       return { ok: true, required: true, audit, planHead };
     }
+    // 只有可判定的产品缺陷才排修复；缺 SHA、缺证据、审计不可用/UNKNOWN 必须阻断，不能增加修复计数。
+    const auditStatus = String(audit?.status || (audit?.verdict === 'pass' ? 'PASS' : 'UNKNOWN')).toUpperCase();
+    if (auditStatus !== 'FAIL') {
+      const reason = `产品级验收无法判定（${auditStatus}）：${(audit?.missing || []).join('；').slice(0, 800) || audit?.reason || '证据不足/审计不可用'}；保留候选并阻塞，不创建产品修复任务`;
+      this.emit(loop, 'product_acceptance_blocked', reason, 'warn', { status: auditStatus, missing: audit?.missing || [] });
+      return { ok: false, blocked: true, reason, audit };
+    }
     if (!allowRepair) {
       const reason = `产品级验收未通过：${(audit?.missing || []).join('；').slice(0, 800) || audit?.status || 'UNKNOWN'}；max_rounds 已耗尽，保留检查点 BLOCKED`;
       this.emit(loop, 'product_acceptance_blocked', reason, 'warn', { status: audit?.status, missing: audit?.missing || [] });
