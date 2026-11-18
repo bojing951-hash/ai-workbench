@@ -63,7 +63,9 @@ test('v3.5 Supervisor 自主重启并恢复 Committing 阶段', { timeout: 180_0
     const afterState = await waitFor(() => { try { const s = JSON.parse(fs.readFileSync(statePath, 'utf8')); return s.childPid && s.childPid !== before.childPid && s.restarts?.length >= 1 ? s : null; } catch { return null; } }, 60_000);
     assert.ok(afterState.crashes.length >= 1, '必须记录 Workbench 崩溃');
     assert.equal(await waitHealth(port, 40_000), true, logText().slice(-3000));
-    const run = await waitFor(async () => { const d = await api(port, token, 'GET', `/api/runs/${runId}`); return d.data?.data?.status === 'awaiting_acceptance' ? d.data.data : null; }, 60_000);
+    let run;
+    try { run = await waitFor(async () => { const d = await api(port, token, 'GET', `/api/runs/${runId}`); return d.data?.data?.status === 'awaiting_acceptance' ? d.data.data : null; }, 60_000); }
+    catch (err) { const d = await api(port, token, 'GET', `/api/runs/${runId}`); console.error('COMMIT LOGS:' + logText().slice(-5000)); console.error('RUN:' + JSON.stringify(d.data?.data?.run || d.data?.data)); console.error('TASKS:' + JSON.stringify(d.data?.data?.tasks)); throw err; }
     assert.equal(run.tasks.length, 1, '不得重复创建 Task');
     assert.equal(run.tasks[0].status, 'passed');
     const shown = spawnSync('git', ['show', `${run.tasks[0].head_commit}:implemented.js`], { cwd: repo, encoding: 'utf8' });

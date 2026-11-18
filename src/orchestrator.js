@@ -1699,7 +1699,15 @@ export class Orchestrator {
 
         if (auditStatus === 'PASS') {
           this.assertProjectLease(project.id);
-          this.store.updateTask(task.id, { status: TaskStatus.COMMITTING });
+          // 提交前持久化可恢复意图：即使 Git commit 完成后进程崩溃，也能按 tree/audit 识别并只补账。
+          this.store.updateTask(task.id, {
+            status: TaskStatus.COMMITTING,
+            verification_json: {
+              ...(task.verification_json || {}), baseCommit, testedHash, planBranch,
+              auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
+              auditScore: audit.score, testCommand: safeCommand, commitIntentAt: nowIso(),
+            },
+          });
           const commitMessage = [
             `feat(task-${task.seq}): ${task.title}`, '',
             ...(task.acceptance_json || []).map((a) => `- 验收：${a}`), '',
@@ -2515,6 +2523,38 @@ export class Orchestrator {
     }
   }
 
+  async adoptCommittedTask(run, task, project) {
+    const v = task.verification_json && typeof task.verification_json === 'object' ? task.verification_json : {};
+    if (!task.worktree_path || !v.testedHash || !v.auditId) return false;
+    try {
+      if (!fs.existsSync(task.worktree_path)) return false;
+      const head = await gitops.currentHead(task.worktree_path);
+      if (!head) return false;
+      const tree = (await gitops.git(task.worktree_path, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
+      if (tree !== v.testedHash) {
+        // Commit 尚未发生（pre-commit hook/进程中断）：可以安全重跑；不是冲突。
+        if (!v.baseCommit || head === v.baseCommit) return 'not-committed';
+        return false;
+      }
+      const audit = this.store.listAudits(task.id).find((a) => a.id === v.auditId);
+      if (!audit || String(audit.verification_status || '').toUpperCase() !== 'PASS') return false;
+      const planBranch = v.planBranch || `wb/plan-${run.id.slice(-6)}`;
+      await gitops.updateRef(project.local_path, planBranch, head);
+      this.store.updateTask(task.id, {
+        status: TaskStatus.PASSED,
+        head_commit: head,
+        blocked_reason: '',
+        verification_json: { ...v, commit: head, commitRecoveredAt: nowIso() },
+        result_json: { ...(task.result_json || {}), ...v, commit: head, commitRecovered: true },
+      });
+      this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'commit_recovered', message: `已识别 Git commit ${head.slice(0, 12)} 并按同一 SHA 补账，不重复提交/审计`, data: { commit: head, tree, auditId: v.auditId } });
+      return true;
+    } catch (err) {
+      this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'commit_recovery_error', level: 'warn', message: `提交恢复核对异常：${err.message}` });
+      return false;
+    }
+  }
+
   async resumeRun(runId, { retryFailed = false, authorizeBudget = false } = {}) {
     const run = this.store.getRun(runId);
     if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
@@ -2540,6 +2580,17 @@ export class Orchestrator {
         TaskStatus.FAILED,
         TaskStatus.BLOCKED,
       ].includes(task.status);
+      // Git commit 已成功、SQLite 仍停留在 committing 的崩溃窗口：按预期 tree + 独立审计证据幂等补账。
+      if (task.status === TaskStatus.COMMITTING) {
+        const adopted = await this.adoptCommittedTask(run, task, resumeProject);
+        if (adopted === true) continue;
+        if (adopted === false) {
+          const reason = '提交恢复冲突：COMMITTING 任务缺少匹配的 Git tree/独立审计证据，拒绝自动重做/冒充成功';
+          this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason });
+          this.emit({ runId, taskId: task.id, type: 'commit_recovery_blocked', level: 'error', message: reason });
+          continue;
+        }
+      }
       const needReset = intermediate || (retryFailed && [TaskStatus.FAILED, TaskStatus.BLOCKED].includes(task.status));
       if (!needReset) continue;
       // 无损续跑：先保存完整检查点；有效 worktree 必须保留，损坏/不存在时也保留其恢复归档。
