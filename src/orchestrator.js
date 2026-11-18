@@ -2516,18 +2516,59 @@ export class Orchestrator {
         const idx = await gitops.git(staging, ['read-tree', parsed.indexTree], { allowFail: true });
         if (idx.code !== 0) throw new PolicyError('CHECKPOINT_INDEX_RESTORE_FAILED', `Git index 恢复失败：${idx.stderr || idx.stdout}`);
       }
+      const journalDir = path.join(this.config.paths.dataDir, 'checkpoints', '.publish');
+      ensureDir(journalDir);
+      const journalFile = path.join(journalDir, `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.json`);
+      const journal = { target, staging, backup: '', state: 'prepared', at: nowIso() };
+      const writeJournal = (state) => { journal.state = state; fs.writeFileSync(journalFile, JSON.stringify(journal), { mode: 0o600 }); };
+      writeJournal('prepared');
       if (fs.existsSync(target)) {
         backup = `${target}.backup-${Date.now().toString(36)}`;
+        journal.backup = backup; writeJournal('backing-up');
         fs.renameSync(target, backup);
+        writeJournal('backed-up');
       }
-      try { fs.renameSync(staging, target); } catch (err) { if (backup && !fs.existsSync(target)) fs.renameSync(backup, target); throw err; }
+      try { fs.renameSync(staging, target); writeJournal('published'); } catch (err) { if (backup && !fs.existsSync(target)) fs.renameSync(backup, target); try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ } throw err; }
       if (backup) fs.rmSync(backup, { recursive: true, force: true });
+      try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ }
       return { files: parsed.manifest.length, manifestHash, indexTree: parsed.indexTree || '' };
     } catch (err) {
       try { fs.rmSync(staging, { recursive: true, force: true }); } catch { /* ignore */ }
       try { if (backup && fs.existsSync(backup) && !fs.existsSync(target)) fs.renameSync(backup, target); } catch { /* ignore */ }
       throw err;
     }
+  }
+
+  recoverCheckpointPublications() {
+    const dir = path.join(this.config.paths.dataDir, 'checkpoints', '.publish');
+    if (!fs.existsSync(dir)) return { recovered: [], blocked: [] };
+    const recovered = []; const blocked = [];
+    for (const name of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+      const file = path.join(dir, name);
+      let j;
+      try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { blocked.push({ file, reason: 'journal-corrupt' }); continue; }
+      const target = path.resolve(String(j.target || '')); const staging = path.resolve(String(j.staging || '')); const backup = j.backup ? path.resolve(String(j.backup)) : '';
+      try {
+        if (!target || !staging) throw new Error('journal-paths-missing');
+        if (fs.existsSync(target)) {
+          // 原目标仍在：staging 未发布，删除临时目录，保留原目标。
+          if (staging !== target && fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
+          if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
+          recovered.push({ file, result: 'kept-existing-target', state: j.state });
+        } else if (fs.existsSync(staging)) {
+          fs.renameSync(staging, target);
+          if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
+          recovered.push({ file, result: 'completed-publish', state: j.state });
+        } else if (backup && fs.existsSync(backup)) {
+          fs.renameSync(backup, target);
+          recovered.push({ file, result: 'rolled-back', state: j.state });
+        } else {
+          blocked.push({ file, reason: 'target-staging-backup-missing' }); continue;
+        }
+        fs.rmSync(file, { force: true });
+      } catch (err) { blocked.push({ file, reason: err.message }); }
+    }
+    return { recovered, blocked };
   }
 
   async adoptCommittedTask(run, task, project) {

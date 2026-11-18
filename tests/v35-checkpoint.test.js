@@ -112,3 +112,33 @@ test('v35 Checkpoint：目标父目录符号链接/目标符号链接禁止恢�
     } finally { store.close(); }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('v35 Checkpoint：未完成发布可由新进程恢复（完整新版/回滚旧版）', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v35-journal-'));
+  const dataDir = path.join(root, 'data');
+  const { getConfig } = await import('../src/config.js');
+  const { openStore } = await import('../src/db.js');
+  const { EventBus } = await import('../src/bus.js');
+  const { Orchestrator } = await import('../src/orchestrator.js');
+  const config = getConfig({ root, paths: { root, dataDir, dbPath: path.join(dataDir, 't.db'), projectsDir: path.join(root, 'p'), worktreesDir: path.join(dataDir, 'w'), artifactsDir: path.join(dataDir, 'a'), logsDir: path.join(dataDir, 'l'), agentsDir: path.join(dataDir, 'ag'), dshHome: path.join(dataDir, 'ag/dsh'), claudeHome: path.join(dataDir, 'ag/claude') } });
+  const store = openStore(config.paths.dbPath);
+  try {
+    const o = new Orchestrator({ config, store, bus: new EventBus(), deps: {} });
+    const target = path.join(root, 'target'); const staging = path.join(root, 'staging'); const backup = path.join(root, 'backup');
+    fs.mkdirSync(staging); fs.writeFileSync(path.join(staging, 'new.txt'), 'new');
+    fs.mkdirSync(backup); fs.writeFileSync(path.join(backup, 'old.txt'), 'old');
+    const jdir = path.join(dataDir, 'checkpoints', '.publish'); fs.mkdirSync(jdir, { recursive: true });
+    const jfile = path.join(jdir, 'j1.json'); fs.writeFileSync(jfile, JSON.stringify({ target, staging, backup, state: 'backed-up' }));
+    const rec = o.recoverCheckpointPublications();
+    assert.equal(rec.blocked.length, 0);
+    assert.equal(fs.readFileSync(path.join(target, 'new.txt'), 'utf8'), 'new');
+    assert.equal(fs.existsSync(staging), false);
+    assert.equal(fs.existsSync(backup), false);
+    // 回滚：target 不存在，staging 缺失，backup 完整
+    const target2 = path.join(root, 'target2'); const backup2 = path.join(root, 'backup2'); fs.mkdirSync(backup2); fs.writeFileSync(path.join(backup2, 'old.txt'), 'old');
+    fs.writeFileSync(path.join(jdir, 'j2.json'), JSON.stringify({ target: target2, staging: path.join(root, 'staging2'), backup: backup2, state: 'backed-up' }));
+    const rec2 = o.recoverCheckpointPublications();
+    assert.equal(rec2.blocked.length, 0);
+    assert.equal(fs.readFileSync(path.join(target2, 'old.txt'), 'utf8'), 'old');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});

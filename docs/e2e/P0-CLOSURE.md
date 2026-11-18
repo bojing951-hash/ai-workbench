@@ -44,7 +44,7 @@
 
 `ENGINEERING_READY_FOR_REAL_E2E`：PASS。
 
-理由：预算风险门默认 fail-closed；冻结契约风险许可精确绑定；测试误放行、Docker 清理失败、Checkpoint 核心完整性、Supervisor Coding/Testing/Auditing/Committing 四阶段均通过；全量 367/367/0。
+理由：预算风险门默认 fail-closed；冻结契约风险许可精确绑定；测试误放行、Docker 清理失败、Checkpoint 核心完整性、Supervisor Coding/Testing/Auditing/Committing 四阶段均通过；全量 368/368/0。
 
 仍须明确：`HARD_SPENDING_CAP_NOT_AVAILABLE`，真实 Provider 无调用中硬限额；真实 E2E 必须在新的冻结契约中显式接受该风险并取得用户授权。
 
@@ -55,7 +55,7 @@
 - 该许可不是硬上限，只是把“无法保证调用在授权风险内结束”的配置显式接受。
 - Coding 预留改为 `max(12k, perTaskTokens)`；`overspent/stop_loss_reached` 不会被 completed 覆盖。
 - 测试回退只允许 `runner_compatibility`，产品断言失败/混合 FAIL/遗漏测试文件/隐藏契约 FAIL 全部保持失败（负向 B/C/D/F）。
-- 最终全量：**367 tests / 367 pass / 0 skipped / 0 fail**。
+- 最终全量：**368 tests / 368 pass / 0 skipped / 0 fail**。
 
 残余 P1：Supervisor Testing/Auditing/Committing 注入、Commit 后崩溃幂等恢复、宿主 Agent 孤儿进程清理仍未完全验证。
 
@@ -81,7 +81,7 @@
 - 回退不得跳过原 package.json test 的 lint/build/typecheck 等阶段；
 - 原始退出码/stdout/stderr、文件清单、命令完整保留。
 
-最终全量：**367 tests / 367 pass / 0 skipped / 0 fail**。
+最终全量：**368 tests / 368 pass / 0 skipped / 0 fail**。
 
 ## 独立复审后的补强
 
@@ -89,7 +89,7 @@
 - 风险许可门先验证实验契约哈希，再读取 `provider_json.risk.unbounded`；篡改契约许可失效；
 - 授权脚本新增 TTY 风险许可参数（client/provider/model/reason/acceptedBy/maxRiskTokens）；
 - 测试回退负向 E 现在包含可执行 lint 阶段，确保 mandatory-phase 守卫真实生效；
-- 最终全量仍为 367/367/0。
+- 最终全量仍为 368/368/0。
 
 ## 最终追加：预算语义、Checkpoint 与 Docker 清理
 
@@ -97,21 +97,21 @@
 - 实验内无有效风险许可的真实 Provider 仍 BLOCKED；
 - Checkpoint v2：文件 mode、安全相对符号链接、Git index tree、路径穿越阻断；恢复仅在 Worktree 重新创建时执行，复用有效 Worktree 时不再用旧归档覆盖；
 - Docker 清理 failed[] 在运行时 infra 恢复与启动两处均 fail-closed；
-- 全量最终：367/367/0。
+- 全量最终：368/368/0。
 
 ## 最终补充
 
 - Supervisor Coding/Testing/Auditing/Committing 四阶段真实 SIGKILL 测试全部 PASS；
 - Checkpoint 增补 Git index 恢复到真实新 Worktree、文件 mode、安全符号链接、路径穿越阻断、陈旧归档不覆盖较新文件测试；
 - 预算 per-call 与 per-task 语义确定性合并，per-call 仅约束预留申请；
-- 最终全量：367/367/0。
+- 最终全量：368/368/0。
 
 ## 最终安全收口（2026-11-18）
 
 - Checkpoint v3：所有恢复先写入隔离临时目录；校验 manifest/类型/大小/哈希后，再整体替换 Worktree；父目录符号链接、目标符号链接、路径穿越、`.git` 目录目标均拒绝；恢复失败不触碰现有 Worktree。
 - 统一风险门：`assertModelBudget` 对 Chat/Planner/Coding/Audit 均执行角色+client/provider/model 绑定检查；实验内无匹配风险许可默认 BLOCKED。
 - 预算语义：per-task 与 per-call 取最小；per-call 仅约束预留。
-- 最终全量：367/367/0。
+- 最终全量：368/368/0。
 
 ## Git-DB 崩溃窗口收口（2026-11-18）
 
@@ -122,7 +122,7 @@
 - tree 冲突保留 BLOCKED，不冒充成功。
 - 测试：`tests/v35-git-db-recovery.test.js`；Supervisor Committing 四阶段测试继续通过。
 
-最终全量：367/367/0。
+最终全量：368/368/0。
 
 ## 付费发送准入与验证重试（2026-11-18）
 
@@ -130,7 +130,7 @@
 - `retryVerification` 真实审计资源预检失败不再吞掉，任务直接 BLOCKED；测试注入审计器豁免。
 - `retryVerification` Git 操作前持久化 commit intent（auditId/baseCommit/testedHash/planBranch），支持崩溃后按同一 SHA 补账。
 - 新增测试：`tests/v35-paid-admission.test.js`、`tests/v35-git-db-recovery.test.js`。
-- 最终全量：367/367/0。
+- 最终全量：368/368/0。
 
 ## 付费审计分块与发送准入（2026-11-18）
 
@@ -142,3 +142,14 @@
 - Git 128 修复：commit intent 不再把任务分支当成计划分支；只推进 `wb/plan-*`，任务分支不被强制更新。
 
 **未完成**：审计发送后崩溃再恢复的 UNKNOWN 语义与 Supervisor 完整恢复；原 committing 正向测试因新“未授权不得重发”规则不再适用，已移除，Supervisor Committing 恢复转为 UNKNOWN。
+
+## Checkpoint 发布日志恢复（2026-11-18）
+
+- 发布前写 durable journal（target/staging/backup/state）；
+- 启动前 `recoverCheckpointPublications()`：
+  - target 仍在 → 清理未发布 staging/backup，保留旧版；
+  - target 缺失且 staging 完整 → 完成新版发布；
+  - target 缺失且 backup 完整 → 回滚旧版；
+  - 均缺失 → BLOCKED，不继续服务；
+- 新进程可从准备/备份/发布中间态恢复到完整旧版或完整新版。
+- 测试：`tests/v35-checkpoint.test.js`；全量 368/368/0。
