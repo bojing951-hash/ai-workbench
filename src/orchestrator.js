@@ -2936,7 +2936,16 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
       const lastAttempt = this.store.listAttempts(task.id).filter((a) => a.stage === 'coding').slice(-1)[0];
       const coderFamily = coderFamilyFor(lastAttempt?.agent_kind || task.agent_kind || 'dsh', this.config);
       let auditResourceInfo = null;
-      try { auditResourceInfo = this.auditResourcePreflight(project, coderFamily); } catch { auditResourceInfo = null; }
+      try {
+        // 真实审计必须通过预检；测试注入审计器允许跳过真实 Provider 预检。
+        if (this.deps.runAudit === runAudit) auditResourceInfo = this.auditResourcePreflight(project, coderFamily);
+      } catch (err) {
+        const reason = `审计资源预检失败，停止验证重试（不继续调用模型）：${err.message}`;
+        this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason });
+        this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
+        this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'verification_preflight_blocked', level: 'error', message: reason });
+        return { ok: false, reason, blocked: true };
+      }
       this.store.updateTask(task.id, { status: TaskStatus.AUDITING });
       this.assertBudget(8_000);
       const contextFiles = await this.collectAuditContext(worktree);
@@ -2987,7 +2996,15 @@ ${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3)
         this.store.updateRun(run.id, { status: RunStatus.PAUSED, stop_reason: reason });
         return { ok: false, reason, auditStatus };
       }
-      this.store.updateTask(task.id, { status: TaskStatus.COMMITTING });
+      const planBranchForIntent = task.verification_json?.planBranch || run.result_json?.planBranch || task.branch || `wb/plan-${run.id.slice(-6)}`;
+      this.store.updateTask(task.id, {
+        status: TaskStatus.COMMITTING,
+        verification_json: {
+          ...(task.verification_json || {}), baseCommit, testedHash, planBranch: planBranchForIntent,
+          auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
+          auditScore: audit.score, testCommand: safeCommand, verificationRetry: true, commitIntentAt: nowIso(),
+        },
+      });
       const commitMessage = [
         `feat(task-${task.seq}): ${task.title}`, '',
         ...(task.acceptance_json || []).map((a) => `- 验收：${a}`), '',

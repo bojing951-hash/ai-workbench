@@ -25,7 +25,7 @@
   "historicalE2E": "FAILED",
   "budgetRiskGate": "PASS",
   "githubCi": "PASS",
-  "gitDbRecovery": "PASS",
+  "gitDbRecovery": "PASS_CONTROLLED",
   "unknownBillingRecovery": "UNKNOWN",
   "offlineE2E": "UNKNOWN"
 }

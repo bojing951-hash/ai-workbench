@@ -266,8 +266,8 @@
     "hardLimitsTested": true,
     "tests": 16,
     "fullTests": {
-      "total": 364,
-      "pass": 364,
+      "total": 365,
+      "pass": 365,
       "skipped": 0,
       "fail": 0
     },

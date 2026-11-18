@@ -8,6 +8,7 @@ import { PolicyError, summarizeUsage } from './policy.js';
 import { resolveLlmIdentity, isExemptIdentity } from './model-identity.js';
 import { estimateCostCny } from './pricing.js';
 import { nowIso } from './util.js';
+import { installPaidAdmission } from './paid-admission.js';
 
 export function budgetSnapshot(store, config) {
   const used = store.usageTotals();
@@ -78,6 +79,7 @@ export function assertModelBudget({ config, store, provider, model = '', estimat
       const status = result.reservation?.status || 'existing';
       throw new PolicyError('MODEL_CALL_DUPLICATE', `${label} 的 requestKey 已存在（${status}），拒绝重复付费调用`, { reservation: result.reservation });
     }
+    if (experimentId) installPaidAdmission({ experimentId, role: experimentRole || label, maxSends: 1, requestKey: requestKey || id });
     return { identity, exempt: identityExempt, snapshot: budgetSnapshot(store, config), estimatedTokens: estimate, estimatedCostCny: estCost, reservation: result.reservation, experimentId: result.experimentId || experimentId };
   }
   if (experimentId) {

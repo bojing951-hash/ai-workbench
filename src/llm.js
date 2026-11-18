@@ -6,6 +6,7 @@
 import { estimateCostCny } from './pricing.js';
 import { extractJson, sleep, truncate } from './util.js';
 import { redactSecrets } from './util.js';
+import { beforePaidSend } from './paid-admission.js';
 
 export class LlmError extends Error {
   constructor(code, message, details = {}) {
@@ -163,6 +164,8 @@ export async function complete({
   const startedAt = Date.now();
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      // 每次实际 HTTP 发送前必须通过当前实验预留的发送准入；重试/JSON 重试同样受限。
+      await beforePaidSend({ provider: spec.name, model: actualModel });
       const res = await postJson(url, headers, body, timeoutMs, signal);
       if (!res.ok) {
         const safe = redactSecrets(res.text.slice(0, 1200), config.secrets || []);
