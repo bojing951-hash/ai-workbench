@@ -43,3 +43,36 @@ test('v36 Git-DB：已生成 commit 但 SQLite 未 passed 时按原 SHA 补账�
     assert.equal(pb, head, '必须推进计划分支而不是检出的任务分支；branches=' + git(['branch', '-vv'], repo).stdout);
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('v36 Git-DB：pre-commit 后中断时用已审计副本补提交，不重跑 Coding/Audit', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-v36-precommit-'));
+  const repo = path.join(root, 'repo'); fs.mkdirSync(repo, { recursive: true });
+  const git = (args, cwd = repo) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r; };
+  fs.writeFileSync(path.join(repo, 'README.md'), '# p\n'); git(['init', '-q', '-b', 'main']); git(['config', 'user.name', 't']); git(['config', 'user.email', 't@t']); git(['add', '-A']); git(['commit', '-qm', 'base']);
+  const dataDir = path.join(root, 'data');
+  const config = getConfig({ root, paths: { root, dataDir, dbPath: path.join(dataDir, 'test.db'), projectsDir: path.join(root, 'projects'), worktreesDir: path.join(dataDir, 'worktrees'), artifactsDir: path.join(dataDir, 'artifacts'), logsDir: path.join(dataDir, 'logs'), agentsDir: path.join(dataDir, 'agents'), dshHome: path.join(dataDir, 'agents/dsh'), claudeHome: path.join(dataDir, 'agents/claude') }, llm: { openai: { apiKey: '' }, glm: { apiKey: 'g', baseUrl: 'https://open.bigmodel.cn/api/anthropic', model: 'glm-5.3' }, deepseek: { apiKey: 'd', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' } }, github: { token: '', createPr: false, push: false }, budget: { maxTotalTokens: 3_000_000, maxCostCny: 30, minReserveTokens: 0 } });
+  const store = openStore(config.paths.dbPath);
+  try {
+    const wt = path.join(dataDir, 'wt'); git(['worktree', 'add', '-b', 'wb/rpre/t1', wt, 'HEAD']);
+    fs.writeFileSync(path.join(wt, 'implemented.js'), 'ok\n'); git(['add', '-A'], wt);
+    const testedHash = git(['write-tree'], wt).stdout.trim();
+    const base = git(['rev-parse', 'HEAD'], wt).stdout.trim();
+    git(['branch', 'wb/plan--pre', 'HEAD']);
+    store.createProject({ id: 'p-pre', name: 'p', localPath: repo, defaultBranch: 'main' });
+    store.createRun({ id: 'r-pre', projectId: 'p-pre', planId: 'pl-pre', goal: 'g', mode: 'single', status: 'interrupted' });
+    store.createPlan({ id: 'pl-pre', projectId: 'p-pre', runId: 'r-pre', goal: 'g', title: 't', tasks: [] });
+    store.createTasks([{ id: 't-pre', projectId: 'p-pre', planId: 'pl-pre', runId: 'r-pre', seq: 1, title: 't', acceptance: ['A'], status: 'committing' }]);
+    store.updateTask('t-pre', { worktree_path: wt, branch: 'wb/rpre/t1', base_commit: base, verification_json: { baseCommit: base, testedHash, planBranch: 'wb/plan--pre', auditId: 'aud-pre', auditStatus: 'PASS' } });
+    store.createAudit({ id: 'aud-pre', runId: 'r-pre', taskId: 't-pre', provider: 'mock', model: 'mock', verdict: 'pass', score: 100, verificationStatus: 'PASS', criteria: [] });
+    let agents = 0; let audits = 0;
+    const o = new Orchestrator({ config, store, bus: new EventBus(), deps: { checkAgents: async () => [], chooseAgent: async () => 'claude', runAgent: async () => { agents += 1; throw new Error('no'); }, runAudit: async () => { audits += 1; throw new Error('no'); } } });
+    await o.resumeRun('r-pre', { retryFailed: true });
+    const task = store.getTask('t-pre');
+    assert.equal(task.status, 'passed');
+    assert.equal(agents, 0); assert.equal(audits, 0);
+    const head = git(['rev-parse', 'HEAD'], wt).stdout.trim();
+    assert.equal(git(['rev-parse', 'HEAD^{tree}'], wt).stdout.trim(), testedHash);
+    assert.equal(git(['rev-parse', 'wb/plan--pre'], repo).stdout.trim(), head);
+    assert.equal(git(['rev-list', '--count', `${base}..${head}`], repo).stdout.trim(), '1', '只能产生 1 个产品提交');
+  } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});

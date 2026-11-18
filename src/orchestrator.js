@@ -2454,6 +2454,13 @@ export class Orchestrator {
     return { ...meta, archive: finalDir, manifestFile: path.join(finalDir, 'checkpoint.json') };
   }
 
+  async checkpointPause(state) {
+    if (process.env.CHECKPOINT_TEST_PAUSE_STATE !== String(state)) return;
+    const marker = process.env.CHECKPOINT_TEST_MARKER || '';
+    if (marker) fs.writeFileSync(marker, String(state));
+    await new Promise(() => {});
+  }
+
   async verifyAndRestoreCheckpoint(meta, targetWorktree) {
     if (!meta?.archive || !fs.existsSync(meta.manifestFile)) throw new PolicyError('CHECKPOINT_MISSING', '恢复检查点不存在');
     let parsed;
@@ -2522,13 +2529,15 @@ export class Orchestrator {
       const journal = { target, staging, backup: '', state: 'prepared', at: nowIso() };
       const writeJournal = (state) => { journal.state = state; fs.writeFileSync(journalFile, JSON.stringify(journal), { mode: 0o600 }); };
       writeJournal('prepared');
+      await this.checkpointPause('prepared');
       if (fs.existsSync(target)) {
         backup = `${target}.backup-${Date.now().toString(36)}`;
         journal.backup = backup; writeJournal('backing-up');
         fs.renameSync(target, backup);
         writeJournal('backed-up');
+        await this.checkpointPause('backed-up');
       }
-      try { fs.renameSync(staging, target); writeJournal('published'); } catch (err) { if (backup && !fs.existsSync(target)) fs.renameSync(backup, target); try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ } throw err; }
+      try { fs.renameSync(staging, target); writeJournal('published'); await this.checkpointPause('published'); } catch (err) { if (backup && !fs.existsSync(target)) fs.renameSync(backup, target); try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ } throw err; }
       if (backup) fs.rmSync(backup, { recursive: true, force: true });
       try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ }
       return { files: parsed.manifest.length, manifestHash, indexTree: parsed.indexTree || '' };
@@ -2608,6 +2617,54 @@ export class Orchestrator {
     }
   }
 
+  async completeCommittedTaskAfterAudit(run, task, project) {
+    const v = task.verification_json && typeof task.verification_json === 'object' ? task.verification_json : {};
+    if (!task.worktree_path || !v.testedHash || !v.auditId) return false;
+    try {
+      if (!fs.existsSync(task.worktree_path)) return false;
+      const audit = this.store.listAudits(task.id).find((a) => a.id === v.auditId);
+      if (!audit || String(audit.verification_status || '').toUpperCase() !== 'PASS') return false;
+      await gitops.stageAll(task.worktree_path);
+      const indexTree = (await gitops.git(task.worktree_path, ['write-tree'], { allowFail: true })).stdout.trim();
+      if (indexTree !== v.testedHash) return false;
+      let head = await gitops.currentHead(task.worktree_path);
+      const tree = (await gitops.git(task.worktree_path, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
+      let created = false;
+      if (tree !== v.testedHash) {
+        const msg = `feat(task-${task.seq}): ${task.title}\n\n恢复：使用已测试/已审计工作副本补提交\n测试指纹: ${v.testedHash}`;
+        const c = await gitops.commitAll(task.worktree_path, msg);
+        head = await gitops.currentHead(task.worktree_path);
+        const after = (await gitops.git(task.worktree_path, ['rev-parse', 'HEAD^{tree}'], { allowFail: true })).stdout.trim();
+        if (after !== v.testedHash) return false;
+        created = true;
+      }
+      const taskBranch = task.branch || '';
+      let planBranch = v.planBranch || '';
+      if (!planBranch || planBranch === taskBranch || !planBranch.startsWith('wb/plan-')) planBranch = `wb/plan-${run.id.slice(-6)}`;
+      if (planBranch !== taskBranch) {
+        const current = await gitops.branchRef(project.local_path, planBranch).catch(() => '');
+        if (current && current !== v.baseCommit && current !== head) {
+          const anc = await gitops.git(project.local_path, ['merge-base', '--is-ancestor', head, current], { allowFail: true });
+          if (anc.code !== 0) return false;
+        }
+        await gitops.updateRef(project.local_path, planBranch, head);
+      }
+      this.freezeTestBaseline(project, task.worktree_path, { runId: run.id, taskId: task.id, source: 'commit_recovery', commit: head });
+      this.store.updateTask(task.id, {
+        status: TaskStatus.PASSED,
+        head_commit: head,
+        blocked_reason: '',
+        verification_json: { ...v, commit: head, commitRecoveredAt: nowIso(), commitRecoveredCreated: created },
+        result_json: { ...(task.result_json || {}), ...v, commit: head, commitRecovered: true },
+      });
+      this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'commit_recovered', message: `已基于已测试/已审计副本补提交 ${head.slice(0, 12)}，未重跑 Coding/Audit`, data: { commit: head, tree: v.testedHash, created } });
+      return true;
+    } catch (err) {
+      this.emit({ runId: run.id, projectId: project.id, taskId: task.id, type: 'commit_recovery_error', level: 'warn', message: `提交补账失败：${err.message}` });
+      return false;
+    }
+  }
+
   async resumeRun(runId, { retryFailed = false, authorizeBudget = false } = {}) {
     const run = this.store.getRun(runId);
     if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
@@ -2637,6 +2694,10 @@ export class Orchestrator {
       if (task.status === TaskStatus.COMMITTING) {
         const adopted = await this.adoptCommittedTask(run, task, resumeProject);
         if (adopted === true) continue;
+        if (adopted === 'not-committed') {
+          const completed = await this.completeCommittedTaskAfterAudit(run, task, resumeProject);
+          if (completed) continue;
+        }
         if (adopted === false) {
           const reason = '提交恢复冲突：COMMITTING 任务缺少匹配的 Git tree/独立审计证据，拒绝自动重做/冒充成功';
           this.store.updateTask(task.id, { status: TaskStatus.BLOCKED, blocked_reason: reason });
