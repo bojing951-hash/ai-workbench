@@ -181,7 +181,7 @@ async function callAuditOnce({ config, provider, prompt, acceptance, signal }) {
     signal,
   });
   const final = finalizeAuditVerdict(result.json || {}, acceptance);
-  return { ...final, usage: result.usage, costCny: result.costCny, rawText: result.text, provider: result.provider, providerLabel: result.providerLabel, model: result.model };
+  return { ...final, usage: result.usage, usageKnown: result.usageKnown, costCny: result.costCny, rawText: result.text, provider: result.provider, providerLabel: result.providerLabel, model: result.model };
 }
 
 /**
@@ -276,7 +276,7 @@ export async function runAudit({
     }
     if (reservation?.reservation?.id) {
       const u = summarizeUsage(res.usage || {});
-      budget.store.settleModelReservation(reservation.reservation.id, { actualTokens: u.total, actualCostCny: res.costCny || 0, usageKnown: !!(res.usage && u.total > 0) });
+      budget.store.settleModelReservation(reservation.reservation.id, { actualTokens: u.total, actualCostCny: res.costCny || 0, usageKnown: res.usageKnown !== false && !!(res.usage && u.total > 0) });
     }
     chunkResults.push(res);
   }

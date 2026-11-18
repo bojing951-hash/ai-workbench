@@ -643,7 +643,7 @@ export class Orchestrator {
       throw err;
     }
     if (plannerReservation?.reservation?.id) {
-      this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: summarizeUsage(planResult.usage || {}).total, actualCostCny: planResult.costCny || 0, usageKnown: true });
+      this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: summarizeUsage(planResult.usage || {}).total, actualCostCny: planResult.costCny || 0, usageKnown: planResult.usageKnown !== false });
     }
 
     try {

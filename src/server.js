@@ -357,7 +357,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         try {
           recordModelUsage({
             store, config, source: 'chat', sourceId: `chat:${conversation.id}:${userMessage.id}`,
-            provider: turn.provider, model: turn.model, usage: turn.usage, costCny: turn.costCny,
+            provider: turn.provider, model: turn.model, usage: turn.usage, usageKnown: turn.usageKnown, costCny: turn.costCny,
             projectId: conversation.project_id || '', conversationId: conversation.id, reservationId: turn.budgetReservation?.id || '',
           });
         } catch (err) {

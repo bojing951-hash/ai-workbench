@@ -102,10 +102,10 @@ export function assertModelBudget({ config, store, provider, model = '', estimat
   return { identity, exempt: false, snapshot: snap, estimatedTokens: estimate, estimatedCostCny: estCost };
 }
 
-export function recordModelUsage({ store, config, source, provider, model = '', usage = {}, costCny = 0, sourceId = '', runId = '', taskId = '', projectId = '', conversationId = '', budgetScope = 'global', costSource = 'estimated', reservationId = '' }) {
+export function recordModelUsage({ store, config, source, provider, model = '', usage = {}, usageKnown: usageKnownInput, costCny = 0, sourceId = '', runId = '', taskId = '', projectId = '', conversationId = '', budgetScope = 'global', costSource = 'estimated', reservationId = '' }) {
   const identity = resolveLlmIdentity({ config, provider });
   const u = summarizeUsage(usage || {});
-  const usageKnown = !(u.total === 0 && !(usage && (usage.input || usage.output || usage.cacheRead || usage.cacheWrite)));
+  const usageKnown = typeof usageKnownInput === 'boolean' ? usageKnownInput : !(u.total === 0 && !(usage && (usage.input || usage.output || usage.cacheRead || usage.cacheWrite)));
   const row = store.addLlmUsage({
     id: sourceId ? `usage_${source}_${sourceId.replace(/[^a-zA-Z0-9_:-]/g, '_')}` : undefined,
     sourceId: sourceId || '',

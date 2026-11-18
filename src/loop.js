@@ -414,7 +414,7 @@ export class LoopManager {
             plannerBinding: this.store.getExperimentForProject?.(project.id)?.provider_json?.planner || null,
           });
           if (plannerReservation?.reservation?.id) {
-            this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: Number(planned.usage?.input || 0) + Number(planned.usage?.output || 0) + Number(planned.usage?.cacheRead || 0) + Number(planned.usage?.cacheWrite || 0), actualCostCny: planned.costCny || 0, usageKnown: true });
+            this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: Number(planned.usage?.input || 0) + Number(planned.usage?.output || 0) + Number(planned.usage?.cacheRead || 0) + Number(planned.usage?.cacheWrite || 0), actualCostCny: planned.costCny || 0, usageKnown: planned.usageKnown !== false });
             plannerReservation = null;
           }
           if (planned.usage) {

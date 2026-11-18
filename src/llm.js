@@ -190,6 +190,8 @@ export async function complete({
               .join('\n')
               .trim();
       const usage = normalizeUsage(spec, data);
+      const rawUsage = data && data.usage && typeof data.usage === 'object' ? data.usage : null;
+      const usageKnown = !!(rawUsage && Object.keys(rawUsage).some((k) => ['prompt_tokens','completion_tokens','input_tokens','output_tokens','cache_read_input_tokens','cache_creation_input_tokens'].includes(k)));
       const costCny = estimateCostCny(spec.name, actualModel, usage);
       if (!text) throw new LlmError('LLM_EMPTY', `${spec.label} 返回空内容`);
       return {
@@ -199,6 +201,7 @@ export async function complete({
         providerLabel: spec.label,
         model: actualModel,
         usage,
+        usageKnown,
         costCny,
         latencyMs: Date.now() - startedAt,
       };
@@ -234,6 +237,7 @@ export async function completeJson(opts) {
   return {
     ...retry,
     json: parsedRetry,
+    usageKnown: first.usageKnown !== false && retry.usageKnown !== false,
     usage: {
       input: first.usage.input + retry.usage.input,
       output: first.usage.output + retry.usage.output,

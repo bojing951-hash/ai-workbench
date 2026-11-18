@@ -173,6 +173,7 @@ export async function planTasks({ config, project, goal, acceptance = [], mode =
       createdAt: new Date().toISOString(),
     },
     usage: result.usage,
+    usageKnown: result.usageKnown,
     costCny: result.costCny,
   };
 }
@@ -225,13 +226,13 @@ export async function planNextTask({ config, project, goal, history = [], contra
   const data = result.json || {};
   const action = String(data.action || '').toLowerCase();
   if (!['task', 'no_task', 'blocked'].includes(action)) throw new PolicyError('PLANNER_INVALID', `规划器返回非法 action：${data.action}`);
-  if (action !== 'task') return { action, rationale: String(data.rationale || ''), blockedReason: String(data.blocked_reason || data.blockedReason || ''), usage: result.usage, costCny: result.costCny, provider: result.provider, model: result.model };
+  if (action !== 'task') return { action, rationale: String(data.rationale || ''), blockedReason: String(data.blocked_reason || data.blockedReason || ''), usage: result.usage, usageKnown: result.usageKnown, costCny: result.costCny, provider: result.provider, model: result.model };
   const tasks = validateTasks([data.task]);
   const task = tasks[0];
   const normalizedTitle = task.title.trim().toLowerCase();
   const duplicate = history.some((h) => String(h.task?.title || h.title || '').trim().toLowerCase() === normalizedTitle);
   if (duplicate) {
-    return { action: 'no_task', rationale: `规划器给出的任务与已完成任务重复：${task.title}`, usage: result.usage, costCny: result.costCny, provider: result.provider, model: result.model };
+    return { action: 'no_task', rationale: `规划器给出的任务与已完成任务重复：${task.title}`, usage: result.usage, usageKnown: result.usageKnown, costCny: result.costCny, provider: result.provider, model: result.model };
   }
-  return { action: 'task', task, rationale: String(data.rationale || ''), usage: result.usage, costCny: result.costCny, provider: result.provider, model: result.model };
+  return { action: 'task', task, rationale: String(data.rationale || ''), usage: result.usage, usageKnown: result.usageKnown, costCny: result.costCny, provider: result.provider, model: result.model };
 }

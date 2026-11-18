@@ -5,8 +5,8 @@
   "budgetUnchanged": true,
   "dockersAvailable": false,
   "fullTests": {
-    "total": 370,
-    "pass": 370,
+    "total": 372,
+    "pass": 372,
     "skipped": 0,
     "fail": 0
   },

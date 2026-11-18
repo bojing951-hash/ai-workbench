@@ -90,7 +90,7 @@ export async function chatTurn({ config, store, conversation, userMessage, proje
     productName: String(j.productName || conversation.title || '新软件产品').slice(0, 120),
     goal,
     acceptance,
-    provider: result.provider, model: result.model, usage: result.usage || {}, costCny: result.costCny || 0,
+    provider: result.provider, model: result.model, usage: result.usage || {}, usageKnown: result.usageKnown, costCny: result.costCny || 0,
     providerKnown: budget.identity.known, providerSource: budget.identity.source, budgetExempt: budget.exempt, budgetReservation: budget.reservation || null,
     intent: ['start','status','current_task','failure','pause','resume','cost','tests','audit','delivery'].includes(String(j.intent || '')) ? String(j.intent) : 'none',
   };
