@@ -4,8 +4,8 @@
   "pass": 16,
   "fail": 0,
   "fullSuite": {
-    "total": 379,
-    "pass": 379,
+    "total": 380,
+    "pass": 380,
     "skipped": 0,
     "fail": 0,
     "log": "demo/evidence/e2e-safety/tests.log"

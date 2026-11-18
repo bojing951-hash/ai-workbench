@@ -586,7 +586,7 @@ export class Orchestrator {
     }
 
     this.assertBudget(5_000);
-    assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 5000, label: 'Planner', experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
+    assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', model: this.config.planner.model || '', estimatedTokens: 5000, label: 'Planner', experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
 
     const busy = this.store.activeRunForProject(project.id);
     if (busy) {
@@ -627,7 +627,7 @@ export class Orchestrator {
     let plannerReservation = null;
     try {
       // 原子预算预留：并发进程不能同时读到同一余额后越权调用。
-      plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
+      plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', model: this.config.planner.model || '', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
       const experimentPlanBinding = this.store.getExperimentForProject?.(project.id)?.provider_json?.planner || null;
       planResult = await planTasks({
         config: this.config,
@@ -2971,10 +2971,8 @@ export class Orchestrator {
     const parent = await gitops.git(project.local_path, ['rev-parse', `${planHead}^`], { allowFail: true }).then((r) => r.stdout.trim()).catch(() => '');
     const base = baseCommit || parent || planHead;
     const diffRes = await gitops.git(project.local_path, ['diff', base, planHead], { timeoutMs: 120_000 });
-    let diff = diffRes.stdout || '';
-    if (diff.length > Number(this.config.audit.maxDiffChars || 70_000)) diff = `${diff.slice(0, Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.7))}
-... [产品验收 diff 截断] ...
-${diff.slice(-Math.floor(Number(this.config.audit.maxDiffChars || 70_000) * 0.3))}`;
+    // 产品验收必须让分块器看到完整 diff；禁止在入口预先丢弃中段后再交给审计。
+    const diff = diffRes.stdout || '';
     const diffStat = await gitops.git(project.local_path, ['diff', '--stat', base, planHead], { allowFail: true }).then((r) => (r.stdout || '').trim());
     const repoFiles = await gitops.listTree(project.local_path, planHead, { max: 150 });
     const contextFiles = await this.collectAuditContext(project.local_path);
