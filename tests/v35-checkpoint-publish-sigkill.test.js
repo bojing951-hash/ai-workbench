@@ -40,7 +40,7 @@ await o.verifyAndRestoreCheckpoint(JSON.parse(process.argv[3]),process.argv[4]);
   try {
     const end = Date.now() + 15_000; while (!fs.existsSync(marker) && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
     assert.ok(fs.existsSync(marker), '必须到达 backed-up 边界');
-    child.kill('SIGKILL'); await new Promise((r) => child.on('close', r));
+    child.kill('SIGKILL'); await new Promise((r) => { if (child.exitCode !== null || child.signalCode) return r(); child.once('close', r); });
     const store2 = openStore(config.paths.dbPath);
     try {
       const o2 = new Orchestrator({ config, store: store2, bus: new EventBus(), deps: {} });
