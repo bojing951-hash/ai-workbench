@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { nowIso, newId, ensureDir, truncate, tailLines, safeFilename, parseList } from './util.js';
 import {
   PolicyError, RunStatus, TaskStatus, assertBudgetAllowed, assertProjectBudget, assertRunWallClock,
@@ -2534,7 +2535,7 @@ export class Orchestrator {
       const journalDir = path.join(this.config.paths.dataDir, 'checkpoints', '.publish');
       ensureDir(journalDir);
       const journalFile = path.join(journalDir, `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.json`);
-      const journal = { target, staging, backup: '', state: 'prepared', stagingIndex, indexTarget, at: nowIso() };
+      const journal = { target, staging, backup: '', state: 'prepared', stagingIndex, indexTarget, indexTree: parsed.indexTree || '', at: nowIso() };
       const writeJournal = (state) => { journal.state = state; fs.writeFileSync(journalFile, JSON.stringify(journal), { mode: 0o600 }); };
       writeJournal('prepared');
       await this.checkpointPause('prepared');
@@ -2545,7 +2546,7 @@ export class Orchestrator {
         writeJournal('backed-up');
         await this.checkpointPause('backed-up');
       }
-      try { fs.renameSync(staging, target); writeJournal('published'); await this.checkpointPause('published'); } catch (err) { if (backup && !fs.existsSync(target)) fs.renameSync(backup, target); try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ } throw err; }
+      try { fs.renameSync(staging, target); await this.checkpointPause('renamed'); writeJournal('published'); await this.checkpointPause('published'); } catch (err) { if (backup && !fs.existsSync(target)) fs.renameSync(backup, target); try { fs.rmSync(journalFile, { force: true }); } catch { /* ignore */ } throw err; }
       if (stagingIndex && indexTarget) {
         try {
           fs.mkdirSync(path.dirname(indexTarget), { recursive: true });
@@ -2578,9 +2579,31 @@ export class Orchestrator {
         if (!target || !staging) throw new Error('journal-paths-missing');
         const stagingIndex = j.stagingIndex ? path.resolve(String(j.stagingIndex)) : '';
         const indexTarget = j.indexTarget ? path.resolve(String(j.indexTarget)) : '';
+        const diskTree = () => {
+          if (!j.indexTree || !indexTarget) return '';
+          const tmpIndex = path.join(path.dirname(target), `.wb-recover-index-${process.pid}-${Date.now().toString(36)}`);
+          try {
+            const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
+            const add = spawnSync('git', ['-C', target, 'add', '-A'], { env, encoding: 'utf8' });
+            if (add.status !== 0) return '';
+            const wt = spawnSync('git', ['-C', target, 'write-tree'], { env, encoding: 'utf8' });
+            return wt.status === 0 ? wt.stdout.trim() : '';
+          } finally { try { fs.rmSync(tmpIndex, { force: true }); } catch { /* ignore */ } }
+        };
         if (fs.existsSync(target)) {
           // 原目标仍在：staging 未发布，删除临时目录/独立 index，保留原目标。
           if (staging !== target && fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
+          // 关键窗口：staging 已改名为 target（磁盘新版），但日志仍 backed-up、真实 Index 仍旧版。
+          const newDiskPendingIndex = j.indexTree && diskTree() === j.indexTree && stagingIndex && fs.existsSync(stagingIndex) && indexTarget;
+          if (newDiskPendingIndex) {
+            fs.mkdirSync(path.dirname(indexTarget), { recursive: true });
+            fs.copyFileSync(stagingIndex, indexTarget);
+            fs.rmSync(stagingIndex, { force: true });
+            if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
+            recovered.push({ file, result: 'completed-index-after-rename', state: j.state });
+            fs.rmSync(file, { force: true });
+            continue;
+          }
           if (stagingIndex && fs.existsSync(stagingIndex) && j.state !== 'published') fs.rmSync(stagingIndex, { force: true });
           if (j.state === 'published' && stagingIndex && indexTarget && fs.existsSync(stagingIndex)) {
             fs.mkdirSync(path.dirname(indexTarget), { recursive: true });
