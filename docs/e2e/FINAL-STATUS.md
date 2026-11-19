@@ -43,3 +43,14 @@
 - 授权 CLI 支持 `--risk-spec` 多组精确 role/client/provider/model 许可。
 - 全量：419/419/0；DSH 固定快照 PASS；真实 Docker 可用。
 - 仍缺：连续离线产品 E2E（无产品 SHA）、真实 Docker 双进程写入交接；因此 ENGINEERING_FREEZE_BLOCKED。
+
+## ba544 复审整改（2026-11-19）
+
+- 产品终审绑定数值退出码、真实 task/attempt、artifact 哈希/字节、commit/tree；日志被截断时 BLOCKED。
+- Chat 显式重试许可持久单次消费；同许可重投不再发送。
+- startRun Planner 结果持久化：收到回执后写 Run 失败，重投复用结果，不二次发送。
+- 显式任务跳过 Planner 预留/用量；豁免 GLM 与回退路由按实际 provider/model 记 13。
+- 历史 mirror 仅在可证明 planner 同源时标记 superseded，独立 coding 13 保留；预留准入使用有效口径。
+- Checkpoint 恢复只解除归属 Run，保留 budget/人工暂停；任务回 queued 沿原 attempt/session 派发。
+- 复审 18/18 PASS；npm test 419/419；宿主产品两轮 PASS，最终产品 SHA `31faae1b692e3c7a225f07d2f926ad49376a0f1f`。
+- 仍缺真实 Docker 双进程交接与容器内产品 E2E；ENGINEERING_FREEZE_BLOCKED。

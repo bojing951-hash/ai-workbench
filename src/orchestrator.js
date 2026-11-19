@@ -589,6 +589,7 @@ export class Orchestrator {
       const existing = this.store.getRunByRequestKey(requestKey);
       if (existing) return { runId: existing.id, planId: existing.plan_id, existing: true };
     }
+    const persistedPlan = requestKey ? this.store.getRunPlanReceipt(requestKey) : null;
 
     this.assertBudget(5_000);
     assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', model: this.config.planner.model || '', estimatedTokens: 5000, label: 'Planner', experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
@@ -628,11 +629,15 @@ export class Orchestrator {
     const wallDeadline = new Date(Date.now() + budget.maxWallClockMs).toISOString();
 
     // 先做规划（LLM 调用），失败不创建半成品运行；持有项目 fence 期间失败必须释放。
-    let planResult;
+    let planResult = persistedPlan;
     let plannerReservation = null;
+    const explicitTasks = Array.isArray(input.tasks) && input.tasks.length > 0;
     try {
-      // 原子预算预留：并发进程不能同时读到同一余额后越权调用。
-      plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', model: this.config.planner.model || '', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
+      if (planResult) { /* 已收到并持久化的结果：重投不得再次发送/计费 */ } else {
+      // 显式任务不调用模型：不预留、不计费、不占额。自动规划才做原子预留。
+      if (!explicitTasks) {
+        plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', model: this.config.planner.model || '', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
+      }
       const experimentPlanBinding = this.store.getExperimentForProject?.(project.id)?.provider_json?.planner || null;
       planResult = await planTasks({
         config: this.config,
@@ -640,30 +645,32 @@ export class Orchestrator {
         goal,
         acceptance,
         mode,
-        tasks: input.tasks,
-        plannerBinding: experimentPlanBinding,
-      });
+          tasks: input.tasks,
+          plannerBinding: experimentPlanBinding,
+        });
+      }
     } catch (err) {
       if (plannerReservation?.reservation?.id) this.store.markModelReservationUnknown(plannerReservation.reservation.id);
       this.releaseProjectLease(project.id);
       throw err;
     }
-    if (plannerReservation?.reservation?.id) {
+    if (!explicitTasks && !persistedPlan) {
       const plannerUsage = planResult.usage || {};
       const usageKnown = planResult.usageKnown === true;
       recordModelUsage({
         store: this.store, config: this.config, source: 'planner',
         sourceId: `planner:run:${requestKey || runId}`,
-        provider: planResult.provider || this.config.planner.provider || 'deepseek',
-        model: planResult.model || this.config.planner.model || '',
+        provider: planResult.provider || planResult.plannerMeta?.provider || this.config.planner.provider || 'deepseek',
+        model: planResult.model || planResult.plannerMeta?.model || this.config.planner.model || '',
         usage: plannerUsage, usageKnown, costCny: planResult.costCny || 0,
         runId, projectId: project.id, experimentId: this.experimentIdForProject(project.id),
-        reservationId: plannerReservation.reservation.id,
+        reservationId: plannerReservation?.reservation?.id || '',
         costSource: usageKnown ? 'estimated' : 'unknown',
       });
       plannerReservation = null;
     }
 
+    if (requestKey) this.store.saveRunPlanReceipt(requestKey, planResult);
     try {
       this.assertProjectLease(project.id);
       try {
@@ -1592,10 +1599,12 @@ export class Orchestrator {
           isolation: testRes.isolation || null,
           setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed,
         };
+        const testArtifactContent = `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n${testRes.isolation ? `isolation=${JSON.stringify(testRes.isolation)}\n` : ''}\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}`;
         const testArtifact = this.writeArtifact({
           runId: run.id, taskId: task.id, kind: 'test', filename: `task-${task.id}-attempt-${attemptNo}-test.txt`,
-          content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n${testRes.isolation ? `isolation=${JSON.stringify(testRes.isolation)}\n` : ''}\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}`,
+          content: testArtifactContent,
         });
+        const testArtifactSha256 = crypto.createHash('sha256').update(testArtifactContent).digest('hex');
         await gitops.stageAll(worktree);
         const afterTestHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
         if (afterTestHash !== testedHash) {
@@ -1720,7 +1729,7 @@ export class Orchestrator {
             verification_json: {
               ...(task.verification_json || {}), baseCommit, testedHash, planBranch,
               auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
-              auditScore: audit.score, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(testArtifact), commitIntentAt: nowIso(),
+              auditScore: audit.score, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(testArtifact), testArtifactSha256, testArtifactBytes: Buffer.byteLength(testArtifactContent), commitIntentAt: nowIso(),
             },
           });
           const commitMessage = [
@@ -1759,7 +1768,7 @@ export class Orchestrator {
               testCode: testRes.code,
               testStdout: String(testRes.stdout || ''),
               testStderr: String(testRes.stderr || ''),
-              testArtifactLog: this.artifactAbs(testArtifact),
+              testArtifactLog: this.artifactAbs(testArtifact), testArtifactSha256, testArtifactBytes: Buffer.byteLength(testArtifactContent),
               criteria: audit.criteria,
             },
           });
@@ -3018,9 +3027,18 @@ export class Orchestrator {
       const receipt = latestTask.result_json || latestTask.verification_json || {};
       const receiptTree = receipt.testedHash || '';
       const receiptLog = receipt.testArtifactLog ? this.artifactAbs(receipt.testArtifactLog) : '';
+      let receiptLogValid = !!receiptLog && fs.existsSync(receiptLog);
+      if (receiptLogValid) {
+        const stat = fs.statSync(receiptLog);
+        const actualHash = crypto.createHash('sha256').update(fs.readFileSync(receiptLog)).digest('hex');
+        if (Number.isFinite(Number(receipt.testArtifactBytes)) && stat.size !== Number(receipt.testArtifactBytes)) receiptLogValid = false;
+        if (receipt.testArtifactSha256 && actualHash !== receipt.testArtifactSha256) receiptLogValid = false;
+        // 无哈希的旧回执：零字节日志只有在测试本身明确为空输出时才可能是合法的。
+        if (!receipt.testArtifactSha256 && stat.size === 0 && String(receipt.testStdout || '').length > 0) receiptLogValid = false;
+      }
       const receiptValid = receipt.commit === planHead && receiptTree === candidateTree
         && typeof receipt.testCode === 'number' && receipt.testCode === 0
-        && !!receipt.testCommand && !!receiptLog && fs.existsSync(receiptLog);
+        && !!receipt.testCommand && receiptLogValid;
       if (!receiptValid) {
         return { ok: false, required: true, status: 'BLOCKED', reason: `产品终审缺少当前候选 ${planHead.slice(0, 12)} 的完整测试回执（commit/tree/数值退出码/命令/原始日志）或属于其他版本；拒绝交付`, missing: expected, planHead };
       }
@@ -3162,7 +3180,9 @@ export class Orchestrator {
       });
       if (retrySignal.aborted) return { ok: false, reason: '运行被暂停/取消，验证检查点已保留' };
       const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null, setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed };
-      const retryTestArtifact = this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `task-${task.id}-verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
+      const retryArtifactContent = `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}`;
+      const retryTestArtifact = this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `task-${task.id}-verify-${Date.now()}-test.txt`, content: retryArtifactContent });
+      const retryArtifactSha256 = crypto.createHash('sha256').update(retryArtifactContent).digest('hex');
       await gitops.stageAll(worktree);
       const afterHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
       if (afterHash !== testedHash) throw new PolicyError('FINGERPRINT_MISMATCH', '测试期间工作树内容发生变化');
@@ -3267,7 +3287,7 @@ export class Orchestrator {
         verification_json: {
           ...(task.verification_json || {}), baseCommit, testedHash, planBranch: planBranchForIntent,
           auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
-          auditScore: audit.score, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(retryTestArtifact), verificationRetry: true, commitIntentAt: nowIso(),
+          auditScore: audit.score, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(retryTestArtifact), testArtifactSha256: retryArtifactSha256, testArtifactBytes: Buffer.byteLength(retryArtifactContent), verificationRetry: true, commitIntentAt: nowIso(),
         },
       });
       const commitMessage = [
@@ -3302,7 +3322,7 @@ export class Orchestrator {
       const headCommit = await gitops.currentHead(worktree);
       this.freezeTestBaseline(project, worktree, { runId: run.id, taskId: task.id, source: 'verification_retry', commit: headCommit });
       const verification = {
-        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(retryTestArtifact), isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
+        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(retryTestArtifact), testArtifactSha256: retryArtifactSha256, testArtifactBytes: Buffer.byteLength(retryArtifactContent), isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
         auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
         auditScore: audit.score, independence: audit.independence, agent: lastAttempt?.agent_kind || '',
         verificationRetry: true,

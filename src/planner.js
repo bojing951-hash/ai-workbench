@@ -175,6 +175,8 @@ export async function planTasks({ config, project, goal, acceptance = [], mode =
     usage: result.usage,
     usageKnown: result.usageKnown,
     costCny: result.costCny,
+    provider: result.provider,
+    model: result.model,
   };
 }
 

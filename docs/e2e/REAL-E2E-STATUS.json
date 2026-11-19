@@ -17,15 +17,15 @@
   "engineeringReady": "FAIL",
   "engineeringFreeze": "BLOCKED",
   "testExecution": "PASS",
-  "productQualityLoop": "FAIL_E2E_UNEXECUTED",
+  "productQualityLoop": "PASS_HOST_ONLY",
   "supervisorRecovery": "PASS_PARTIAL",
   "dockerFencing": "UNKNOWN",
   "checkpointIntegrity": "PASS_WITH_TASK_BLOCK",
-  "independentReview": "PENDING_INDEPENDENT_REVIEW",
+  "independentReview": "PASS_18_OF_18_PENDING_FINAL",
   "historicalE2E": "FAILED",
   "budgetRiskGate": "PASS",
   "githubCi": "PENDING",
   "gitDbRecovery": "PASS",
   "unknownBillingRecovery": "PASS",
-  "offlineE2E": "UNEXECUTED"
+  "offlineE2E": "HOST_PASS_DOCKER_UNEXECUTED"
 }

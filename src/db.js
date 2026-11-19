@@ -508,6 +508,12 @@ export class Store {
             COALESCE(NEW.cost_cny,0), COALESCE(NEW.cost_source,'estimated'), 1, 'global', NEW.created_at)
           ON CONFLICT(source_id) DO UPDATE SET provider=excluded.provider,provider_known=excluded.provider_known,provider_source=excluded.provider_source,model=excluded.model,tokens_in=excluded.tokens_in,tokens_out=excluded.tokens_out,tokens_cache=excluded.tokens_cache,cost_cny=excluded.cost_cny,cost_source=excluded.cost_source;
         END;
+        CREATE TABLE IF NOT EXISTS retry_grants (
+          key TEXT PRIMARY KEY, created_at TEXT NOT NULL, consumed_at TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS run_plan_receipts (
+          request_key TEXT PRIMARY KEY, plan_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
         CREATE TRIGGER IF NOT EXISTS trg_audit_usage AFTER INSERT ON audits
         BEGIN
           INSERT OR IGNORE INTO llm_usage (id,source_id,source,run_id,task_id,project_id,conversation_id,provider,provider_known,provider_source,model,tokens_in,tokens_out,tokens_cache,cost_cny,cost_source,usage_known,budget_scope,created_at)
@@ -1423,7 +1429,7 @@ export class Store {
       const skipGlobal = !!experiment && (exemptGlobal || experimentScope === 'dsh');
       let usedTokens = 0; let usedCost = 0; let reservedTokens = 0; let reservedCost = 0;
       if (!skipGlobal) {
-        const rows = this.db.prepare("SELECT provider, provider_known, SUM(tokens_in) tin, SUM(tokens_out) tout, SUM(tokens_cache) tc, SUM(cost_cny) cost FROM llm_usage WHERE budget_scope<>'project_audit' GROUP BY provider, provider_known").all();
+        const rows = this.db.prepare("SELECT provider, provider_known, SUM(tokens_in) tin, SUM(tokens_out) tout, SUM(tokens_cache) tc, SUM(cost_cny) cost FROM llm_usage WHERE COALESCE(superseded_by,'')='' AND budget_scope<>'project_audit' GROUP BY provider, provider_known").all();
         for (const r of rows) {
           const name = String(r.provider || 'unknown').toLowerCase();
           // 只豁免同一行 provider_known=1 的合法 GLM；unknown 行必须计入。
@@ -1513,6 +1519,29 @@ export class Store {
     }
     return this.db.prepare('SELECT * FROM llm_usage WHERE id=?').get(id);
   }
+  consumeRetryGrant(key) {
+    if (!key) return false;
+    const now = nowIso();
+    const r = this.db.prepare("INSERT OR IGNORE INTO retry_grants (key,created_at,consumed_at) VALUES (?,?,'')").run(String(key), now);
+    if (Number(r.changes || 0) === 0) return false;
+    this.db.prepare("UPDATE retry_grants SET consumed_at=? WHERE key=? AND consumed_at=''").run(now, String(key));
+    return true;
+  }
+
+  saveRunPlanReceipt(requestKey, plan) {
+    if (!requestKey || !plan) return;
+    const now = nowIso();
+    this.db.prepare("INSERT INTO run_plan_receipts (request_key,plan_json,created_at,updated_at) VALUES (?,?,?,?) ON CONFLICT(request_key) DO NOTHING")
+      .run(String(requestKey), JSON.stringify(plan), now, now);
+  }
+
+  getRunPlanReceipt(requestKey) {
+    if (!requestKey) return null;
+    const row = this.db.prepare('SELECT plan_json FROM run_plan_receipts WHERE request_key=?').get(String(requestKey));
+    if (!row) return null;
+    try { return JSON.parse(row.plan_json); } catch { return null; }
+  }
+
   listLlmUsage({ projectId = '', conversationId = '', runId = '', limit = 500, includeSuperseded = false } = {}) {
     const where = []; const params = [];
     if (projectId) { where.push('project_id=?'); params.push(projectId); }
@@ -1526,6 +1555,7 @@ export class Store {
     // 历史镜像只在有效口径忽略，不删除原始行；仅当同源 planner 事实可证明时标记。
     this.db.prepare(`UPDATE llm_usage AS l SET superseded_by='planner-mirror'
       WHERE l.source='legacy_attempt' AND COALESCE(l.superseded_by,'')=''
+        AND COALESCE(l.run_id,'')='' AND COALESCE(l.task_id,'' )=''
         AND EXISTS (SELECT 1 FROM llm_usage p
           WHERE p.source='planner' AND p.id<>l.id
             AND COALESCE(p.tokens_in,0)=COALESCE(l.tokens_in,0)
