@@ -100,3 +100,9 @@
 
 - backfillChatSendState 按 fc5fbce 真实入账字段 `source='chat', source_id='chatfail:<conversation>:<message>'` 迁移已消费首发许可；旧 GLM 失败消息升级后无许可重投不发送、不新增预留。
 - 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 两项与 Loop 发布顺序专项。
+
+## 0288a64 复审整改（2026-11-20）
+
+- Loop 发布门控：中间 Run 在 productAcceptance 非 PASS 时只保留本地提交/验证，不推送/建 PR；产品终审 PASS 后由 publishAcceptedRun 发布同一最终 SHA。
+- 原版 23/23、补充 7/7、npm test 419/419、宿主两轮产品 E2E PASS（产品 SHA `ed65a56f9f012e7a910c7399674a022b45932940`）。
+- 仍缺两项真实 Docker 与 Loop 发布的本地裸 Git/GitHub API 专项证据。

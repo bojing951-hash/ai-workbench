@@ -578,8 +578,14 @@ export class LoopManager {
           verification_status: latestRun.verification_status || 'LOCAL_VERIFIED',
         });
       }
-      this.emit(loop, 'product_acceptance_passed', `产品级验收 PASS：${expected.length} 条冻结条款在最终 Commit ${planHead.slice(0, 8)} 有独立审计证据`, 'info', { planHead, auditId: audit.auditRow?.id || '' });
-      return { ok: true, required: true, audit, planHead };
+      let publish = null;
+      const publishAllowed = project.remote_push_authorized === 1 && project.config_json?.publish !== false;
+      if (publishAllowed && latestRun && typeof this.orchestrator?.publishAcceptedRun === 'function') {
+        try { publish = await this.orchestrator.publishAcceptedRun(latestRun, project, planHead, this.store.listTasks({ runId: latestRun.id })); }
+        catch (err) { this.emit(loop, 'post_acceptance_publish_failed', `产品终审 PASS 后发布失败：${err.message}`, 'warn', { planHead }); }
+      }
+      this.emit(loop, 'product_acceptance_passed', `产品级验收 PASS：${expected.length} 条冻结条款在最终 Commit ${planHead.slice(0, 8)} 有独立审计证据`, 'info', { planHead, auditId: audit.auditRow?.id || '', publish });
+      return { ok: true, required: true, audit, planHead, publish };
     }
     // 只有可判定的产品缺陷才排修复；缺 SHA、缺证据、审计不可用/UNKNOWN 必须阻断，不能增加修复计数。
     const auditStatus = String(audit?.status || (audit?.verdict === 'pass' ? 'PASS' : 'UNKNOWN')).toUpperCase();

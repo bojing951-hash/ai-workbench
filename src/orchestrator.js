@@ -2083,13 +2083,15 @@ export class Orchestrator {
     }
 
     const projectConfig = project.config_json || {};
-    const wantRemote = project.remote_push_authorized === 1 && projectConfig.publish !== false;
+    const productAccepted = !loopScoped || String(run.result_json?.productAcceptance || '').toUpperCase() === 'PASS';
+    // Loop 中间 Run 只保留本地提交/验证；最终产品终审 PASS 后由 publishAcceptedRun 统一发布。
+    const wantRemote = productAccepted && project.remote_push_authorized === 1 && projectConfig.publish !== false;
     const ciRequired = project.ci_required === 1 && wantRemote;
     let publish = { blocked: [], pr: null, localOnly: true, planBranch, planHead, ci: null };
     if (wantRemote || (projectConfig.publish !== false && this.config.github.token && project.remote_push_authorized === 1)) {
       publish = await this.publishRun(run, project, planBranch, planHead, tasks);
     } else if (!wantRemote) {
-      const reason = project.remote_push_authorized !== 1 ? '项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR' : '项目配置关闭远端发布';
+      const reason = loopScoped && !productAccepted ? '等待产品终审 PASS 后再执行远端发布（中间 Run 不推送）' : project.remote_push_authorized !== 1 ? '项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR' : '项目配置关闭远端发布';
       publish.blocked.push(reason);
       this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-publish', status: 'blocked', payload: { planBranch, planHead, reason }, result: { reason } });
       this.emit({ runId: run.id, projectId: run.project_id, type: 'publish_blocked', level: 'warn', message: reason, data: { planBranch, planHead } });
@@ -2210,6 +2212,27 @@ export class Orchestrator {
       if (i < attempts - 1) await new Promise((r) => setTimeout(r, interval));
     }
     return last;
+  }
+
+  async publishAcceptedRun(run, project, planHead, tasks = []) {
+    const latest = this.store.getRun(run.id) || run;
+    if (!latest || !planHead) return { blocked: ['缺少最终 SHA'], pr: null, localOnly: true, ci: null };
+    if (String(this.store.getRun(run.id)?.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') {
+      return { blocked: ['产品终审尚未 PASS，拒绝远端发布'], pr: null, localOnly: true, ci: null };
+    }
+    const planBranch = `wb/plan-${run.id.slice(-6)}`;
+    const projectTasks = tasks.length ? tasks : this.store.listTasks({ runId: run.id });
+    const publish = await this.publishRun(latest, project, planBranch, planHead, projectTasks);
+    const after = this.store.getRun(run.id);
+    const next = this.store.getRun(run.id);
+    this.store.updateRun(run.id, {
+      result_json: { ...(after.result_json || {}), publish, ci: publish.ci || null, publishedAfterAcceptance: true, publishedAt: nowIso() },
+      ci_status: publish.ci?.status || (next?.ci_status || ''),
+      ci_url: publish.ci?.htmlUrl || (next?.ci_url || ''),
+      verified_sha: planHead,
+    });
+    this.emit({ runId: run.id, projectId: project.id, type: 'post_acceptance_publish', message: publish.pr?.url ? `产品终审 PASS 后已创建 Draft PR：${publish.pr.url}` : '产品终审 PASS 后的远端发布已处理', data: { publish } });
+    return publish;
   }
 
   async publishRun(run, project, planBranch, planHead, tasks) {
