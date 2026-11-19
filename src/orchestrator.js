@@ -133,6 +133,11 @@ export class Orchestrator {
     return rel;
   }
 
+  artifactAbs(rel) {
+    if (!rel) return '';
+    return path.isAbsolute(rel) ? rel : path.join(this.config.paths.dataDir, rel);
+  }
+
   logsDir(runId, taskId = '') {
     return path.join(this.config.paths.logsDir, runId, taskId);
   }
@@ -1586,7 +1591,7 @@ export class Orchestrator {
           setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed,
         };
         const testArtifact = this.writeArtifact({
-          runId: run.id, taskId: task.id, kind: 'test', filename: `attempt-${attemptNo}-test.txt`,
+          runId: run.id, taskId: task.id, kind: 'test', filename: `task-${task.id}-attempt-${attemptNo}-test.txt`,
           content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n${testRes.isolation ? `isolation=${JSON.stringify(testRes.isolation)}\n` : ''}\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}`,
         });
         await gitops.stageAll(worktree);
@@ -1713,7 +1718,7 @@ export class Orchestrator {
             verification_json: {
               ...(task.verification_json || {}), baseCommit, testedHash, planBranch,
               auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
-              auditScore: audit.score, testCommand: safeCommand, commitIntentAt: nowIso(),
+              auditScore: audit.score, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(testArtifact), commitIntentAt: nowIso(),
             },
           });
           const commitMessage = [
@@ -1752,7 +1757,7 @@ export class Orchestrator {
               testCode: testRes.code,
               testStdout: String(testRes.stdout || ''),
               testStderr: String(testRes.stderr || ''),
-              testArtifactLog: testArtifact?.path || '',
+              testArtifactLog: this.artifactAbs(testArtifact),
               criteria: audit.criteria,
             },
           });
@@ -3006,7 +3011,7 @@ export class Orchestrator {
     const candidateTree = (await gitops.git(project.local_path, ['rev-parse', `${planHead}^{tree}`], { allowFail: true })).stdout.trim();
     const receipt = latestTask?.result_json || latestTask?.verification_json || {};
     const receiptTree = receipt.testedHash || '';
-    const receiptLog = receipt.testArtifactLog || '';
+    const receiptLog = receipt.testArtifactLog ? this.artifactAbs(receipt.testArtifactLog) : '';
     const receiptValid = receipt.commit === planHead && receiptTree === candidateTree
       && Number(receipt.testCode) === 0 && !!receipt.testCommand
       && !!receiptLog && fs.existsSync(receiptLog);
@@ -3150,7 +3155,7 @@ export class Orchestrator {
       });
       if (retrySignal.aborted) return { ok: false, reason: '运行被暂停/取消，验证检查点已保留' };
       const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null, setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed };
-      const retryTestArtifact = this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
+      const retryTestArtifact = this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `task-${task.id}-verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
       await gitops.stageAll(worktree);
       const afterHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
       if (afterHash !== testedHash) throw new PolicyError('FINGERPRINT_MISMATCH', '测试期间工作树内容发生变化');
@@ -3255,7 +3260,7 @@ export class Orchestrator {
         verification_json: {
           ...(task.verification_json || {}), baseCommit, testedHash, planBranch: planBranchForIntent,
           auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
-          auditScore: audit.score, testCommand: safeCommand, verificationRetry: true, commitIntentAt: nowIso(),
+          auditScore: audit.score, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(retryTestArtifact), verificationRetry: true, commitIntentAt: nowIso(),
         },
       });
       const commitMessage = [
@@ -3290,7 +3295,7 @@ export class Orchestrator {
       const headCommit = await gitops.currentHead(worktree);
       this.freezeTestBaseline(project, worktree, { runId: run.id, taskId: task.id, source: 'verification_retry', commit: headCommit });
       const verification = {
-        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: retryTestArtifact?.path || '', isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
+        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: this.artifactAbs(retryTestArtifact), isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
         auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
         auditScore: audit.score, independence: audit.independence, agent: lastAttempt?.agent_kind || '',
         verificationRetry: true,
