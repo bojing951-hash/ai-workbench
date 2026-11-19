@@ -77,3 +77,9 @@
 - 无可用 Planner 在预留/发送意图前阻断，0 发送/0 用量/0 占用。
 - 终审按 listArtifacts 返回的 meta_json.bytes 读取旧登记长度。
 - 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 双进程/容器产品 E2E。
+
+## 33b91ea 复审整改（2026-11-19）
+
+- 普通 Chat 在 transport 层使用单次 send limit；HTTP/JSON 内部重试计入，首发/无许可/新许可/再投目标 1/0/1/0。
+- Web pending start key 持久到 localStorage，页面刷新后可复用；确认 Run 后才清理。
+- 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 两项实测。

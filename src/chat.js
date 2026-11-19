@@ -7,6 +7,7 @@ import { PolicyError } from './policy.js';
 import { newId } from './util.js';
 import * as gitops from './git.js';
 import { assertModelBudget, chatBudgetEstimate } from './budget.js';
+import { runWithSendLimit } from './paid-admission.js';
 import { writeProjectContract, contractBaseline, sha256File, CONTRACT_FILES, CONTRACT_PROTECTED_PATHS, TRUSTED_CONTRACT_TEST } from './contract.js';
 import { containerCapabilities } from './container.js';
 
@@ -65,12 +66,12 @@ export async function chatTurn({ config, store, conversation, userMessage, proje
   ].filter(Boolean).join('\n\n');
   let result;
   try {
-    result = await completeJson({
+    result = await runWithSendLimit(1, () => completeJson({
       config, provider: provider.name, model: provider.model,
       system: SYSTEM,
       messages: [{ role: 'user', content: `${context}\n\n用户最新输入：${userMessage}` }],
       maxTokens: 1200, temperature: 0.2, timeoutMs: 90_000,
-    });
+    }));
   } catch (err) {
     if (budget.reservation?.id) store.markModelReservationUnknown(budget.reservation.id);
     throw err;

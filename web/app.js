@@ -217,6 +217,19 @@ const TONE_VARS = {
 // 全局 UI 状态（仅前端）
 // ============================================================
 const pendingStartKeys = new Map();
+const PENDING_START_STORAGE = 'wb.pendingStartKeys.v1';
+function readPendingStartKeys() {
+  try {
+    const raw = globalThis.localStorage?.getItem(PENDING_START_STORAGE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { return {}; }
+}
+function writePendingStartKeys(map) {
+  try { globalThis.localStorage?.setItem(PENDING_START_STORAGE, JSON.stringify(map)); } catch { /* ignore */ }
+}
+
 const app = {
   state: null,
   stateError: null,
@@ -4551,8 +4564,11 @@ async function submitStartRun() {
   setStartButtonBusy(true);
   try {
     const operationKey = JSON.stringify({ projectId: project.id, goal, acceptance, mode });
-    const requestKey = pendingStartKeys.get(operationKey) || (globalThis.crypto?.randomUUID?.() || `start-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const persistedKeys = readPendingStartKeys();
+    const requestKey = pendingStartKeys.get(operationKey) || persistedKeys[operationKey] || (globalThis.crypto?.randomUUID?.() || `start-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     pendingStartKeys.set(operationKey, requestKey);
+    persistedKeys[operationKey] = requestKey;
+    writePendingStartKeys(persistedKeys);
     const result = await apiRequest('POST', `/api/projects/${encodeURIComponent(project.id)}/runs`, {
       goal,
       acceptance,
@@ -4560,6 +4576,9 @@ async function submitStartRun() {
       requestKey,
     });
     pendingStartKeys.delete(operationKey);
+    const remainingKeys = readPendingStartKeys();
+    delete remainingKeys[operationKey];
+    writePendingStartKeys(remainingKeys);
     const runId = result?.runId;
     if (!runId) throw new ApiError('运行已创建，但服务未返回 runId', 0, 'BAD_RUN_RESPONSE');
     app.drafts.delete(project.id);
