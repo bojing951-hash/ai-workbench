@@ -527,6 +527,7 @@ export class Store {
       try { this.db.exec("ALTER TABLE attempts ADD COLUMN accounting_source TEXT DEFAULT ''"); } catch { /* column exists */ }
       try { this.db.exec("ALTER TABLE llm_usage ADD COLUMN superseded_by TEXT DEFAULT ''"); } catch { /* column exists */ }
       this.backfillLlmUsage();
+      this.correctLegacyMirrors();
       this.dedupeLegacyMirrors();
     } catch {
       /* ignore */
@@ -1551,6 +1552,13 @@ export class Store {
     params.push(limit);
     return this.db.prepare(`SELECT * FROM llm_usage ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT ?`).all(...params);
   }
+  correctLegacyMirrors() {
+    // 旧候选仅凭 token 相同误把独立 coding 历史标成 planner mirror；有 run/task/project 的独立事实必须恢复。
+    this.db.prepare(`UPDATE llm_usage SET superseded_by=''
+      WHERE superseded_by='planner-mirror'
+        AND (COALESCE(run_id,'')<>'' OR COALESCE(task_id,'')<>'' OR COALESCE(project_id,'')<>'' OR source<>'legacy_attempt')`).run();
+  }
+
   dedupeLegacyMirrors() {
     // 历史镜像只在有效口径忽略，不删除原始行；仅当同源 planner 事实可证明时标记。
     this.db.prepare(`UPDATE llm_usage AS l SET superseded_by='planner-mirror'

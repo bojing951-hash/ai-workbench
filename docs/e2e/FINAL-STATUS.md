@@ -54,3 +54,11 @@
 - Checkpoint 恢复只解除归属 Run，保留 budget/人工暂停；任务回 queued 沿原 attempt/session 派发。
 - 复审 18/18 PASS；npm test 419/419；宿主产品两轮 PASS，最终产品 SHA `31faae1b692e3c7a225f07d2f926ad49376a0f1f`。
 - 仍缺真实 Docker 双进程交接与容器内产品 E2E；ENGINEERING_FREEZE_BLOCKED。
+
+## df846 复审整改（2026-11-19）
+
+- 子进程 stdin 提前关闭：execCapture 消费 EPIPE，Workbench 不因快速 CLI 退出而崩溃。
+- Checkpoint 连续重启：保留原预算/人工暂停；材料补齐后 Run 停在 paused 等普通 resume，Task 回 queued、attempt/session/worktree 保留。
+- 历史 mirror：修正 ba544 对独立 coding 的误标；旧 artifact 字节数从 SQLite artifacts 登记回读，截短日志 BLOCKED。
+- 18/18 可移植审查、419/419 全量、宿主两轮产品 E2E 通过；产品 SHA `9bded363e1a5bba6927a6faedd49e83c5249a68d`。
+- 仍缺真实 Docker 双进程接管与容器内产品 E2E；ENGINEERING_FREEZE_BLOCKED。

@@ -359,7 +359,7 @@ async function main() {
             // 原有预算/人工暂停不能被 Checkpoint 恢复覆盖。
             store.updateRun(run.id, { status: 'paused', pause_kind: checkpointPrevPauseKind, stop_reason: checkpointPrevStopReason || run.stop_reason, result_json: { ...rest, checkpointResolvedAt: new Date().toISOString() } });
           } else {
-            store.updateRun(run.id, { status: 'interrupted', pause_kind: '', stop_reason: 'Checkpoint 发布已对账，等待普通 resume', result_json: { ...rest, checkpointResolvedAt: new Date().toISOString() } });
+            store.updateRun(run.id, { status: 'paused', pause_kind: '', stop_reason: 'Checkpoint 发布已对账，等待普通 resume', result_json: { ...rest, checkpointResolvedAt: new Date().toISOString() } });
             // 恢复原任务到可调度阶段，attempt/session/worktree 保持不变。
             if (task.worktree_path && fs.existsSync(task.worktree_path)) store.updateTask(task.id, { status: 'queued', blocked_reason: '' });
           }

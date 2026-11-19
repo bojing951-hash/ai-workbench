@@ -3031,7 +3031,15 @@ export class Orchestrator {
       if (receiptLogValid) {
         const stat = fs.statSync(receiptLog);
         const actualHash = crypto.createHash('sha256').update(fs.readFileSync(receiptLog)).digest('hex');
-        if (Number.isFinite(Number(receipt.testArtifactBytes)) && stat.size !== Number(receipt.testArtifactBytes)) receiptLogValid = false;
+        let expectedBytes = Number(receipt.testArtifactBytes);
+        if (!Number.isFinite(expectedBytes)) {
+          // 兼容 ba544 旧回执：从 SQLite artifacts 登记读取原始字节数。
+          const artifacts = latestTask?.id ? this.store.listArtifacts(latestTask.id) : [];
+          const absTarget = path.resolve(receiptLog);
+          const match = artifacts.find((a) => a.kind === 'test' && (path.resolve(this.config.paths.dataDir, a.path) === absTarget || path.resolve(a.path) === absTarget));
+          if (match && Number.isFinite(Number(match.meta?.bytes))) expectedBytes = Number(match.meta.bytes);
+        }
+        if (Number.isFinite(expectedBytes) && stat.size !== expectedBytes) receiptLogValid = false;
         if (receipt.testArtifactSha256 && actualHash !== receipt.testArtifactSha256) receiptLogValid = false;
         // 无哈希的旧回执：零字节日志只有在测试本身明确为空输出时才可能是合法的。
         if (!receipt.testArtifactSha256 && stat.size === 0 && String(receipt.testStdout || '').length > 0) receiptLogValid = false;

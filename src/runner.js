@@ -69,6 +69,8 @@ export function execCapture(cmd, args = [], opts = {}) {
       return;
     }
 
+    // 子进程可能先退出，随后写 stdin 会触发异步 EPIPE；必须消费该错误，不能冒泡杀死 Workbench。
+    child.stdin.on('error', () => { /* early close is expected */ });
     if (stdin !== null && stdin !== undefined) {
       try {
         child.stdin.write(stdin);
