@@ -95,7 +95,11 @@ test('v3.0 P0-1：模型失败后同一 clientMessageId 可安全重试，不重
     assert.notEqual(bad.status, 200);
     assert.equal(store.listConversationMessages(convId).filter((m) => m.role === 'user').length, 1);
     fake.state.fail = false;
-    const good = await request(base, 'POST', `/api/conversations/${convId}/messages`, { content: '重试目标', clientMessageId: 'msg-retry' });
+    const callsBeforeReplay = fake.state.calls;
+    const replay = await request(base, 'POST', `/api/conversations/${convId}/messages`, { content: '重试目标', clientMessageId: 'msg-retry' });
+    assert.notEqual(replay.status, 200, '未授权重放不得新增发送');
+    assert.equal(fake.state.calls, callsBeforeReplay, '未授权重放新增发送必须为 0');
+    const good = await request(base, 'POST', `/api/conversations/${convId}/messages`, { content: '重试目标', clientMessageId: 'msg-retry', retryAuthorized: true });
     assert.equal(good.status, 200);
     const messages = store.listConversationMessages(convId);
     assert.equal(messages.filter((m) => m.role === 'user').length, 1, '重试不能重复用户消息');

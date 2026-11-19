@@ -31,7 +31,7 @@ import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { deriveClausePlan } from './quality.js';
-import { assertModelBudget, evaluateProviderRiskGate, resolveCodingReservation } from './budget.js';
+import { assertModelBudget, evaluateProviderRiskGate, resolveCodingReservation, recordModelUsage } from './budget.js';
 import { verifyContractBaseline, verifyTestBaseline, validateTestEvidence, findTestFiles, sha256File, trustedProductTestCommand, parseTestCount, classifyTestFailure } from './contract.js';
 import { dshAuditAvailable } from './auditors/dsh.js';
 import { chooseAgent, checkAllAgents, runAgent } from './agents/index.js';
@@ -649,7 +649,19 @@ export class Orchestrator {
       throw err;
     }
     if (plannerReservation?.reservation?.id) {
-      this.store.settleModelReservation(plannerReservation.reservation.id, { actualTokens: summarizeUsage(planResult.usage || {}).total, actualCostCny: planResult.costCny || 0, usageKnown: planResult.usageKnown !== false });
+      const plannerUsage = planResult.usage || {};
+      const usageKnown = planResult.usageKnown === true;
+      recordModelUsage({
+        store: this.store, config: this.config, source: 'planner',
+        sourceId: `planner:run:${requestKey || runId}`,
+        provider: planResult.provider || this.config.planner.provider || 'deepseek',
+        model: planResult.model || this.config.planner.model || '',
+        usage: plannerUsage, usageKnown, costCny: planResult.costCny || 0,
+        runId, projectId: project.id, experimentId: this.experimentIdForProject(project.id),
+        reservationId: plannerReservation.reservation.id,
+        costSource: usageKnown ? 'estimated' : 'unknown',
+      });
+      plannerReservation = null;
     }
 
     try {
@@ -706,16 +718,6 @@ export class Orchestrator {
     }));
     this.store.createTasks(taskRows);
 
-    if (planResult.usage) {
-      this.recordLlmUsage({
-        runId,
-        source: 'planning',
-        provider: planResult.plannerMeta?.provider,
-        model: planResult.plannerMeta?.model,
-        usage: planResult.usage,
-        costCny: planResult.costCny || 0,
-      });
-    }
     } catch (err) {
       // P0-2：半创建 Run 不能永久占住项目；失败时清理为 failed，保留错误原因。
       try {
@@ -2635,7 +2637,7 @@ export class Orchestrator {
             fs.copyFileSync(stagingIndex, indexTarget);
             fs.rmSync(stagingIndex, { force: true });
             if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
-            recovered.push({ file, result: 'completed-index-after-rename', state: j.state });
+            recovered.push({ file, result: 'completed-index-after-rename', state: j.state, target });
             fs.rmSync(file, { force: true });
             continue;
           }
@@ -2646,7 +2648,7 @@ export class Orchestrator {
             fs.rmSync(stagingIndex, { force: true });
           }
           if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
-          recovered.push({ file, result: 'kept-existing-target', state: j.state });
+          recovered.push({ file, result: 'kept-existing-target', state: j.state, target });
         } else if (stagingIndex && j.indexTree && !fs.existsSync(stagingIndex)) {
           // backed-up 后目标已不存在、暂存 index 副本丢失：不能只发布磁盘 C 而留下旧 index A。
           blocked.push({ file, reason: 'backed-up-index-source-missing', state: j.state });
@@ -2659,10 +2661,10 @@ export class Orchestrator {
             fs.rmSync(stagingIndex, { force: true });
           }
           if (backup && fs.existsSync(backup)) fs.rmSync(backup, { recursive: true, force: true });
-          recovered.push({ file, result: 'completed-publish', state: j.state });
+          recovered.push({ file, result: 'completed-publish', state: j.state, target });
         } else if (backup && fs.existsSync(backup)) {
           fs.renameSync(backup, target);
-          recovered.push({ file, result: 'rolled-back', state: j.state });
+          recovered.push({ file, result: 'rolled-back', state: j.state, target });
         } else {
           blocked.push({ file, reason: 'target-staging-backup-missing' }); continue;
         }
@@ -3007,16 +3009,21 @@ export class Orchestrator {
     if (!planHead) return { ok: false, required: true, status: 'UNKNOWN', reason: '缺少最终 Git Commit，不能进行产品验收', missing: expected };
     const parent = await gitops.git(project.local_path, ['rev-parse', `${planHead}^`], { allowFail: true }).then((r) => r.stdout.trim()).catch(() => '');
     const base = baseCommit || parent || planHead;
-    // 终审必须绑定当前候选自己的真实测试回执：commit/tree/命令/退出码/原始日志缺一不可。
-    const candidateTree = (await gitops.git(project.local_path, ['rev-parse', `${planHead}^{tree}`], { allowFail: true })).stdout.trim();
-    const receipt = latestTask?.result_json || latestTask?.verification_json || {};
-    const receiptTree = receipt.testedHash || '';
-    const receiptLog = receipt.testArtifactLog ? this.artifactAbs(receipt.testArtifactLog) : '';
-    const receiptValid = receipt.commit === planHead && receiptTree === candidateTree
-      && Number(receipt.testCode) === 0 && !!receipt.testCommand
-      && !!receiptLog && fs.existsSync(receiptLog);
-    if (this.deps.runAudit === runAudit && latestTask && !receiptValid) {
-      return { ok: false, required: true, status: 'BLOCKED', reason: `产品终审缺少当前候选 ${planHead.slice(0, 12)} 的完整测试回执（commit/tree/命令/退出码/原始日志）或属于其他版本；拒绝交付`, missing: expected, planHead };
+    // 终审必须绑定当前候选自己的真实测试回执：commit/tree/命令/数值退出码/原始日志缺一不可。
+    if (this.deps.runAudit === runAudit) {
+      if (!latestTask) {
+        return { ok: false, required: true, status: 'BLOCKED', reason: `产品终审缺少当前候选 ${planHead.slice(0, 12)} 的最终任务回执；未发送审计`, missing: expected, planHead };
+      }
+      const candidateTree = (await gitops.git(project.local_path, ['rev-parse', `${planHead}^{tree}`], { allowFail: true })).stdout.trim();
+      const receipt = latestTask.result_json || latestTask.verification_json || {};
+      const receiptTree = receipt.testedHash || '';
+      const receiptLog = receipt.testArtifactLog ? this.artifactAbs(receipt.testArtifactLog) : '';
+      const receiptValid = receipt.commit === planHead && receiptTree === candidateTree
+        && typeof receipt.testCode === 'number' && receipt.testCode === 0
+        && !!receipt.testCommand && !!receiptLog && fs.existsSync(receiptLog);
+      if (!receiptValid) {
+        return { ok: false, required: true, status: 'BLOCKED', reason: `产品终审缺少当前候选 ${planHead.slice(0, 12)} 的完整测试回执（commit/tree/数值退出码/命令/原始日志）或属于其他版本；拒绝交付`, missing: expected, planHead };
+      }
     }
     const diffRes = await gitops.git(project.local_path, ['diff', base, planHead], { timeoutMs: 120_000 });
     // 产品验收必须让分块器看到完整 diff；禁止在入口预先丢弃中段后再交给审计。

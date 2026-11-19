@@ -519,7 +519,9 @@ export class Store {
         END;
       `);
       try { this.db.exec("ALTER TABLE attempts ADD COLUMN accounting_source TEXT DEFAULT ''"); } catch { /* column exists */ }
+      try { this.db.exec("ALTER TABLE llm_usage ADD COLUMN superseded_by TEXT DEFAULT ''"); } catch { /* column exists */ }
       this.backfillLlmUsage();
+      this.dedupeLegacyMirrors();
     } catch {
       /* ignore */
     }
@@ -1511,14 +1513,26 @@ export class Store {
     }
     return this.db.prepare('SELECT * FROM llm_usage WHERE id=?').get(id);
   }
-  listLlmUsage({ projectId = '', conversationId = '', runId = '', limit = 500 } = {}) {
+  listLlmUsage({ projectId = '', conversationId = '', runId = '', limit = 500, includeSuperseded = false } = {}) {
     const where = []; const params = [];
     if (projectId) { where.push('project_id=?'); params.push(projectId); }
     if (conversationId) { where.push('conversation_id=?'); params.push(conversationId); }
     if (runId) { where.push('run_id=?'); params.push(runId); }
+    if (!includeSuperseded) where.push("COALESCE(superseded_by,'')=''");
     params.push(limit);
     return this.db.prepare(`SELECT * FROM llm_usage ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT ?`).all(...params);
   }
+  dedupeLegacyMirrors() {
+    // 历史镜像只在有效口径忽略，不删除原始行；仅当同源 planner 事实可证明时标记。
+    this.db.prepare(`UPDATE llm_usage AS l SET superseded_by='planner-mirror'
+      WHERE l.source='legacy_attempt' AND COALESCE(l.superseded_by,'')=''
+        AND EXISTS (SELECT 1 FROM llm_usage p
+          WHERE p.source='planner' AND p.id<>l.id
+            AND COALESCE(p.tokens_in,0)=COALESCE(l.tokens_in,0)
+            AND COALESCE(p.tokens_out,0)=COALESCE(l.tokens_out,0)
+            AND COALESCE(p.tokens_cache,0)=COALESCE(l.tokens_cache,0))`).run();
+  }
+
   backfillLlmUsage() {
     // 一次性回填旧 attempts/audits 用量，确保预算不因新账本上线而“重置”。
     const now = nowIso();
@@ -1560,8 +1574,8 @@ export class Store {
 
   usageTotals() {
     // 单一事实源：llm_usage；旧 attempts/audits 已在迁移时回填，后续由触发器入账。
-    const rows = this.db.prepare(`SELECT provider, provider_known known, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_in ELSE 0 END),0) tin, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_out ELSE 0 END),0) tout, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_cache ELSE 0 END),0) tc, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN cost_cny ELSE 0 END),0) cost FROM llm_usage GROUP BY provider, provider_known`).all();
-    const scoped = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM llm_usage WHERE budget_scope='project_audit' GROUP BY provider`).all();
+    const rows = this.db.prepare(`SELECT provider, provider_known known, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_in ELSE 0 END),0) tin, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_out ELSE 0 END),0) tout, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN tokens_cache ELSE 0 END),0) tc, COALESCE(SUM(CASE WHEN budget_scope<>'project_audit' THEN cost_cny ELSE 0 END),0) cost FROM llm_usage WHERE COALESCE(superseded_by,'')='' GROUP BY provider, provider_known`).all();
+    const scoped = this.db.prepare(`SELECT provider, COALESCE(SUM(tokens_in),0) tin, COALESCE(SUM(tokens_out),0) tout, COALESCE(SUM(tokens_cache),0) tc, COALESCE(SUM(cost_cny),0) cost FROM llm_usage WHERE COALESCE(superseded_by,'')='' AND budget_scope='project_audit' GROUP BY provider`).all();
     const byProvider = {};
     const ensure = (name) => {
       const key = name || 'unknown';

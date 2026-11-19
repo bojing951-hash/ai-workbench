@@ -347,6 +347,18 @@ async function main() {
     }
     const checkpointPublish = orchestrator.recoverCheckpointPublications();
     if (checkpointPublish.recovered.length) console.log(`[recover] 已恢复 ${checkpointPublish.recovered.length} 个未完成 Checkpoint 发布`);
+    // 已验证完成且清理 journal 的发布，才解除其所属 Run 的 checkpoint 暂停；Task 仍保留原 attempt/session。
+    const recoveredTargets = new Set(checkpointPublish.recovered.filter((r) => ['completed-publish', 'completed-index-after-rename'].includes(r.result)).map((r) => r.target));
+    if (recoveredTargets.size) {
+      for (const task of store.listTasks({})) {
+        if (!task.worktree_path || !recoveredTargets.has(task.worktree_path)) continue;
+        const run = task.run_id ? store.getRun(task.run_id) : null;
+        if (run && (run.result_json?.checkpointBlocked || run.pause_kind === 'checkpoint_blocked')) {
+          const { checkpointBlocked, checkpointBlockedTarget, ...rest } = run.result_json || {};
+          store.updateRun(run.id, { status: 'interrupted', pause_kind: '', stop_reason: 'Checkpoint 发布已对账，等待普通 resume', result_json: { ...rest, checkpointResolvedAt: new Date().toISOString() } });
+        }
+      }
+    }
     if (checkpointPublish.blocked.length) {
       // 保持服务可启动以便读取/人工恢复；但不得清理恢复材料，也不得把发布视为成功。
       console.error(`[recover] BLOCKED：${checkpointPublish.blocked.length} 个 Checkpoint 发布状态无法对账，保留备份与 journal：${JSON.stringify(checkpointPublish.blocked.slice(0, 5))}`);
