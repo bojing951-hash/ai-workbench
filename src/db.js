@@ -1580,7 +1580,7 @@ export class Store {
         const [conversationId, messageId] = rest.split(':');
         if (conversationId && messageId) insert.run(`chat-send:${conversationId}:${messageId}:initial`, nowIso());
       }
-      const failures = this.db.prepare("SELECT source_id FROM llm_usage WHERE source='chatfail' AND source_id LIKE 'chatfail:%'").all();
+      const failures = this.db.prepare("SELECT source_id FROM llm_usage WHERE source IN ('chat','chatfail') AND (source_id LIKE 'chatfail:%' OR source_id LIKE 'chat:%')").all();
       for (const r of failures) {
         const [, conversationId, messageId] = String(r.source_id || '').split(':');
         if (conversationId && messageId) insert.run(`chat-send:${conversationId}:${messageId}:initial`, nowIso());

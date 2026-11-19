@@ -95,3 +95,8 @@
 - Chat 首发许可在预算预留前原子消费；旧库 chat 预留/chatfail 迁移为已消费许可；显式 retry grant 单次；GLM 豁免同样受控。
 - Web 先校验 runId 再清理 pending key（已在前次提交）。
 - 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 两项。
+
+## e05389d 复审整改（2026-11-19 续）
+
+- backfillChatSendState 按 fc5fbce 真实入账字段 `source='chat', source_id='chatfail:<conversation>:<message>'` 迁移已消费首发许可；旧 GLM 失败消息升级后无许可重投不发送、不新增预留。
+- 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 两项与 Loop 发布顺序专项。
