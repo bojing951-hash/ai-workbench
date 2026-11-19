@@ -417,7 +417,10 @@ export class LoopManager {
           });
           const plannerUsage = planned.usage || {};
           const usageKnown = planned.usageKnown === true;
-          if (plannerReservation?.reservation?.id) {
+          if (!plannerReservation?.reservation?.id) {
+            // 预算豁免没有 reservation，但实际发送/用量仍必须进入统一账本。
+            recordModelUsage({ store: this.store, config: this.config, source: 'planner', sourceId: plannerRequestKey, provider: planned.provider || plannerProvider, model: planned.model || this.config.planner.model || '', usage: plannerUsage, usageKnown, costCny: planned.costCny || 0, runId: '', taskId: '', projectId: project.id, experimentId: this.orchestrator?.experimentIdForProject?.(project.id) || '', reservationId: '', costSource: usageKnown ? 'estimated' : 'unknown', budgetScope: plannerProvider === 'glm' ? 'glm' : 'global' });
+          } else {
             // 生产结算入口：一次调用同时写 reservation、全局 llm_usage、实验账本；未知费用保持 UNKNOWN。
             recordModelUsage({
               store: this.store, config: this.config, source: 'planner', sourceId: plannerRequestKey,

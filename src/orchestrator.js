@@ -29,6 +29,7 @@ import { assertIsolationForProject, detectIsolationCapabilities, isolationModeFo
 import { resolveAgentIdentity, resolveLlmIdentity, isExemptIdentity } from './model-identity.js';
 import { runTestInContainer, containerCapabilities } from './container.js';
 import { buildRepoContext, planTasks } from './planner.js';
+import { availableProviders } from './llm.js';
 import { runAudit, auditSummaryText, auditProviderStatus, resolveAuditProvider } from './auditors/index.js';
 import { deriveClausePlan } from './quality.js';
 import { assertModelBudget, evaluateProviderRiskGate, resolveCodingReservation, recordModelUsage } from './budget.js';
@@ -583,13 +584,17 @@ export class Orchestrator {
     const frozenAcceptance = parseList(project.config_json?.test_plan?.acceptance || project.config_json?.test_plan?.acceptance_json || []);
     const acceptance = parseList(input.acceptance).length ? parseList(input.acceptance) : frozenAcceptance;
     const requestKey = String(input.requestKey || '').trim();
+    let runId = newId('run');
 
     // P0-2：同一请求键的 Run 只能创建一次；崩溃恢复/重复调用返回已有 Run。
     if (requestKey) {
       const existing = this.store.getRunByRequestKey(requestKey);
       if (existing) return { runId: existing.id, planId: existing.plan_id, existing: true };
     }
-    const persistedPlan = requestKey ? this.store.getRunPlanReceipt(requestKey) : null;
+    const persistedReceipt = requestKey ? this.store.getRunPlanReceipt(requestKey) : null;
+    if (persistedReceipt?.__pending) throw new PolicyError('PLANNER_RESULT_UNKNOWN', '同一业务请求的 Planner 发送结果未持久化；保留原预留并阻断，不得重发');
+    const persistedPlan = persistedReceipt?.plan || persistedReceipt || null;
+    if (persistedReceipt?.runId) runId = persistedReceipt.runId;
 
     this.assertBudget(5_000);
     assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', model: this.config.planner.model || '', estimatedTokens: 5000, label: 'Planner', experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
@@ -612,7 +617,6 @@ export class Orchestrator {
       estimatedTokens: 8_000,
       estimatedCostCny: 0.05,
     });
-    const runId = newId('run');
     const planId = newId('plan');
     const budget = {
       maxTokens: Math.min(
@@ -632,13 +636,22 @@ export class Orchestrator {
     let planResult = persistedPlan;
     let plannerReservation = null;
     const explicitTasks = Array.isArray(input.tasks) && input.tasks.length > 0;
+    const needsPlannerModel = mode === 'plan' && !explicitTasks;
+    const plannerProviders = availableProviders(this.config);
+    const selectedPlanner = plannerProviders.find((p) => p.name === this.config.planner.provider)
+      || plannerProviders.find((p) => p.name === 'deepseek')
+      || plannerProviders.find((p) => p.name === 'openai')
+      || plannerProviders.find((p) => p.name === 'glm') || null;
+    const plannerProvider = selectedPlanner?.name || this.config.planner.provider || 'deepseek';
+    const plannerModel = selectedPlanner?.model || this.config.planner.model || '';
     try {
       if (planResult) { /* 已收到并持久化的结果：重投不得再次发送/计费 */ } else {
-      // 显式任务不调用模型：不预留、不计费、不占额。自动规划才做原子预留。
-      if (!explicitTasks) {
-        plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: this.config.planner.provider || 'deepseek', model: this.config.planner.model || '', estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: this.config.planner.provider || 'deepseek' });
+      // 单任务/显式任务不调用模型：不预留、不计费、不占额。自动规划才做原子预留。
+      if (needsPlannerModel) {
+        plannerReservation = assertModelBudget({ config: this.config, store: this.store, provider: plannerProvider, model: plannerModel, estimatedTokens: 6000, label: 'Planner', reserve: true, experimentId: this.experimentIdForProject(project.id), experimentRole: 'planner', experimentClient: plannerProvider });
       }
       const experimentPlanBinding = this.store.getExperimentForProject?.(project.id)?.provider_json?.planner || null;
+      if (requestKey && needsPlannerModel) this.store.beginRunPlanIntent(requestKey);
       planResult = await planTasks({
         config: this.config,
         project,
@@ -654,14 +667,14 @@ export class Orchestrator {
       this.releaseProjectLease(project.id);
       throw err;
     }
-    if (!explicitTasks && !persistedPlan) {
+    if (needsPlannerModel && !persistedPlan) {
       const plannerUsage = planResult.usage || {};
       const usageKnown = planResult.usageKnown === true;
       recordModelUsage({
         store: this.store, config: this.config, source: 'planner',
         sourceId: `planner:run:${requestKey || runId}`,
-        provider: planResult.provider || planResult.plannerMeta?.provider || this.config.planner.provider || 'deepseek',
-        model: planResult.model || planResult.plannerMeta?.model || this.config.planner.model || '',
+        provider: planResult.provider || planResult.plannerMeta?.provider || plannerProvider,
+        model: planResult.model || planResult.plannerMeta?.model || plannerModel,
         usage: plannerUsage, usageKnown, costCny: planResult.costCny || 0,
         runId, projectId: project.id, experimentId: this.experimentIdForProject(project.id),
         reservationId: plannerReservation?.reservation?.id || '',
@@ -670,7 +683,7 @@ export class Orchestrator {
       plannerReservation = null;
     }
 
-    if (requestKey) this.store.saveRunPlanReceipt(requestKey, planResult);
+    if (requestKey) this.store.saveRunPlanReceipt(requestKey, { runId, plan: planResult });
     try {
       this.assertProjectLease(project.id);
       try {

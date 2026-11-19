@@ -1529,11 +1529,18 @@ export class Store {
     return true;
   }
 
-  saveRunPlanReceipt(requestKey, plan) {
-    if (!requestKey || !plan) return;
+  beginRunPlanIntent(requestKey) {
+    if (!requestKey) return;
     const now = nowIso();
-    this.db.prepare("INSERT INTO run_plan_receipts (request_key,plan_json,created_at,updated_at) VALUES (?,?,?,?) ON CONFLICT(request_key) DO NOTHING")
-      .run(String(requestKey), JSON.stringify(plan), now, now);
+    this.db.prepare("INSERT OR IGNORE INTO run_plan_receipts (request_key,plan_json,created_at,updated_at) VALUES (?,?,?,?)")
+      .run(String(requestKey), JSON.stringify({ __pending: true }), now, now);
+  }
+
+  saveRunPlanReceipt(requestKey, payload) {
+    if (!requestKey || !payload) return;
+    const now = nowIso();
+    this.db.prepare("INSERT INTO run_plan_receipts (request_key,plan_json,created_at,updated_at) VALUES (?,?,?,?) ON CONFLICT(request_key) DO UPDATE SET plan_json=excluded.plan_json, updated_at=excluded.updated_at")
+      .run(String(requestKey), JSON.stringify(payload), now, now);
   }
 
   getRunPlanReceipt(requestKey) {

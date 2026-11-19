@@ -62,3 +62,11 @@
 - 历史 mirror：修正 ba544 对独立 coding 的误标；旧 artifact 字节数从 SQLite artifacts 登记回读，截短日志 BLOCKED。
 - 18/18 可移植审查、419/419 全量、宿主两轮产品 E2E 通过；产品 SHA `9bded363e1a5bba6927a6faedd49e83c5249a68d`。
 - 仍缺真实 Docker 双进程接管与容器内产品 E2E；ENGINEERING_FREEZE_BLOCKED。
+
+## 6dd874e 复审整改（2026-11-19）
+
+- Checkpoint 连续重启：保留原暂停原因，缺材料不派发；补齐后无独立暂停自动 dispatch 一次，manual/budget 保持原暂停。
+- Planner：single/显式零传输零预留；回退按实际 provider/model；GLM 豁免仍写真实用量；回执 pending/receipt 持久，写库成功前后重投均不二次发送。
+- 历史镜像纠正、旧 artifact meta_json.bytes 校验。
+- 原版 23/23、补充 7/7、npm test 419/419、宿主两轮产品 E2E PASS（产品 SHA `de43336a6265252866d297f9cfd70ee6a99e1eb7`）。
+- 仍缺真实 Docker 双进程接管与容器内产品 E2E；ENGINEERING_FREEZE_BLOCKED。
