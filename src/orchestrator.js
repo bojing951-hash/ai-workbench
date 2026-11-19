@@ -644,6 +644,10 @@ export class Orchestrator {
       || plannerProviders.find((p) => p.name === 'glm') || null;
     const plannerProvider = selectedPlanner?.name || this.config.planner.provider || 'deepseek';
     const plannerModel = selectedPlanner?.model || this.config.planner.model || '';
+    if (needsPlannerModel && !planResult && !selectedPlanner) {
+      this.releaseProjectLease(project.id);
+      throw new PolicyError('PLANNER_UNAVAILABLE', '没有可用的 Planner 模型；本次未发送、未预留、未写用量。补齐配置后可用同一请求键重试');
+    }
     try {
       if (planResult) { /* 已收到并持久化的结果：重投不得再次发送/计费 */ } else {
       // 单任务/显式任务不调用模型：不预留、不计费、不占额。自动规划才做原子预留。
@@ -3050,7 +3054,7 @@ export class Orchestrator {
           const artifacts = latestTask?.id ? this.store.listArtifacts(latestTask.id) : [];
           const absTarget = path.resolve(receiptLog);
           const match = artifacts.find((a) => a.kind === 'test' && (path.resolve(this.config.paths.dataDir, a.path) === absTarget || path.resolve(a.path) === absTarget));
-          if (match && Number.isFinite(Number(match.meta?.bytes))) expectedBytes = Number(match.meta.bytes);
+          if (match) { const registeredBytes = match.meta_json?.bytes ?? match.meta?.bytes; if (Number.isFinite(Number(registeredBytes))) expectedBytes = Number(registeredBytes); }
         }
         if (Number.isFinite(expectedBytes) && stat.size !== expectedBytes) receiptLogValid = false;
         if (receipt.testArtifactSha256 && actualHash !== receipt.testArtifactSha256) receiptLogValid = false;

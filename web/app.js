@@ -216,6 +216,7 @@ const TONE_VARS = {
 // ============================================================
 // 全局 UI 状态（仅前端）
 // ============================================================
+const pendingStartKeys = new Map();
 const app = {
   state: null,
   stateError: null,
@@ -4549,11 +4550,16 @@ async function submitStartRun() {
   hideGoalError();
   setStartButtonBusy(true);
   try {
+    const operationKey = JSON.stringify({ projectId: project.id, goal, acceptance, mode });
+    const requestKey = pendingStartKeys.get(operationKey) || (globalThis.crypto?.randomUUID?.() || `start-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    pendingStartKeys.set(operationKey, requestKey);
     const result = await apiRequest('POST', `/api/projects/${encodeURIComponent(project.id)}/runs`, {
       goal,
       acceptance,
       mode,
+      requestKey,
     });
+    pendingStartKeys.delete(operationKey);
     const runId = result?.runId;
     if (!runId) throw new ApiError('运行已创建，但服务未返回 runId', 0, 'BAD_RUN_RESPONSE');
     app.drafts.delete(project.id);

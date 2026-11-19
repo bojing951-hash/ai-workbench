@@ -70,3 +70,10 @@
 - 历史镜像纠正、旧 artifact meta_json.bytes 校验。
 - 原版 23/23、补充 7/7、npm test 419/419、宿主两轮产品 E2E PASS（产品 SHA `de43336a6265252866d297f9cfd70ee6a99e1eb7`）。
 - 仍缺真实 Docker 双进程接管与容器内产品 E2E；ENGINEERING_FREEZE_BLOCKED。
+
+## 8fd51ef 复审整改（2026-11-19）
+
+- Web submitStartRun 使用稳定 requestKey；Run 创建失败重投复用计划回执与同一 Run。
+- 无可用 Planner 在预留/发送意图前阻断，0 发送/0 用量/0 占用。
+- 终审按 listArtifacts 返回的 meta_json.bytes 读取旧登记长度。
+- 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 双进程/容器产品 E2E。
