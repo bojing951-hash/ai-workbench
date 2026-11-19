@@ -83,3 +83,9 @@
 - 普通 Chat 在 transport 层使用单次 send limit；HTTP/JSON 内部重试计入，首发/无许可/新许可/再投目标 1/0/1/0。
 - Web pending start key 持久到 localStorage，页面刷新后可复用；确认 Run 后才清理。
 - 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 两项实测。
+
+## fc5fbce 复审整改（2026-11-19）
+
+- 普通 Chat 使用持久 `chat_sends` 首发许可；GLM 豁免同样受控；显式 retry grant 单次消费。
+- Web pending 请求键在有效 runId 确认后才清理，覆盖不完整 201/缺 runId。
+- 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 两项。

@@ -4575,12 +4575,12 @@ async function submitStartRun() {
       mode,
       requestKey,
     });
+    const runId = result?.runId;
+    if (!runId) throw new ApiError('运行已创建，但服务未返回 runId', 0, 'BAD_RUN_RESPONSE');
     pendingStartKeys.delete(operationKey);
     const remainingKeys = readPendingStartKeys();
     delete remainingKeys[operationKey];
     writePendingStartKeys(remainingKeys);
-    const runId = result?.runId;
-    if (!runId) throw new ApiError('运行已创建，但服务未返回 runId', 0, 'BAD_RUN_RESPONSE');
     app.drafts.delete(project.id);
     dom.goalInput.value = '';
     dom.acceptanceInput.value = '';

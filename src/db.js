@@ -511,6 +511,9 @@ export class Store {
         CREATE TABLE IF NOT EXISTS retry_grants (
           key TEXT PRIMARY KEY, created_at TEXT NOT NULL, consumed_at TEXT DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS chat_sends (
+          key TEXT PRIMARY KEY, created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS run_plan_receipts (
           request_key TEXT PRIMARY KEY, plan_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
@@ -1520,6 +1523,12 @@ export class Store {
     }
     return this.db.prepare('SELECT * FROM llm_usage WHERE id=?').get(id);
   }
+  consumeChatSend(key) {
+    if (!key) return false;
+    const r = this.db.prepare("INSERT OR IGNORE INTO chat_sends (key,created_at) VALUES (?,?)").run(String(key), nowIso());
+    return Number(r.changes || 0) > 0;
+  }
+
   consumeRetryGrant(key) {
     if (!key) return false;
     const now = nowIso();

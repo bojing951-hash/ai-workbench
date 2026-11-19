@@ -344,12 +344,13 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         }
         let turn;
         const retryAuthorized = body.retryAuthorized === true && store.consumeRetryGrant(`chat-retry:${conversation.id}:${userMessage.id}`);
+        const sendPermitKey = retryAuthorized ? '' : `chat-send:${conversation.id}:${userMessage.id}:initial`;
         try {
-          turn = await chatTurn({ config, store, conversation, userMessage: content, project, budgetRequestKey: `chat:${conversation.id}:${userMessage.id}`, retryAuthorized });
+          turn = await chatTurn({ config, store, conversation, userMessage: content, project, budgetRequestKey: `chat:${conversation.id}:${userMessage.id}`, retryAuthorized, sendPermitKey });
         } catch (err) {
           const message = redactForResponse(String(err?.message || err), config);
           // 已发生但未拿到最终 usage 的调用必须标记 unknown，不能静默漏账；预算预检失败则没有发生调用。
-          if (!/^BUDGET_/.test(String(err?.code || '')) && err?.code !== 'CHAT_MODEL_UNAVAILABLE') {
+          if (!/^BUDGET_/.test(String(err?.code || '')) && err?.code !== 'CHAT_MODEL_UNAVAILABLE' && err?.code !== 'CHAT_REPLAY_NO_SEND') {
             try {
               recordModelUsage({ store, config, source: 'chat', sourceId: `chatfail:${conversation.id}:${userMessage.id}`, provider: 'unknown', model: '', usage: {}, costCny: 0, projectId: conversation.project_id || '', conversationId: conversation.id, costSource: 'unknown' });
             } catch { /* ledger failure must not replace original error */ }
