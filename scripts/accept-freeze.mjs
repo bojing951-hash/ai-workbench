@@ -4,12 +4,12 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 
 const groups = [
-  { name: '1-product-completion', files: ['tests/handoff-product-plan.test.js', 'tests/handoff-test-evidence.test.js', 'tests/handoff-audit-chunks.test.js', 'tests/v32-product-gate.test.js', 'tests/v35-product-audit-middiff.test.js'] },
-  { name: '2-billing-unknown', files: ['tests/handoff-billing.test.js', 'tests/v35-loop-planner-ledger.test.js', 'tests/v35-usage-known.test.js', 'tests/v35-unknown-billing.test.js'] },
+  { name: '1-product-completion', files: ['tests/handoff-product-plan.test.js', 'tests/handoff-test-evidence.test.js', 'tests/handoff-audit-chunks.test.js', 'tests/v32-product-gate.test.js', 'tests/v35-product-audit-middiff.test.js', 'tests/freeze-final-evidence.test.js'] },
+  { name: '2-billing-unknown', files: ['tests/handoff-billing.test.js', 'tests/v35-loop-planner-ledger.test.js', 'tests/v35-usage-known.test.js', 'tests/v35-unknown-billing.test.js', 'tests/freeze-ledger-upgrade.test.js', 'tests/freeze-unknown-reservation.test.js'] },
   { name: '3-paid-identity', files: ['tests/handoff-identity.test.js', 'tests/v35-paid-admission.test.js', 'tests/v35-audit-chunk-budget.test.js'] },
-  { name: '4-checkpoint', files: ['tests/handoff-recovery-checkpoint.test.js', 'tests/v35-checkpoint.test.js', 'tests/v35-checkpoint-staged-rename.test.js', 'tests/v35-checkpoint-prepared-sigkill.test.js', 'tests/v35-checkpoint-publish-sigkill.test.js', 'tests/v35-checkpoint-published-sigkill.test.js', 'tests/v35-checkpoint-renamed-sigkill.test.js'] },
+  { name: '4-checkpoint', files: ['tests/handoff-recovery-checkpoint.test.js', 'tests/v35-checkpoint.test.js', 'tests/v35-checkpoint-staged-rename.test.js', 'tests/v35-checkpoint-prepared-sigkill.test.js', 'tests/v35-checkpoint-publish-sigkill.test.js', 'tests/v35-checkpoint-published-sigkill.test.js', 'tests/v35-checkpoint-renamed-sigkill.test.js', 'tests/freeze-checkpoint-owner.test.js'] },
   { name: '5-git-sqlite', files: ['tests/handoff-recovery-commit.test.js', 'tests/v35-git-db-recovery.test.js'] },
-  { name: '6-supervisor-docker-e2e', files: ['tests/handoff-supervisor.test.mjs', 'tests/audit-checkpoint.test.js', 'tests/audit-git-retry.test.js', 'tests/audit-hardening.test.js', 'tests/audit-plan-commit.test.js', 'tests/audit-reopen.test.js', 'tests/audit-supervisor.test.mjs', 'tests/v35-container-recovery.test.js'] },
+  { name: '6-supervisor-docker-e2e', files: ['tests/handoff-supervisor.test.mjs', 'tests/audit-checkpoint.test.js', 'tests/audit-git-retry.test.js', 'tests/audit-hardening.test.js', 'tests/audit-plan-commit.test.js', 'tests/audit-reopen.test.js', 'tests/audit-supervisor.test.mjs', 'tests/v35-container-recovery.test.js', 'tests/freeze-loop-recovery.test.mjs', 'tests/freeze-git-commit-windows.test.js'] },
 ];
 
 const results = [];
@@ -35,6 +35,13 @@ for (const group of groups) {
   const ok = dsh.status === 0;
   if (!ok) hardFailure = true;
   results.push({ name: '6a-dsh-version-binding', status: ok ? 'PASS' : 'FAIL', code: dsh.status, stderr: (dsh.stderr || '').slice(-500) });
+}
+// 独立审计包的 8 项补充回归（含升级/Checkpoint owner/Loop 恢复）。
+{
+  const independent = spawnSync(process.execPath, ['scripts/independent-b506.mjs'], { encoding: 'utf8', timeout: 300_000, maxBuffer: 32 * 1024 * 1024 });
+  const ok = independent.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6a-independent-b506', status: ok ? 'PASS' : 'FAIL', code: independent.status, output: `${independent.stdout || ''}${independent.stderr || ''}`.slice(-800) });
 }
 // 真实 Docker 与连续离线产品 E2E 是第六组必跑项；未提供证据时明确标 UNEXECUTED，不得静默通过。
 try {

@@ -38,17 +38,36 @@ const riskRole = val('--risk-role', '');
 const riskReason = val('--risk-reason', '');
 const riskAcceptedBy = val('--risk-accepted-by', authorizedBy);
 const riskMaxTokens = Number(val('--risk-max-tokens', '0'));
-if ((riskClient || riskProvider || riskModel || riskRole) && !(riskClient && riskProvider && riskModel && riskRole && riskReason)) {
-  console.error('风险许可必须同时提供 --risk-role --risk-client --risk-provider --risk-model --risk-reason');
-  process.exit(6);
+const riskSpecs = [];
+for (let i = 0; i < args.length; i++) {
+  if (args[i] !== '--risk-spec') continue;
+  try {
+    const parsed = JSON.parse(String(args[i + 1] || '[]'));
+    if (!Array.isArray(parsed)) throw new Error('--risk-spec 必须是 JSON 数组');
+    riskSpecs.push(...parsed);
+  } catch (err) { console.error('风险许可 JSON 无法解析：' + err.message); process.exit(6); }
 }
+if (riskClient || riskProvider || riskModel || riskRole) {
+  if (!(riskClient && riskProvider && riskModel && riskRole && riskReason)) {
+    console.error('风险许可必须同时提供 --risk-role --risk-client --risk-provider --risk-model --risk-reason');
+    process.exit(6);
+  }
+  riskSpecs.push({ role: riskRole, client: riskClient, provider: riskProvider, model: riskModel, reason: riskReason, acceptedBy: riskAcceptedBy, maxRiskTokens: riskMaxTokens });
+}
+for (const r of riskSpecs) {
+  if (!r || !r.role || !r.client || !r.provider || !r.model || !r.reason) {
+    console.error('每组风险许可必须包含 role/client/provider/model/reason：' + JSON.stringify(r));
+    process.exit(6);
+  }
+}
+const riskEntries = riskSpecs.map((r) => ({ role: String(r.role), client: String(r.client), provider: String(r.provider), model: String(r.model), acceptedBy: String(r.acceptedBy || riskAcceptedBy), acceptedAt: new Date(now).toISOString(), reason: String(r.reason), maxRiskTokens: Number(r.maxRiskTokens || riskMaxTokens || 0) }));
 const config = getConfig();
 const store = openStore(config.paths.dbPath);
 try {
   const contract = store.createExperimentContract({
     projectId, conversationId, authorizedBy,
     authorizationSource: 'user_cli_tty',
-    authorizationText: `${expected} project=${projectId} conversation=${conversationId} at=${new Date(now).toISOString()} tokenLimit=${val('--token-limit', '3620000')} costLimit=${val('--cost-limit', '80')} stopLoss=${val('--stop-loss', '72')} callLimit=${val('--call-limit', '50')} deadlineHours=${hours} glmTokens=${val('--glm-tokens', '4000000')} glmCost=${val('--glm-cost', '40')} dshTokens=${val('--dsh-tokens', '2000000')} dshCost=${val('--dsh-cost', '30')} nonGlmCost=${val('--non-glm-cost', '10')} perCallTokens=${val('--per-call-tokens', '20000')} risk=${riskClient ? `${riskRole}/${riskClient}/${riskProvider}/${riskModel}:${riskReason}` : 'none'} isolation=${val('--isolation', 'BLOCKED_UNLESS_APPROVED')}`,
+    authorizationText: `${expected} project=${projectId} conversation=${conversationId} at=${new Date(now).toISOString()} tokenLimit=${val('--token-limit', '3620000')} costLimit=${val('--cost-limit', '80')} stopLoss=${val('--stop-loss', '72')} callLimit=${val('--call-limit', '50')} deadlineHours=${hours} glmTokens=${val('--glm-tokens', '4000000')} glmCost=${val('--glm-cost', '40')} dshTokens=${val('--dsh-tokens', '2000000')} dshCost=${val('--dsh-cost', '30')} nonGlmCost=${val('--non-glm-cost', '10')} perCallTokens=${val('--per-call-tokens', '20000')} risk=${riskEntries.length ? riskEntries.map((r) => `${r.role}/${r.client}/${r.provider}/${r.model}`).join(',') : 'none'} isolation=${val('--isolation', 'BLOCKED_UNLESS_APPROVED')}`,
     contractVersion: val('--contract-version', 'e2e-budget-v1'),
     tokenLimit: Number(val('--token-limit', '3620000')),
     costLimitCny: Number(val('--cost-limit', '80')),
@@ -66,7 +85,7 @@ try {
       planner: { client: 'deepseek', provider: 'deepseek', model: 'deepseek-chat' },
       coding: { client: 'claude', provider: 'glm', model: 'glm-5.3' },
       audit: { client: 'dsh', provider: 'deepseek', model: 'deepseek' },
-      ...(riskClient ? { risk: { unbounded: [{ role: riskRole, client: riskClient, provider: riskProvider, model: riskModel, acceptedBy: riskAcceptedBy, acceptedAt: new Date(now).toISOString(), reason: riskReason, maxRiskTokens: riskMaxTokens }] } } : {}),
+      ...(riskEntries.length ? { risk: { unbounded: riskEntries } } : {}),
     },
     isolationMode: val('--isolation', 'BLOCKED_UNLESS_APPROVED'),
     stopConditions: ['product acceptance PASS', 'stopLoss', 'callLimit', 'deadline', 'budget exhausted', 'unrecoverable BLOCKED', 'user cancel'],

@@ -1,0 +1,74 @@
+TAP version 13
+# (node:30119) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# RECOVERY_AUDIT [{"restart":1,"ckptBlocked":true,"status":"blocked","attempt":3,"worktree":"/tmp/wb-v38-ckptkill-ETRAA7/data/old","dispatchCount":0,"health":200,"reportedRecovery":false,"disk":null,"index":null,"backup":true,"journal":true},{"restart":2,"ckptBlocked":true,"status":"blocked","attempt":3,"worktree":"/tmp/wb-v38-ckptkill-ETRAA7/data/old","dispatchCount":0,"health":200,"reportedRecovery":false,"disk":null,"index":null,"backup":true,"journal":true}]
+# Subtest: backed-up SIGKILL and two actual starts preserve staged/unstaged or block with evidence
+ok 1 - backed-up SIGKILL and two actual starts preserve staged/unstaged or block with evidence
+  ---
+  duration_ms: 2961.846958
+  type: 'test'
+  ...
+# (node:30120) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# {"scenario":"matched","head":"5aab95f69a177026e86a81fb91b4631adb9bc298","tree":"eb08652b8c7f7ebf0e9ad4a3c30688681a226d27","receiptCommit":"5aab95f69a177026e86a81fb91b4631adb9bc298","receiptTree":"eb08652b8c7f7ebf0e9ad4a3c30688681a226d27","originalTestCode":0,"observedByAuditor":true,"result":"PASS"}
+# Subtest: product audit binds real test evidence to its commit: matched
+ok 2 - product audit binds real test evidence to its commit: matched
+  ---
+  duration_ms: 3159.252209
+  type: 'test'
+  ...
+# {"scenario":"previous-tree","head":"2631bb224bd38909511b594f551f91d3ae643c2a","tree":"eb08652b8c7f7ebf0e9ad4a3c30688681a226d27","receiptCommit":"c67299c39acb938d309f5b050999db6c0876eaf3","receiptTree":"e45d7966cf124067a9475ad4bf4880ed19d85da0","originalTestCode":0,"observedByAuditor":false,"result":"BLOCKED"}
+# Subtest: product audit binds real test evidence to its commit: previous-tree
+ok 3 - product audit binds real test evidence to its commit: previous-tree
+  ---
+  duration_ms: 441.479
+  type: 'test'
+  ...
+# {"scenario":"legacy-no-receipt","head":"a1064f40b0f48d085ece27da4bbc0c4e4cd1c548","tree":"eb08652b8c7f7ebf0e9ad4a3c30688681a226d27","receiptCommit":"a1064f40b0f48d085ece27da4bbc0c4e4cd1c548","receiptTree":null,"originalTestCode":null,"observedByAuditor":false,"result":"BLOCKED"}
+# Subtest: product audit binds real test evidence to its commit: legacy-no-receipt
+ok 4 - product audit binds real test evidence to its commit: legacy-no-receipt
+  ---
+  duration_ms: 638.4325
+  type: 'test'
+  ...
+# (node:30121) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# {"kind":"known","sends":1,"live":{"total":13,"budget":13,"reserved":0,"project":13,"expTokens":13,"rows":[["planner",1]]},"reopened":{"total":13,"budget":13,"reserved":0,"project":13,"expTokens":13,"rows":[["planner",1]]},"twice":{"total":13,"budget":13,"reserved":0,"project":13,"expTokens":13,"rows":[["planner",1]]}}
+# Subtest: known on upgrade from dd68 and two database opens
+ok 5 - known on upgrade from dd68 and two database opens
+  ---
+  duration_ms: 410.305583
+  type: 'test'
+  ...
+# {"kind":"missing","sends":1,"live":{"total":0,"budget":0,"reserved":5000,"project":0,"expTokens":5000,"rows":[["planner",0]]},"reopened":{"total":0,"budget":0,"reserved":5000,"project":0,"expTokens":5000,"rows":[["planner",0]]},"twice":{"total":0,"budget":0,"reserved":5000,"project":0,"expTokens":5000,"rows":[["planner",0]]}}
+# Subtest: missing on upgrade from dd68 and two database opens
+ok 6 - missing on upgrade from dd68 and two database opens
+  ---
+  duration_ms: 280.82025
+  type: 'test'
+  ...
+# {"healthCount":4,"recoverCount":2,"recoverStatus":[200,200],"stableChild":true}
+# Subtest: Supervisor retries a transient failed loop in a successful HTTP response until reconciled
+ok 7 - Supervisor retries a transient failed loop in a successful HTTP response until reconciled
+  ---
+  duration_ms: 20776.551541
+  type: 'test'
+  ...
+# (node:30123) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# {"before":4000,"after":4000,"rows":[{"id":"initial","status":"unknown","estimated":4000}],"sends":0}
+# Subtest: an unknown logical call with an existing 4,000-token hold cannot silently create a second hold
+ok 8 - an unknown logical call with an existing 4,000-token hold cannot silently create a second hold
+  ---
+  duration_ms: 217.855
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 21993.354959

@@ -350,6 +350,26 @@ async function main() {
     if (checkpointPublish.blocked.length) {
       // 保持服务可启动以便读取/人工恢复；但不得清理恢复材料，也不得把发布视为成功。
       console.error(`[recover] BLOCKED：${checkpointPublish.blocked.length} 个 Checkpoint 发布状态无法对账，保留备份与 journal：${JSON.stringify(checkpointPublish.blocked.slice(0, 5))}`);
+      // 把阻断持久化到所属 Task/Run，阻止自动 Supervisor 或手工 resume 重新派发。
+      const blockedTargets = new Set();
+      for (const b of checkpointPublish.blocked) {
+        try { const j = JSON.parse(fs.readFileSync(b.file, 'utf8')); if (j.target) blockedTargets.add(j.target); } catch { /* journal already logged */ }
+      }
+      for (const task of store.listTasks({})) {
+        if (!task.worktree_path || !blockedTargets.has(task.worktree_path)) continue;
+        store.updateTask(task.id, {
+          status: 'blocked',
+          blocked_reason: `CHECKPOINT_BLOCKED：发布状态未对账，保留工作树/备份/journal，禁止重新派发（${task.worktree_path}）`,
+        });
+        const run = task.run_id ? store.getRun(task.run_id) : null;
+        if (run) {
+          store.updateRun(run.id, {
+            status: 'paused', pause_kind: 'checkpoint_blocked',
+            stop_reason: `Checkpoint 发布未对账，所属任务 ${task.id} 已阻断`,
+            result_json: { ...(run.result_json || {}), checkpointBlocked: true, checkpointBlockedTarget: task.worktree_path },
+          });
+        }
+      }
     }
     const recovered = orchestrator.recoverOrphans();
     const recoveredLoops = loops.recover();

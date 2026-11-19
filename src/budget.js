@@ -44,7 +44,7 @@ export function budgetSnapshot(store, config) {
   };
 }
 
-export function assertModelBudget({ config, store, provider, model = '', estimatedTokens = 2000, estimatedCostCny = 0.02, label = '模型调用', reserve = false, requestKey = '', reservationId = '', experimentId = '', experimentScope = '', experimentRole = '', experimentClient = '' }) {
+export function assertModelBudget({ config, store, provider, model = '', estimatedTokens = 2000, estimatedCostCny = 0.02, label = '模型调用', reserve = false, requestKey = '', reservationId = '', experimentId = '', experimentScope = '', experimentRole = '', experimentClient = '', retryAuthorized = false }) {
   const identity = resolveLlmIdentity({ config, provider });
   const effectiveModel = model || identity.model || '';
   if (experimentId && experimentRole) {
@@ -68,7 +68,7 @@ export function assertModelBudget({ config, store, provider, model = '', estimat
       maxTokens: config.budget.maxTotalTokens, maxCostCny: config.budget.maxCostCny,
       minReserveTokens: config.budget.minReserveTokens, cacheTokenWeight: config.budget.cacheTokenWeight,
       exemptProviders: config.budget.exemptProviders || ['glm'], ttlMs: Number(config.budget.reservationTtlMs || 10 * 60 * 1000),
-      experimentId, experimentScope: scope, exemptGlobal: identityExempt,
+      experimentId, experimentScope: scope, exemptGlobal: identityExempt, retryAuthorized,
     });
     if (!result.ok) {
       const isExperimentBlock = /^experiment-/.test(String(result.reason || ''));

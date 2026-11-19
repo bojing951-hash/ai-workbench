@@ -32,3 +32,14 @@
 - `npm test`：409/409/0；
 - `npm run accept:freeze`：第 1-6 组、DSH 版本绑定、真实 Docker 均 PASS；唯一 UNEXECUTED 为连续离线产品 E2E（无产品 SHA）；
 - 结论：ENGINEERING_FREEZE_BLOCKED。
+
+## b506 独审复验整改（2026-11-19）
+
+- 原 23 项：23/23 PASS；补充审计 44 项：44/44 PASS；独立 b506 包：8/8 PASS。
+- 产品终审现在必须绑定当前候选 commit/tree、真实命令、退出码、存在的原始测试日志；旧回执/只有 commit 均 BLOCKED。
+- 升级旧 dd68 账本不再重复回填 planner legacy；同一 UNKNOWN 逻辑请求无新授权不再创建第二笔预留。
+- Checkpoint 发布无法对账时持久化阻断所属 Task/Run，自动/手工恢复均不派发。
+- Supervisor 同时处理 recoveredRuns 和 recoveredLoops 的临时失败，成功项不重复。
+- 授权 CLI 支持 `--risk-spec` 多组精确 role/client/provider/model 许可。
+- 全量：419/419/0；DSH 固定快照 PASS；真实 Docker 可用。
+- 仍缺：连续离线产品 E2E（无产品 SHA）、真实 Docker 双进程写入交接；因此 ENGINEERING_FREEZE_BLOCKED。

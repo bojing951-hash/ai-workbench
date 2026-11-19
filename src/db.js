@@ -1347,7 +1347,7 @@ export class Store {
     return { calls, tokens, costCny, byScope, rows };
   }
 
-  reserveModelBudget({ id, requestKey = '', provider = 'unknown', model = '', estimatedTokens = 0, estimatedCostCny = 0, maxTokens = 0, maxCostCny = 0, minReserveTokens = 0, cacheTokenWeight = 0.1, exemptProviders = ['glm'], ttlMs = 10 * 60 * 1000, experimentId = '', experimentScope = 'global', exemptGlobal = false } = {}) {
+  reserveModelBudget({ id, requestKey = '', provider = 'unknown', model = '', estimatedTokens = 0, estimatedCostCny = 0, maxTokens = 0, maxCostCny = 0, minReserveTokens = 0, cacheTokenWeight = 0.1, exemptProviders = ['glm'], ttlMs = 10 * 60 * 1000, experimentId = '', experimentScope = 'global', exemptGlobal = false, retryAuthorized = false } = {}) {
     const now = nowIso();
     const expires = new Date(Date.now() + ttlMs).toISOString();
     // TTL 结算在事务外先提交；即使随后额度检查失败回滚，不能把已过期预留重新变回 reserved。
@@ -1360,6 +1360,11 @@ export class Store {
         const existing = this.db.prepare('SELECT * FROM model_reservations WHERE request_key=?').get(requestKey);
         if (existing) {
           if (existing.status === 'reserved' || existing.status === 'settled') { this.db.exec('COMMIT'); return { ok: true, existing: true, reservation: existing }; }
+          // UNKNOWN 历史调用保持占额；没有显式新授权不得自动生成第二笔预留。
+          if (existing.status === 'unknown' && !retryAuthorized) {
+            this.db.exec('COMMIT');
+            return { ok: false, reason: 'unknown-retry-not-authorized', existing, requestKey };
+          }
           // released/expired/unknown 是历史调用，不得覆盖；新付费重试必须独立预留 ID/requestKey。
           retryExisting = existing;
           effectiveRequestKey = `${requestKey}#retry:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 6)}`;
@@ -1521,8 +1526,9 @@ export class Store {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
     const attempts = this.db.prepare(`SELECT a.id,a.run_id,a.task_id,r.project_id,a.provider,a.provider_known,a.provider_source,a.model,a.tokens_in,a.tokens_out,a.tokens_cache,a.cost_cny,a.stage,a.created_at,a.accounting_source FROM attempts a LEFT JOIN runs r ON r.id=a.run_id`).all();
     for (const a of attempts) {
-      // 已由正式结算身份记账的 attempt 不再做 legacy 回填，避免重开数据库双账。
-      if (String(a.accounting_source || '')) continue;
+      // 已由正式结算身份记账的 attempt 不再做 legacy 回填，避免重开数据库双账；
+      // planner 的历史账由 llm_usage 的 planner 身份承载，不把 loop-planning attempt 再补成 legacy。
+      if (String(a.accounting_source || '') || a.stage === 'loop-planning') continue;
       insert.run(`usage_legacy_att_${a.id}`, `attempt:${a.id}`, 'legacy_attempt', a.run_id || '', a.task_id || '', a.project_id || '', '', a.provider || 'unknown', a.provider_known ? 1 : 0, a.provider_source || 'legacy', a.model || '', Number(a.tokens_in || 0), Number(a.tokens_out || 0), Number(a.tokens_cache || 0), Number(a.cost_cny || 0), 'legacy', 1, 'global', a.created_at || now);
     }
     const audits = this.db.prepare(`SELECT au.id,au.run_id,au.task_id,r.project_id,au.provider,au.provider_known,au.provider_source,au.model,au.tokens_in,au.tokens_out,au.cost_cny,au.budget_scope,au.created_at FROM audits au LEFT JOIN runs r ON r.id=au.run_id`).all();

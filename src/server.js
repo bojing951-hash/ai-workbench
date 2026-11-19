@@ -301,8 +301,10 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         }
         const project = conversation.project_id ? store.getProject(conversation.project_id) : null;
         let userMessage = store.getConversationMessageByRequestKey(conversation.id, clientMessageId);
+        let priorFailed = false;
         if (userMessage) {
           const priorReply = store.getConversationReplyTo(conversation.id, userMessage.id);
+          priorFailed = !!(priorReply && (priorReply.data?.kind === 'error' || priorReply.data?.retryable));
           if (priorReply && priorReply.data?.kind !== 'error' && !priorReply.data?.retryable) {
             return sendJson(res, 200, { ok: true, data: { conversation: store.getConversation(conversation.id), messages: store.listConversationMessages(conversation.id), assistant: priorReply, idempotent: true } });
           }
@@ -342,7 +344,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         }
         let turn;
         try {
-          turn = await chatTurn({ config, store, conversation, userMessage: content, project, budgetRequestKey: `chat:${conversation.id}:${userMessage.id}` });
+          turn = await chatTurn({ config, store, conversation, userMessage: content, project, budgetRequestKey: `chat:${conversation.id}:${userMessage.id}`, retryAuthorized: priorFailed });
         } catch (err) {
           const message = redactForResponse(String(err?.message || err), config);
           // 已发生但未拿到最终 usage 的调用必须标记 unknown，不能静默漏账；预算预检失败则没有发生调用。

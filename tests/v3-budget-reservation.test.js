@@ -127,13 +127,12 @@ test('v3.2 P0-2：UNKNOWN 历史调用不被重试覆盖；新付费请求拥有
     store.markModelReservationUnknown(first.reservation.id);
     const beforeRows = store.listModelReservations().length;
     const retry = store.reserveModelBudget({ id: 'unknown-call-2', requestKey: 'paid-key', provider: 'deepseek', estimatedTokens: 4_000, maxTokens: 20_000, maxCostCny: 30 });
-    assert.equal(retry.ok, true);
-    assert.notEqual(retry.reservation.id, first.reservation.id, '新付费调用必须有独立预留 ID');
-    assert.notEqual(retry.reservation.request_key, 'paid-key', '旧 requestKey 不能复用为免费调用');
-    assert.equal(store.listModelReservations().length, beforeRows + 1);
+    assert.equal(retry.ok, false, 'UNKNOWN 无新授权不得自动创建第二笔预留');
+    assert.equal(retry.reason, 'unknown-retry-not-authorized');
+    assert.equal(store.listModelReservations().length, beforeRows);
     const old = store.listModelReservations().find((x) => x.id === first.reservation.id);
     assert.equal(old.status, 'unknown', '旧 UNKNOWN 不得被覆盖或删除');
-    assert.equal(store.reservedBudgetTotals().tokens, 8_000, '旧 UNKNOWN 4k + 新预留 4k 都必须占额');
+    assert.equal(store.reservedBudgetTotals().tokens, 4_000, '旧 UNKNOWN 4k 继续保守占额');
   } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -149,10 +148,10 @@ test('v3.2 P0-2：DB 关闭重开后未结算预留仍占额；超时转 UNKNOWN
     assert.equal(reopened.reservedBudgetTotals().tokens, 3_000, '崩溃后未结算预留必须继续占额');
     reopened.db.prepare("UPDATE model_reservations SET expires_at='2000-01-01T00:00:00.000Z' WHERE id='crash-res'").run();
     const retry = reopened.reserveModelBudget({ id: 'after-timeout', requestKey: 'crash-key', provider: 'deepseek', estimatedTokens: 3_000, maxTokens: 10_000, maxCostCny: 30 });
-    assert.equal(retry.ok, true);
-    assert.notEqual(retry.reservation.id, 'crash-res');
+    assert.equal(retry.ok, false, 'TTL 到期后的 UNKNOWN 同样必须显式新授权');
+    assert.equal(retry.reason, 'unknown-retry-not-authorized');
     assert.equal(reopened.listModelReservations().find((x) => x.id === 'crash-res').status, 'unknown');
-    assert.equal(reopened.reservedBudgetTotals().tokens, 6_000);
+    assert.equal(reopened.reservedBudgetTotals().tokens, 3_000);
   } finally { reopened.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 

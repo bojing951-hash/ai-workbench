@@ -1585,7 +1585,7 @@ export class Orchestrator {
           isolation: testRes.isolation || null,
           setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed,
         };
-        this.writeArtifact({
+        const testArtifact = this.writeArtifact({
           runId: run.id, taskId: task.id, kind: 'test', filename: `attempt-${attemptNo}-test.txt`,
           content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n${testRes.isolation ? `isolation=${JSON.stringify(testRes.isolation)}\n` : ''}\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}`,
         });
@@ -1752,7 +1752,7 @@ export class Orchestrator {
               testCode: testRes.code,
               testStdout: String(testRes.stdout || ''),
               testStderr: String(testRes.stderr || ''),
-              testArtifactLog: path.join(this.logsDir(run.id, task.id), `verify-${Date.now()}-test.log`),
+              testArtifactLog: testArtifact?.path || '',
               criteria: audit.criteria,
             },
           });
@@ -2755,6 +2755,9 @@ export class Orchestrator {
   async resumeRun(runId, { retryFailed = false, authorizeBudget = false } = {}) {
     const run = this.store.getRun(runId);
     if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
+    if (run.result_json?.checkpointBlocked || run.pause_kind === 'checkpoint_blocked') {
+      throw new PolicyError('CHECKPOINT_BLOCKED', `运行所属 Checkpoint 发布未对账（目标 ${run.result_json?.checkpointBlockedTarget || 'unknown'}）；保留工作树/备份/journal，禁止恢复派发`);
+    }
     if ([RunStatus.ACCEPTED, RunStatus.CANCELLED].includes(run.status)) {
       throw new PolicyError('RUN_CLOSED', `运行已结束（${run.status}），不能恢复`);
     }
@@ -2999,6 +3002,17 @@ export class Orchestrator {
     if (!planHead) return { ok: false, required: true, status: 'UNKNOWN', reason: '缺少最终 Git Commit，不能进行产品验收', missing: expected };
     const parent = await gitops.git(project.local_path, ['rev-parse', `${planHead}^`], { allowFail: true }).then((r) => r.stdout.trim()).catch(() => '');
     const base = baseCommit || parent || planHead;
+    // 终审必须绑定当前候选自己的真实测试回执：commit/tree/命令/退出码/原始日志缺一不可。
+    const candidateTree = (await gitops.git(project.local_path, ['rev-parse', `${planHead}^{tree}`], { allowFail: true })).stdout.trim();
+    const receipt = latestTask?.result_json || latestTask?.verification_json || {};
+    const receiptTree = receipt.testedHash || '';
+    const receiptLog = receipt.testArtifactLog || '';
+    const receiptValid = receipt.commit === planHead && receiptTree === candidateTree
+      && Number(receipt.testCode) === 0 && !!receipt.testCommand
+      && !!receiptLog && fs.existsSync(receiptLog);
+    if (this.deps.runAudit === runAudit && latestTask && !receiptValid) {
+      return { ok: false, required: true, status: 'BLOCKED', reason: `产品终审缺少当前候选 ${planHead.slice(0, 12)} 的完整测试回执（commit/tree/命令/退出码/原始日志）或属于其他版本；拒绝交付`, missing: expected, planHead };
+    }
     const diffRes = await gitops.git(project.local_path, ['diff', base, planHead], { timeoutMs: 120_000 });
     // 产品验收必须让分块器看到完整 diff；禁止在入口预先丢弃中段后再交给审计。
     const diff = diffRes.stdout || '';
@@ -3136,7 +3150,7 @@ export class Orchestrator {
       });
       if (retrySignal.aborted) return { ok: false, reason: '运行被暂停/取消，验证检查点已保留' };
       const testResult = { command: safeCommand, code: testRes.code, timedOut: testRes.timedOut, durationMs: testRes.durationMs, stdout: testRes.stdout, stderr: testRes.stderr, isolation: testRes.isolation || null, setupRetried: !!testRes.setupRetried, setupCommand: testRes.setupCommand || '', setupLogPath: testRes.setupLogPath || '', setupFailed: !!testRes.setupFailed };
-      this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
+      const retryTestArtifact = this.writeArtifact({ runId: run.id, taskId: task.id, kind: 'test', filename: `verify-${Date.now()}-test.txt`, content: `$ ${safeCommand}\nexit=${testRes.code} duration=${testRes.durationMs}ms\n\n[stdout]\n${testRes.stdout}\n\n[stderr]\n${testRes.stderr}` });
       await gitops.stageAll(worktree);
       const afterHash = (await gitops.git(worktree, ['write-tree'])).stdout.trim();
       if (afterHash !== testedHash) throw new PolicyError('FINGERPRINT_MISMATCH', '测试期间工作树内容发生变化');
@@ -3276,7 +3290,7 @@ export class Orchestrator {
       const headCommit = await gitops.currentHead(worktree);
       this.freezeTestBaseline(project, worktree, { runId: run.id, taskId: task.id, source: 'verification_retry', commit: headCommit });
       const verification = {
-        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
+        baseCommit, testedHash, commit: headCommit, planBranch, testCommand: safeCommand, testCode: testRes.code, testStdout: String(testRes.stdout || ''), testStderr: String(testRes.stderr || ''), testArtifactLog: retryTestArtifact?.path || '', isolation: isolationWarning ? { mode: isolationMode, warning: isolationWarning } : { mode: isolationMode },
         auditId: auditRow.id, auditStatus, auditProvider: audit.provider, auditModel: audit.model,
         auditScore: audit.score, independence: audit.independence, agent: lastAttempt?.agent_kind || '',
         verificationRetry: true,
