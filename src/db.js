@@ -530,6 +530,7 @@ export class Store {
       try { this.db.exec("ALTER TABLE attempts ADD COLUMN accounting_source TEXT DEFAULT ''"); } catch { /* column exists */ }
       try { this.db.exec("ALTER TABLE llm_usage ADD COLUMN superseded_by TEXT DEFAULT ''"); } catch { /* column exists */ }
       this.backfillLlmUsage();
+      this.backfillChatSendState();
       this.correctLegacyMirrors();
       this.dedupeLegacyMirrors();
     } catch {
@@ -1568,6 +1569,25 @@ export class Store {
     params.push(limit);
     return this.db.prepare(`SELECT * FROM llm_usage ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY created_at DESC LIMIT ?`).all(...params);
   }
+  backfillChatSendState() {
+    // 旧版已发送/结果不明的 Chat 预留或失败用量，升级后必须视为首发许可已消费。
+    try {
+      const rows = this.db.prepare("SELECT request_key FROM model_reservations WHERE request_key LIKE 'chat:%' AND status IN ('unknown','settled')").all();
+      const insert = this.db.prepare('INSERT OR IGNORE INTO chat_sends (key,created_at) VALUES (?,?)');
+      for (const r of rows) {
+        const rest = String(r.request_key || '').slice(5);
+        if (!rest.includes(':')) continue;
+        const [conversationId, messageId] = rest.split(':');
+        if (conversationId && messageId) insert.run(`chat-send:${conversationId}:${messageId}:initial`, nowIso());
+      }
+      const failures = this.db.prepare("SELECT source_id FROM llm_usage WHERE source='chatfail' AND source_id LIKE 'chatfail:%'").all();
+      for (const r of failures) {
+        const [, conversationId, messageId] = String(r.source_id || '').split(':');
+        if (conversationId && messageId) insert.run(`chat-send:${conversationId}:${messageId}:initial`, nowIso());
+      }
+    } catch { /* legacy tables absent */ }
+  }
+
   correctLegacyMirrors() {
     // 旧候选仅凭 token 相同误把独立 coding 历史标成 planner mirror；有 run/task/project 的独立事实必须恢复。
     this.db.prepare(`UPDATE llm_usage SET superseded_by=''

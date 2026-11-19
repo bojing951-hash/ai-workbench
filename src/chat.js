@@ -53,8 +53,12 @@ export async function chatTurn({ config, store, conversation, userMessage, proje
   if (chatBinding && (provider.name !== chatBinding.provider || String(provider.model || '').toLowerCase() !== String(chatBinding.model || '').toLowerCase())) {
     throw new PolicyError('EXPERIMENT_MODEL_MISMATCH', `Chat 实际模型 ${provider.name}/${provider.model} 与实验授权 ${chatBinding.provider}/${chatBinding.model} 不匹配`);
   }
+  // 先消费首发许可，再进入预留；已发送消息的普通重投不得产生任何新预留。
+  if (sendPermitKey) {
+    const consumed = store.consumeChatSend(sendPermitKey);
+    if (!consumed && !retryAuthorized) throw new PolicyError('CHAT_REPLAY_NO_SEND', '同一对话消息的首发许可已被消费；未发送新请求，等待明确新授权');
+  }
   const budget = assertModelBudget({ config, store, provider: provider.name, model: provider.model, ...chatBudgetEstimate(provider.name, provider.model), label: '对话模型', reserve: true, requestKey: budgetRequestKey, reservationId: budgetReservationId, retryAuthorized, experimentId: experiment?.id || '', experimentScope: provider.name === 'glm' ? 'glm' : 'global', experimentRole: 'chat', experimentClient: provider.name });
-  if (sendPermitKey && !store.consumeChatSend(sendPermitKey)) throw new PolicyError('CHAT_REPLAY_NO_SEND', '同一对话消息的首发许可已被消费；未发送新请求，等待明确新授权');
   const history = store.listConversationMessages(conversation.id).slice(-12).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 4000) }));
   // 最新用户消息已由 server 保存；从历史尾部去掉，避免模型收到重复内容。
   if (history.length && history[history.length - 1].role === 'user' && history[history.length - 1].content === userMessage) history.pop();

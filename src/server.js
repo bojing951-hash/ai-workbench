@@ -344,7 +344,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
         }
         let turn;
         const retryAuthorized = body.retryAuthorized === true && store.consumeRetryGrant(`chat-retry:${conversation.id}:${userMessage.id}`);
-        const sendPermitKey = retryAuthorized ? '' : `chat-send:${conversation.id}:${userMessage.id}:initial`;
+        const sendPermitKey = `chat-send:${conversation.id}:${userMessage.id}:initial`;
         try {
           turn = await chatTurn({ config, store, conversation, userMessage: content, project, budgetRequestKey: `chat:${conversation.id}:${userMessage.id}`, retryAuthorized, sendPermitKey });
         } catch (err) {
