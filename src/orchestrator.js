@@ -2088,13 +2088,20 @@ export class Orchestrator {
     const wantRemote = productAccepted && project.remote_push_authorized === 1 && projectConfig.publish !== false;
     const ciRequired = project.ci_required === 1 && wantRemote;
     let publish = { blocked: [], pr: null, localOnly: true, planBranch, planHead, ci: null };
-    if (wantRemote || (projectConfig.publish !== false && this.config.github.token && project.remote_push_authorized === 1)) {
+    if (wantRemote) {
       publish = await this.publishRun(run, project, planBranch, planHead, tasks);
     } else if (!wantRemote) {
       const reason = loopScoped && !productAccepted ? '等待产品终审 PASS 后再执行远端发布（中间 Run 不推送）' : project.remote_push_authorized !== 1 ? '项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR' : '项目配置关闭远端发布';
       publish.blocked.push(reason);
       this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-publish', status: 'blocked', payload: { planBranch, planHead, reason }, result: { reason } });
       this.emit({ runId: run.id, projectId: run.project_id, type: 'publish_blocked', level: 'warn', message: reason, data: { planBranch, planHead } });
+    }
+
+    const afterPublishRun = this.store.getRun(run.id);
+    if (afterPublishRun?.status === RunStatus.CANCELLED) {
+      // 发布已发生时被取消：保留取消状态与已发生的发布动作，不能覆盖为 awaiting_acceptance。
+      this.emit({ runId: run.id, projectId: run.project_id, type: 'publish_after_cancel', level: 'warn', message: '发布过程中运行被取消，保留取消状态与已发生动作', data: { publish } });
+      return;
     }
 
     let verification;
