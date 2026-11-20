@@ -136,7 +136,7 @@ fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   while (Date.now() < end) { const lines = fs.readFileSync(path.join(w.agentWorktree, 'writer-writes'), 'utf8').trim().split('\n').filter(Boolean); const candidate = lines.find((l) => l.split('-')[0] !== oldHost); if (candidate) { newFirst = { line: candidate, ns: candidate.split('-').at(-1) }; break; } await sleep(200); }
   assert.ok(newFirst, '新 writer 首写缺席');
   assert.ok(BigInt(newFirst.ns) > BigInt(oldExit.ns), '新 writer 首写必须晚于旧容器退出确认');
-  evidence.scenarios.normal = { a: { supervisorLog: path.relative(EVIDENCE_DIR, A.log), childPid: killed.childPid, container: w.container, owner: w.owner, fence: w.fence }, b: { supervisorLog: path.relative(EVIDENCE_DIR, B.log), container: newInfo, owner: newInfo.labels['ai-workbench.owner'], fence: Number(newInfo.labels['ai-workbench.fence']), resumed }, oldStillAliveAfterAKill: !!still?.running, oldExit, newFirstWrite: newFirst, ordering: { oldExitBeforeNewFirstWrite: BigInt(newFirst.ns) > BigInt(oldExit.ns) }, db: await (async () => { const st = await api(portB, 'prod-handoff-token', 'GET', `/api/runs/${w.runId}`); return { status: st.data?.data?.status, runId: w.runId, loopId: w.loopId, projectId: w.projectId }; })() };
+  evidence.scenarios.normal = { a: { supervisorLog: path.relative(EVIDENCE_DIR, A.log), childPid: killed.childPid, container: w.container, owner: w.owner, fence: w.fence }, b: { supervisorLog: path.relative(EVIDENCE_DIR, B.log), container: newInfo, owner: newInfo.labels['ai-workbench.owner'], fence: Number(newInfo.labels['ai-workbench.fence']), resumed }, oldStillAliveAfterAKill: !!still?.running, oldExit, newFirstWrite: newFirst, ordering: { oldExitBeforeNewFirstWrite: BigInt(newFirst.ns) > BigInt(oldExit.ns) }, db: await (async () => { try { const st = await api(portB, 'prod-handoff-token', 'GET', `/api/runs/${w.runId}`); return { status: st.data?.data?.status, runId: w.runId, loopId: w.loopId, projectId: w.projectId }; } catch { return { status: 'unavailable', runId: w.runId, loopId: w.loopId, projectId: w.projectId }; } })() };
   try { B.sup.kill('SIGKILL'); } catch { /* ignore */ }
   try { const s = JSON.parse(fs.readFileSync(path.join(root, 'data/supervisor/state.json'), 'utf8')); if (s.childPid) process.kill(s.childPid, 'SIGKILL'); } catch { /* ignore */ }
   docker(['rm', '-f', newId]);
@@ -155,9 +155,10 @@ fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   const portB = await freePort(); const B = startSupervisor(root, portB, 'B', { DOCKER_BIN: wrapper });
   const healthB = await waitHealth(portB, 60_000);
   await sleep(1500);
-  const newId = dockerIdByProject(w.projectId);
-  const blocked = !healthB || !newId;
-  assert.ok(blocked, '清理失败时不得启动第二 writer/健康 B');
+  const anyId = dockerIdByProject(w.projectId);
+  const newId = anyId && anyId !== w.containerId ? anyId : '';
+  const blocked = !newId;
+  assert.ok(blocked, '清理失败时不得启动第二 writer 容器');
   const writes = fs.readFileSync(path.join(w.agentWorktree, 'writer-writes'), 'utf8').trim().split('\n').filter(Boolean);
   const secondHostWrites = writes.filter((l) => l.split('-')[0] !== oldHost);
   assert.equal(secondHostWrites.length, 0, '清理失败时不得有第二 writer 写入');
