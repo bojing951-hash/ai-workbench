@@ -149,3 +149,5 @@
 - 2026-11-20: 同 SHA CI 证据统一入 run.result_json.ciEvidence；首次轮询/刷新/重启恢复共用 evaluateCiEvidence；/accept 要求证据 SHA=verified_sha 且无缺检查/异 SHA；发布按审计提交对象推送并复核远端 ref；恢复覆盖分支已推未建 Draft、Draft 丢回执、Draft 已记录 CI 未完成三窗口。
 
 - 2026-11-20: 固定候选干净环境安装验收：HEAD 导出→npm install→启动→首个项目/Draft→CI→/accept，并接入 accept:freeze 与 CI 附件。
+
+- 2026-11-20: Docker 交接脚本改用宿主观察时钟并等待旧 Workbench 子进程消失后再启动 B，消除时序/租约存活误判抖动。

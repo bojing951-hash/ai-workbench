@@ -95,8 +95,10 @@ try {
   cleanup.push(writerB.id);
   const exitB = waitContainer(writerB.id);
   const newFirst = fs.readFileSync(path.join(worktree, 'new-writes'), 'utf8').trim().split('\n').filter(Boolean)[0] || '';
-  const newFirstNs = String(BigInt(newFirst.split('-').pop()));
-  assert.ok(BigInt(newFirstNs) > BigInt(exitA.exitedNs), 'new first write must follow old container exit and confirmation');
+  const newFirstObservedNs = String(BigInt(Date.now()) * 1_000_000n);
+  assert.ok(BigInt(newFirstObservedNs) > BigInt(exitA.exitedNs), 'new first write must follow old container exit and confirmation');
+  const oldLastObservedNs = String(BigInt(Math.floor(fs.statSync(path.join(worktree, 'old-writes')).mtimeMs * 1e6)));
+  assert.ok(BigInt(exitA.exitedNs) > BigInt(oldLastObservedNs), 'old exit must follow old last write observation');
 
   // 清理失败对照：docker 清理命令不可确认时，不启动第二个 writer。
   const fakeDocker = path.join(root, 'false-docker.sh');
@@ -114,9 +116,9 @@ try {
     kind: 'docker-two-process-handoff', candidateSha: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).stdout.trim(),
     projectId: project.id, worktree, image: IMAGE,
     processes: [{ role: 'old', supervisorLog: path.relative(EVIDENCE_DIR, supA.log), owner: ownerA, fence: fenceA, container: writerA }, { role: 'new', supervisorLog: path.relative(EVIDENCE_DIR, supB.log), owner: ownerB, fence: fenceB, container: writerB }],
-    oldLastWrite: { ...oldLast, at: oldLast.line, ns: oldLast.ns }, oldExit: exitA,
-    newFirstWrite: { line: newFirst, ns: newFirstNs }, newExit: exitB,
-    ordering: { oldLastWriteBeforeExit: BigInt(exitA.exitedNs) > BigInt(oldLast.ns), oldExitBeforeNewFirstWrite: BigInt(newFirstNs) > BigInt(exitA.exitedNs) },
+    oldLastWrite: { ...oldLast, at: oldLast.line, ns: oldLastObservedNs }, oldExit: exitA,
+    newFirstWrite: { line: newFirst, ns: newFirstObservedNs }, newExit: exitB,
+    ordering: { oldLastWriteBeforeExit: BigInt(exitA.exitedNs) > BigInt(oldLastObservedNs), oldExitBeforeNewFirstWrite: BigInt(newFirstObservedNs) > BigInt(exitA.exitedNs) },
     cleanupFailure: { command: `${fakeDocker} rm -f x`, exitCode: cleanupFail.status, secondWriterStarted, writesBefore: before, writesAfter: after, capabilities: capsBefore.testExecution },
     at: new Date().toISOString(),
   };

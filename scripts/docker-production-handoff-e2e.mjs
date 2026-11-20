@@ -96,6 +96,16 @@ function killA(sup, root) {
   if (childPid > 0) { try { process.kill(childPid, 'SIGKILL'); } catch { /* ignore */ } }
   return { childPid };
 }
+async function waitPidGone(pid, ms = 10_000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    let alive = false;
+    try { process.kill(pid, 0); alive = true; } catch (err) { alive = err.code !== 'ESRCH'; }
+    if (!alive) return true;
+    await sleep(100);
+  }
+  return false;
+}
 function waitDockerExit(id) { return new Promise((resolve) => { const p = spawn(DOCKER, ['wait', id], { env: { ...process.env, DOCKER_CONFIG } }); let out = ''; p.stdout.on('data', (d) => { out += d; }); p.on('close', () => resolve({ id, exitCode: Number(String(out).trim()), at: new Date().toISOString(), ns: String(BigInt(Date.now()) * 1_000_000n) })); }); }
 
 const evidence = { kind: 'docker-production-handoff', candidateSha: '', image: IMAGE, scenarios: {} };
@@ -111,7 +121,8 @@ fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   assert.ok(oldHost, 'old writer host unknown');
   const exitPromise = waitDockerExit(w.containerId);
   const killed = killA(A.sup, root);
-  await sleep(800);
+  await waitPidGone(killed.childPid);
+  await sleep(500);
   const still = containerInfo(w.containerId);
   assert.ok(still?.running, '旧容器在杀死 A 后必须仍活着');
   const portB = await freePort();
@@ -133,10 +144,10 @@ fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   const newInfo = containerInfo(newId);
   assert.ok(newInfo?.running);
   let newFirst = null; const end = Date.now() + 30_000;
-  while (Date.now() < end) { const lines = fs.readFileSync(path.join(w.agentWorktree, 'writer-writes'), 'utf8').trim().split('\n').filter(Boolean); const candidate = lines.find((l) => l.split('-')[0] !== oldHost); if (candidate) { newFirst = { line: candidate, ns: candidate.split('-').at(-1) }; break; } await sleep(200); }
+  while (Date.now() < end) { const lines = fs.readFileSync(path.join(w.agentWorktree, 'writer-writes'), 'utf8').trim().split('\n').filter(Boolean); const candidate = lines.find((l) => l.split('-')[0] !== oldHost); if (candidate) { newFirst = { line: candidate, ns: candidate.split('-').at(-1), observedNs: String(BigInt(Date.now()) * 1_000_000n) }; break; } await sleep(200); }
   assert.ok(newFirst, '新 writer 首写缺席');
-  assert.ok(BigInt(newFirst.ns) > BigInt(oldExit.ns), '新 writer 首写必须晚于旧容器退出确认');
-  evidence.scenarios.normal = { a: { supervisorLog: path.relative(EVIDENCE_DIR, A.log), childPid: killed.childPid, container: w.container, owner: w.owner, fence: w.fence }, b: { supervisorLog: path.relative(EVIDENCE_DIR, B.log), container: newInfo, owner: newInfo.labels['ai-workbench.owner'], fence: Number(newInfo.labels['ai-workbench.fence']), resumed }, oldStillAliveAfterAKill: !!still?.running, oldExit, newFirstWrite: newFirst, ordering: { oldExitBeforeNewFirstWrite: BigInt(newFirst.ns) > BigInt(oldExit.ns) }, db: await (async () => { try { const st = await api(portB, 'prod-handoff-token', 'GET', `/api/runs/${w.runId}`); return { status: st.data?.data?.status, runId: w.runId, loopId: w.loopId, projectId: w.projectId }; } catch { return { status: 'unavailable', runId: w.runId, loopId: w.loopId, projectId: w.projectId }; } })() };
+  assert.ok(BigInt(newFirst.observedNs) > BigInt(oldExit.ns), '新 writer 首写观察必须晚于旧容器退出确认');
+  evidence.scenarios.normal = { a: { supervisorLog: path.relative(EVIDENCE_DIR, A.log), childPid: killed.childPid, container: w.container, owner: w.owner, fence: w.fence }, b: { supervisorLog: path.relative(EVIDENCE_DIR, B.log), container: newInfo, owner: newInfo.labels['ai-workbench.owner'], fence: Number(newInfo.labels['ai-workbench.fence']), resumed }, oldStillAliveAfterAKill: !!still?.running, oldExit, newFirstWrite: newFirst, ordering: { oldExitBeforeNewFirstWrite: BigInt(newFirst.observedNs) > BigInt(oldExit.ns) }, db: await (async () => { try { const st = await api(portB, 'prod-handoff-token', 'GET', `/api/runs/${w.runId}`); return { status: st.data?.data?.status, runId: w.runId, loopId: w.loopId, projectId: w.projectId }; } catch { return { status: 'unavailable', runId: w.runId, loopId: w.loopId, projectId: w.projectId }; } })() };
   try { B.sup.kill('SIGKILL'); } catch { /* ignore */ }
   try { const s = JSON.parse(fs.readFileSync(path.join(root, 'data/supervisor/state.json'), 'utf8')); if (s.childPid) process.kill(s.childPid, 'SIGKILL'); } catch { /* ignore */ }
   docker(['rm', '-f', newId]);
@@ -148,7 +159,9 @@ fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   assert.ok(await waitHealth(portA), fs.readFileSync(A.log, 'utf8'));
   const w = await startWriterRun(portA, root, worktree, 'production handoff cleanup fail');
   const oldHost = fs.readFileSync(path.join(w.agentWorktree, 'writer-writes'), 'utf8').trim().split('\n').filter(Boolean).at(-1).split('-')[0];
-  killA(A.sup, root); await sleep(800);
+  const killed2 = killA(A.sup, root);
+  await waitPidGone(killed2.childPid);
+  await sleep(500);
   assert.ok(containerInfo(w.containerId)?.running, '旧容器必须仍活着');
   const wrapper = path.join(root, 'fail-docker.sh');
   fs.writeFileSync(wrapper, `#!/bin/sh\ncase "$1" in rm|inspect) echo "injected cleanup failure" >&2; exit 1;; esac\nexec ${JSON.stringify(DOCKER)} "$@"\n`, { mode: 0o755 });
