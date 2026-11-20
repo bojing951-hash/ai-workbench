@@ -3104,6 +3104,11 @@ export class Orchestrator {
     const controller = this.controllers.get(runId);
     if (controller) controller.abort();
     this.store.updateRun(runId, { status: RunStatus.CANCELLED, stop_reason: '用户取消', ended_at: nowIso() });
+    const loopId = run.result_json?.loopId;
+    if (loopId) {
+      const loop = this.store.getLoop(loopId);
+      if (loop && !['cancelled', 'completed'].includes(loop.status)) this.store.updateLoop(loopId, { status: 'cancelled', stop_reason: '用户取消 Run', current_run_id: '' });
+    }
     this.emit({ runId, projectId: run.project_id, type: 'run_cancelled', level: 'warn', message: '运行已取消' });
     if (!controller) this.releaseProjectLease(run.project_id);
     return this.store.getRun(runId);

@@ -161,3 +161,5 @@
 - 2026-11-20: 慢 GET 后撤权回归：GET 挂起期间 REST/DB 撤权，Draft POST 前 guard 阻断，POST=0；Loop 远端发布被阻断时保留 blocked 而非 completed。
 
 - 2026-11-20: Docker 清理失败证据记录 B 的 Run 状态并允许 BLOCKED/暂停或 B 不健康两种正式阻断形态，不再以 healthB 布尔单一条件误判。
+
+- 2026-11-20: 新增正式 REST Loop 发布中取消（Loop/Run 均 cancelled、Draft POST=0）与质量门缺证终态（Loop blocked、零 Draft、零发布分支）回归，并接入 accept:freeze/CI。
