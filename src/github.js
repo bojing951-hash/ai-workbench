@@ -102,7 +102,7 @@ export async function createPullRequest(config, { owner, repo, title, head, base
   // 幂等：同 head 的 open PR 已存在则复用
   const open = await api(config, 'GET', `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(owner + ':' + head)}`);
   if (Array.isArray(open) && open.length > 0) {
-    return { number: open[0].number, url: open[0].html_url, reused: true };
+    return { ...open[0], number: open[0].number, url: open[0].html_url, reused: true };
   }
   const pr = await api(config, 'POST', `/repos/${owner}/${repo}/pulls`, {
     title,
@@ -111,7 +111,7 @@ export async function createPullRequest(config, { owner, repo, title, head, base
     body,
     draft,
   });
-  return { number: pr.number, url: pr.html_url, reused: false };
+  return { ...pr, number: pr.number, url: pr.html_url, reused: false };
 }
 
 export async function findPullRequestByHead(config, owner, repo, head) {

@@ -22,6 +22,7 @@ async function waitFor(fn, ms = 60_000) { const end = Date.now() + ms; let last;
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'wbh-chain-'));
 const repo=path.join(root,'product'),productTest='node --test tests/product.test.cjs', clause='The formatter produces the exact uppercase READY response';
 const bare=path.join(root,'github.com','fixture','repo.git'); fs.mkdirSync(path.dirname(bare),{recursive:true}); spawnSync('git',['init','--bare','-q',bare]);
+const remoteBranchSha=(b)=>{const r=spawnSync('git',['rev-parse',`refs/heads/${b}`],{cwd:bare,encoding:'utf8'});return (r.stdout||'').trim();};
 const doGit=(args,cwd=repo)=>{const r=spawnSync('git',args,{cwd,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.trim();};
 fs.mkdirSync(path.join(repo,'tests'),{recursive:true});
 fs.writeFileSync(path.join(repo,'tests/product.test.cjs'),"const {test}=require('node:test');const assert=require('node:assert/strict');test('formatter returns a word',()=>assert.match(require('../format.cjs')(), /^[a-zA-Z]+$/));\n");
@@ -49,12 +50,12 @@ await new Promise(r=>mock.listen(0,'127.0.0.1',r));
 
 let prCreates = 0;
 const ghApi = http.createServer(async (req, res) => {
-  for await (const _ of req) { /* drain */ }
+  let bodyText=''; for await (const c of req) bodyText+=c;
   const u = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') return send(200, []);
-  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { prCreates += 1; return send(201, { number: 21, html_url: 'https://example.invalid/pr/21', state: 'open', draft: true }); }
+  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { prCreates += 1; const body = bodyText ? JSON.parse(bodyText) : {}; return send(201, { number: 21, html_url: 'https://example.invalid/pr/21', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head) } }); }
   if (u.pathname === '/repos/fixture/repo/actions/runs') { const sha = u.searchParams.get('head_sha') || ''; return send(200, { workflow_runs: [{ id: 21, name: 'ci', status: 'completed', conclusion: 'success', head_sha: sha, html_url: 'https://example.invalid/ci/21' }] }); }
   return send(404, { message: 'not found' });
 });

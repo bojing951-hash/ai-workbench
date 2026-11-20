@@ -17,6 +17,7 @@ const EVIDENCE_DIR = path.resolve(process.env.GITHUB_EVIDENCE_DIR || 'demo/evide
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-gh-publish-'));
 const worktree = path.join(root, 'wt');
 const bare = path.join(root, 'github.com', 'fixture', 'repo.git');
+const remoteBranchSha=(b)=>{const r=spawnSync('git',['rev-parse',`refs/heads/${b}`],{cwd:bare,encoding:'utf8'});return (r.stdout||'').trim();};
 fs.mkdirSync(worktree, { recursive: true });
 const git = (args, cwd = worktree) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
 git(['init', '-q', '-b', 'main']); git(['config', 'user.name', 'fixture']); git(['config', 'user.email', 'fixture@example.invalid']);
@@ -31,8 +32,8 @@ git(['branch', branch, planHead]);
 git(['push', '-q', 'origin', branch]);
 let pulls = 0; let creates = 0; let existingSha = planHead; let draftExists = false; let draftCreated = 0; let ciShaOverride = ''; let existingDraft = true;
 const mock = http.createServer(async (req, res) => {
-  req.resume();
-  for await (const _ of req) { /* drain */ }
+  let bodyText='';
+  for await (const c of req) bodyText+=c;
   const u = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
@@ -41,9 +42,9 @@ const mock = http.createServer(async (req, res) => {
     if (!draftExists) return send(200, []);
     const qhead = String(u.searchParams.get('head') || 'fixture:');
     const ref = qhead.includes(':') ? qhead.slice(qhead.indexOf(':') + 1) : qhead;
-    return send(200, [{ number: 7, html_url: 'https://example.invalid/pr/7', state: 'open', draft: existingDraft, base: { ref: 'main' }, head: { ref, sha: existingSha } }]);
+    return send(200, [{ number: 7, html_url: 'https://example.invalid/pr/7', state: 'open', draft: existingDraft, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref, sha: existingSha } }]);
   }
-  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { creates += 1; draftCreated += 1; draftExists = true; return send(201, { number: 8, html_url: 'https://example.invalid/pr/8', state: 'open', draft: true }); }
+  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { creates += 1; draftCreated += 1; draftExists = true; const body=JSON.parse(bodyText||'{}'); return send(201, { number: 8, html_url: 'https://example.invalid/pr/8', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head) } }); }
   if (u.pathname === '/repos/fixture/repo/actions/runs') {
     const sha = u.searchParams.get('head_sha') || '';
     return send(200, { workflow_runs: [{ id: 1, name: 'ci', status: 'completed', conclusion: 'success', head_sha: ciShaOverride || sha, html_url: 'https://example.invalid/ci/1' }] });

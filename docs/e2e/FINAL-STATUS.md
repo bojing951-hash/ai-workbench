@@ -155,3 +155,5 @@
 - 2026-11-20: 远端写入前 guard 复验权限/Run/Loop/产品终审/审计 SHA；push 到 Draft POST 间隔再次检查；Draft 创建/认领校验 repo/base/head/immutable SHA/draft，拒绝非 Draft；Draft done 但 CI action 未建的重启窗口经同 SHA 续建 CI；普通 Run 发布结果持久化 ciEvidence。
 
 - 2026-11-20: 真实重启补测“Draft done、CI action 未建立”窗口：重启后经同一 Draft 续建 CI，creates=0、CI_PASSED、/accept 成功；/accept 证据校验含该窗口。
+
+- 2026-11-20: 远端 POST 前紧邻权限/状态 guard；GitHub createPullRequest 返回完整 PR 字段，Draft 初查/复查/创建响应/已存结果均校验 repo/base/head.ref/head.sha/draft；Loop no_task 增加质量门、发布后重读取消状态、重复通知不覆盖 cancelled/blocked。

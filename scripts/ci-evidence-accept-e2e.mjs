@@ -15,6 +15,7 @@ const REPO = process.cwd();
 const EVIDENCE_DIR = path.resolve(process.env.CI_EVIDENCE_DIR || 'demo/evidence/ci-evidence');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-ci-evidence-'));
 const worktree = path.join(root, 'wt'); const bare = path.join(root, 'github.com', 'fixture', 'repo.git');
+const remoteBranchSha=(b)=>{const r=spawnSync('git',['rev-parse',`refs/heads/${b}`],{cwd:bare,encoding:'utf8'});return (r.stdout||'').trim();};
 fs.mkdirSync(worktree, { recursive: true }); fs.mkdirSync(path.dirname(bare), { recursive: true });
 const git = (args, cwd = worktree) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
 git(['init', '-q', '-b', 'main']); git(['config', 'user.name', 'fixture']); git(['config', 'user.email', 'fixture@example.invalid']);
@@ -23,12 +24,12 @@ fs.writeFileSync(path.join(worktree, 'a.txt'), 'final\n'); git(['add', '-A']); g
 const runId = 'run_cievidence01'; const branch = `wb/plan-${runId.slice(-6)}`; git(['branch', branch, planHead]); git(['push', '-q', 'origin', branch]);
 let mode = 'green'; let foreign = false; let checkName = 'build'; let pendingOnce = false;
 const mock = http.createServer(async (req, res) => {
-  req.resume(); for await (const _ of req) { /* drain */ }
+  let bodyText=''; for await (const c of req) bodyText+=c;
   const u = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') return send(200, []);
-  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') return send(201, { number: 31, html_url: 'https://example.invalid/pr/31', state: 'open', draft: true });
+  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { const body=JSON.parse(bodyText||'{}'); return send(201, { number: 31, html_url: 'https://example.invalid/pr/31', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head) } }); }
   if (u.pathname === '/repos/fixture/repo/actions/runs') {
     const sha = u.searchParams.get('head_sha') || '';
     if (pendingOnce) { pendingOnce = false; return send(200, { workflow_runs: [{ id: 31, name: checkName, status: 'in_progress', conclusion: null, head_sha: sha, html_url: 'https://example.invalid/ci/31' }] }); }

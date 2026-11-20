@@ -2230,6 +2230,22 @@ export class Orchestrator {
     return last;
   }
 
+  validateDraftIdentity(pr, { owner, repo, baseBranch, planBranch, planHead }) {
+    const repoFull = pr?.base?.repo?.full_name || pr?.head?.repo?.full_name || '';
+    const baseRef = pr?.base?.ref || '';
+    const headRef = pr?.head?.ref || '';
+    const headSha = String(pr?.head?.sha || '');
+    if (!pr || !Number(pr.number)) return { ok: false, reason: '缺少 PR number' };
+    if (pr.state && pr.state !== 'open') return { ok: false, reason: `PR 状态 ${pr.state}` };
+    if (pr.draft !== true) return { ok: false, reason: 'PR 非 Draft' };
+    if (!repoFull) return { ok: false, reason: '缺少源/目标 repo 身份' };
+    if (repoFull !== `${owner}/${repo}`) return { ok: false, reason: `repo 身份不符 ${repoFull}` };
+    if (baseRef !== baseBranch) return { ok: false, reason: `base ref 不符 ${baseRef}` };
+    if (headRef !== planBranch) return { ok: false, reason: `head ref 不符 ${headRef}` };
+    if (headSha !== planHead) return { ok: false, reason: `head SHA 不符 ${headSha}` };
+    return { ok: true, pr: { number: pr.number, url: pr.html_url || pr.url || '', draft: true, state: 'open', repo: repoFull, base: baseBranch, head: planBranch, sha: planHead } };
+  }
+
   publishStillAuthorized(runId, projectId, expectedSha, stage = 'remote-write') {
     const project = this.store.getProject(projectId);
     const run = this.store.getRun(runId);
@@ -2331,26 +2347,29 @@ export class Orchestrator {
       const baseBranch = (await gh.getRepo(this.config, owner, repo))?.default_branch || project.default_branch || 'main';
       let prAction = this.store.listActions(run.id).find((a) => a.type === 'github-pr' && ['running', 'done'].includes(a.status));
       if (prAction?.status === 'done' && prAction.result_json?.pr) {
-        pr = prAction.result_json.pr;
-        const stored = prAction.payload_json || {};
-        if (pr.draft === false) throw new Error('GITHUB_DRAFT_IDENTITY_MISMATCH：已存 PR 不是 Draft');
-        if (pr.number && pr.head && pr.head !== planBranch) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：已存 PR head=${pr.head}`);
-        if (pr.base && pr.base !== baseBranch) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：已存 PR base=${pr.base}`);
-        if (pr.sha && pr.sha !== planHead) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：已存 PR sha=${pr.sha}`);
-        if (stored.owner && pr.owner && stored.owner !== pr.owner) throw new Error('GITHUB_DRAFT_IDENTITY_MISMATCH：repo owner');
+        // 已存结果不能自证身份：必须重新读取完整 PR 字段后再确认。
+        const full = await gh.getPullRequest(this.config, owner, repo, prAction.result_json.pr.number);
+        const verified = this.validateDraftIdentity(full, { owner, repo, baseBranch, planBranch, planHead });
+        if (!verified.ok) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：已存 Draft 复核失败 ${verified.reason}`);
+        pr = { ...verified.pr, recovered: true };
+        this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead, recovered: true, identityVerified: true } });
       } else {
         if (!prAction) prAction = this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-pr', status: 'running', payload: { owner, repo, head: planBranch, base: baseBranch, sha: planHead } });
         // 发布回执恢复：先按 head 查询已存在的 Draft；repo/base/head.sha 全部匹配才认领，避免重复 PR。
         const existing = await gh.findPullRequestByHead(this.config, owner, repo, planBranch);
-        const match = existing.find((x) => x?.state === 'open' && x?.draft === true && x?.base?.ref === baseBranch && x?.head?.ref === planBranch && String(x?.head?.sha || '') === planHead);
-        if (match) {
-          pr = { number: match.number, url: match.html_url, draft: true, head: planBranch, base: baseBranch, sha: planHead, recovered: true };
-          this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead, recovered: true } });
+        const validExisting = existing.map((x) => ({ raw: x, v: this.validateDraftIdentity(x, { owner, repo, baseBranch, planBranch, planHead }) })).find((x) => x.v.ok);
+        if (validExisting) {
+          pr = { ...validExisting.v.pr, recovered: true };
+          this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead, recovered: true, identityVerified: true } });
         } else if (existing.length) {
-          throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：head=${planBranch} 已有 PR 但非 Draft/head/base/SHA 与审计 SHA 不一致，拒绝重复创建`);
+          const reason = existing.map((x) => this.validateDraftIdentity(x, { owner, repo, baseBranch, planBranch, planHead }).reason).join('；');
+          throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：head=${planBranch} 已有 PR 但身份不符（${reason}），拒绝重复创建`);
         }
       }
       if (!pr) {
+        // GET/PR 查找之后、实际 POST 之前紧邻重读权限与状态。
+        const finalGuard = this.publishStillAuthorized(run.id, project.id, planHead, 'pre-draft-post');
+        if (!finalGuard.ok) throw new Error(finalGuard.reason);
         const plan = this.store.getPlan(run.plan_id);
         pr = await gh.createPullRequest(this.config, {
           owner, repo,
@@ -2360,10 +2379,9 @@ export class Orchestrator {
           body: this.buildPrBody(run, project, tasks, planHead),
           draft: true,
         });
-        if (!pr?.number || pr.draft === false || (pr.head?.ref && pr.head.ref !== planBranch) || (pr.base?.ref && pr.base.ref !== baseBranch) || (pr.head?.sha && String(pr.head.sha) !== planHead)) {
-          throw new Error('GITHUB_DRAFT_IDENTITY_MISMATCH：创建响应 repo/base/head/SHA/draft 校验失败，拒绝记作成功');
-        }
-        pr = { number: pr.number, url: pr.html_url || pr.url, draft: true, head: planBranch, base: baseBranch, sha: planHead };
+        const created = this.validateDraftIdentity(pr, { owner, repo, baseBranch, planBranch, planHead });
+        if (!created.ok) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：创建响应校验失败 ${created.reason}，拒绝记作成功`);
+        pr = created.pr;
         this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead } });
       }
       actions.push(this.store.getAction(prAction.id));

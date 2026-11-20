@@ -340,6 +340,7 @@ export class LoopManager {
           return;
         }
         await this.publishLoopFinal(loop, project);
+        if (!loopStillRunning(this.store, loop.id)) return;
         this.store.updateLoop(id, { status: 'completed', stop_reason: `已达到最大轮次 ${loop.max_rounds}，产品级验收 PASS` });
         this.emit(loop, 'loop_completed', `研发循环完成：${loop.round} 轮，产品级验收 PASS`);
         return;
@@ -382,6 +383,7 @@ export class LoopManager {
             return;
           }
           await this.publishLoopFinal(loop, project);
+          if (!loopStillRunning(this.store, loop.id)) return;
           this.store.updateLoop(id, { status: 'completed', stop_reason: '队列已空，产品级验收 PASS' });
           this.emit(loop, 'loop_completed', '研发循环完成：没有更多真实任务，产品级验收 PASS');
           return;
@@ -456,7 +458,15 @@ export class LoopManager {
               this.emit(loop, 'loop_blocked', reason, 'warn', { productAcceptance: product.audit || product });
               return;
             }
+            const qNoTask = qualityGateIncomplete(loop, project);
+            if (qNoTask) {
+              const reason = `Planner no_task 但质量门未完成：${qNoTask.reason}；不发布、不标记完成`;
+              this.store.updateLoop(id, { status: 'blocked', stop_reason: reason });
+              this.emit(loop, 'loop_blocked', reason, 'warn', { qualityGate: qNoTask });
+              return;
+            }
             await this.publishLoopFinal(loop, project);
+            if (!loopStillRunning(this.store, loop.id)) return;
             this.store.updateLoop(id, { status: 'completed', stop_reason: `Planner 未发现真实任务；产品级验收${product.required ? ' PASS' : '未配置（旧项目）'}` });
             this.emit(loop, 'loop_completed', `研发循环完成：没有新的真实任务；产品级验收${product.required ? ' PASS' : '未配置'}`);
             return;
@@ -749,6 +759,12 @@ export class LoopManager {
     // 幂等：同一 run/commit 不重复入历史，避免恢复后重复轮次/重复提交语义
     if (history.some((h) => h.runId === run.id || (task.head_commit && h.commit === task.head_commit))) {
       const qIncomplete = qualityGateIncomplete(loop, project);
+      const live = this.store.getLoop(loop.id);
+      if (live?.status === 'cancelled' || live?.status === 'blocked') {
+        this.store.updateLoop(loop.id, { current_run_id: '' });
+        this.emit(loop, 'loop_round_duplicate_skipped', `重复轮次通知但 Loop 已 ${live.status}，保留原状态`, 'warn');
+        return;
+      }
       const status = qIncomplete ? 'blocked' : (loop.round >= loop.max_rounds ? 'completed' : 'running');
       this.store.updateLoop(loop.id, { current_run_id: '', status, stop_reason: qIncomplete ? `重复轮次通知但质量门未完成：${qIncomplete.reason}` : '' });
       this.emit(loop, qIncomplete ? 'loop_blocked' : 'loop_round_duplicate_skipped', qIncomplete ? `重复轮次通知但质量门未完成，不标记 completed：${qIncomplete.reason}` : `检测到已完成轮次的重复通知，已跳过：${run.id}`, qIncomplete ? 'warn' : 'info');
@@ -910,7 +926,10 @@ export class LoopManager {
         stopReason = `已完成 ${nextRound} 轮，产品级验收 PASS${quality ? '，质量闭环通过' : ''}`;
       }
     }
-    if (nextStatus === 'completed') await this.publishLoopFinal(loop, project, { run });
+    if (nextStatus === 'completed') {
+      await this.publishLoopFinal(loop, project, { run });
+      if (!loopStillRunning(this.store, loop.id)) return;
+    }
     this.store.updateLoop(loop.id, { round: nextRound, current_run_id: '', history_json: history, status: nextStatus, stop_reason: stopReason });
     this.emit(loop, 'loop_round_completed', `第 ${nextRound}/${loop.max_rounds} 轮通过：${task.title || run.id}（${verification}，commit ${String(commit).slice(0, 8)}）`, 'info', { runId: run.id, commit, verification });
     if (nextStatus === 'completed') this.emit(loop, 'loop_completed', `研发循环完成：${nextRound} 轮${quality ? '，原始需求覆盖矩阵全部 PASS' : ''}`);
