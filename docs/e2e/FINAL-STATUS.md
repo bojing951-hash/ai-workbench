@@ -119,3 +119,8 @@
 - 发布使用 productPlanHead/verified_sha 的实际审计 SHA；未授权/未配置时不发布。
 - 原版 23/23、补充 7/7、npm test 419/419、宿主两轮产品 PASS（产品 SHA `ff0b824af2cf4a4b74f94a89e0aa05528b67c173`）。
 - 仍缺本地裸 Git/GitHub API 发布专项和两项 Docker。
+
+## a58f038 复审整改（2026-11-20）
+
+- `publishLoopFinal` 在终审写入后重新读取 Run，避免旧快照 productAcceptance 未更新导致最终 SHA 不发布；取消/失败 Run 拒绝发布。
+- 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺四项 Loop 终态专项与两项 Docker。

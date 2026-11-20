@@ -2224,6 +2224,7 @@ export class Orchestrator {
   async publishAcceptedRun(run, project, planHead, tasks = []) {
     const latest = this.store.getRun(run.id) || run;
     if (!latest || !planHead) return { blocked: ['缺少最终 SHA'], pr: null, localOnly: true, ci: null };
+    if ([RunStatus.CANCELLED, RunStatus.FAILED].includes(latest.status)) return { blocked: ['Run 已取消/失败，拒绝远端发布'], pr: null, localOnly: true, ci: null };
     if (String(this.store.getRun(run.id)?.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') {
       return { blocked: ['产品终审尚未 PASS，拒绝远端发布'], pr: null, localOnly: true, ci: null };
     }

@@ -543,9 +543,12 @@ export class LoopManager {
    */
   async publishLoopFinal(loop, project, { run = null } = {}) {
     const history = Array.isArray(loop.history_json) ? loop.history_json : [];
-    const latest = run || (loop.current_run_id ? this.store.getRun(loop.current_run_id) : null)
+    const candidate = run || (loop.current_run_id ? this.store.getRun(loop.current_run_id) : null)
       || history.slice().reverse().map((h) => h.runId ? this.store.getRun(h.runId) : null).find(Boolean);
+    // 终审刚写入 PASS 后必须重新读取 Run；调用方传入的 run 可能仍是终审前的旧快照。
+    const latest = candidate?.id ? this.store.getRun(candidate.id) : null;
     if (!latest || String(latest.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') return null;
+    if (latest.status === 'cancelled' || latest.status === 'failed') return null;
     const planHead = latest.result_json?.productPlanHead || latest.verified_sha || latest.result_json?.planHead || '';
     if (!planHead) return null;
     if (project.remote_push_authorized !== 1 || project.config_json?.publish === false) return null;
