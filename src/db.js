@@ -1235,6 +1235,10 @@ export class Store {
     return this.getAction(id);
   }
 
+  listOpenPublishActions() {
+    return this.db.prepare("SELECT * FROM actions WHERE type IN ('github-pr','github-push') AND status IN ('running','pending') ORDER BY created_at ASC").all().map((r) => parseRow(r, { payload_json: {}, result_json: {} }));
+  }
+
   listActions(runId) {
     return this.db
       .prepare('SELECT * FROM actions WHERE run_id = ? ORDER BY created_at ASC')

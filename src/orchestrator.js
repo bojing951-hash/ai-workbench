@@ -2757,6 +2757,35 @@ export class Orchestrator {
     return { recovered, blocked };
   }
 
+  async recoverPublishActions() {
+    const recovered = []; const blocked = [];
+    for (const action of this.store.listOpenPublishActions?.() || []) {
+      if (action.type !== 'github-pr') continue;
+      const run = this.store.getRun(action.run_id);
+      const project = run ? this.store.getProject(run.project_id) : null;
+      if (!run || !project) { blocked.push({ actionId: action.id, reason: 'run/project missing' }); continue; }
+      const payload = action.payload_json || {};
+      const sha = String(payload.sha || run.verified_sha || '');
+      if (!sha) { blocked.push({ actionId: action.id, reason: 'sha missing' }); continue; }
+      if (String(run.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') { blocked.push({ actionId: action.id, reason: 'product acceptance not PASS' }); continue; }
+      try {
+        const publish = await this.publishRun(run, project, String(payload.head || `wb/plan-${run.id.slice(-6)}`), sha, this.store.listTasks({ runId: run.id }));
+        const after = this.store.getRun(run.id);
+        const ciPassed = publish.ci?.status === 'passed' && String(publish.ci?.sha || '') === sha;
+        this.store.updateRun(run.id, {
+          result_json: { ...(after.result_json || {}), publishRecovered: true, publish, ci: publish.ci || null },
+          ci_status: publish.ci?.status || after.ci_status || '',
+          ci_url: publish.ci?.htmlUrl || after.ci_url || '',
+          verified_sha: sha,
+          verification_status: ciPassed ? 'CI_PASSED' : (publish.ci?.status === 'failed' ? 'CI_FAILED' : (after.verification_status || 'LOCAL_VERIFIED')),
+        });
+        if (publish.pr) recovered.push({ actionId: action.id, runId: run.id, pr: publish.pr.number, sha, recovered: !!publish.pr.recovered, ci: publish.ci?.status || null });
+        else blocked.push({ actionId: action.id, reason: publish.blocked?.join('；') || 'publish blocked' });
+      } catch (err) { blocked.push({ actionId: action.id, reason: String(err?.message || err).slice(0, 500) }); }
+    }
+    return { recovered, blocked };
+  }
+
   async adoptCommittedTask(run, task, project) {
     const v = task.verification_json && typeof task.verification_json === 'object' ? task.verification_json : {};
     if (!task.worktree_path || !v.testedHash || !v.auditId) return false;

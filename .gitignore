@@ -34,3 +34,5 @@ demo/evidence/loop-terminal/
 demo/evidence/github-publish/
 
 demo/evidence/docker-production-handoff/
+
+demo/evidence/github-restart-recovery/

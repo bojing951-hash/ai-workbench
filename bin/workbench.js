@@ -391,6 +391,13 @@ async function main() {
         }
       }
     }
+    try {
+      const publishRecovery = await orchestrator.recoverPublishActions();
+      if (publishRecovery.recovered.length) console.log(`[recover] 已认领 ${publishRecovery.recovered.length} 个未完成远端发布：${JSON.stringify(publishRecovery.recovered.slice(0, 5))}`);
+      if (publishRecovery.blocked.length) console.error(`[recover] BLOCKED：${publishRecovery.blocked.length} 个远端发布无法认领：${JSON.stringify(publishRecovery.blocked.slice(0, 5))}`);
+    } catch (err) {
+      console.error(`[recover] BLOCKED：远端发布恢复异常：${String(err?.message || err).slice(0, 500)}`);
+    }
     const recovered = orchestrator.recoverOrphans();
     const recoveredLoops = loops.recover();
     if (recoveredLoops.recovered?.length) console.log(`[recover] ${recoveredLoops.recovered.length} 个研发循环已标记中断`);

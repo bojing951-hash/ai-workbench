@@ -69,4 +69,5 @@ jobs:
             demo/evidence/docker-production-handoff
             demo/evidence/loop-terminal
             demo/evidence/github-publish
+            demo/evidence/github-restart-recovery
           if-no-files-found: error

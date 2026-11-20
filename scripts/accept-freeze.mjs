@@ -92,6 +92,22 @@ for (const group of groups) {
     results.push({ name: '6e-chat-upgrade-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/chat-upgrade/run.json' });
   }
 }
+// 真实 Supervisor/Workbench 重启后认领原 Draft：A 运行中持久化动作，杀死 A 后 B 启动恢复并 /accept。
+{
+  const run = spawnSync(process.execPath, ['scripts/github-restart-recovery-e2e.mjs'], { encoding: 'utf8', timeout: 240_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6i-github-restart-recovery', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1000) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/github-restart-recovery/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      ok = e.candidateSha === head && e.draft?.creates === 0 && e.draft?.recovered === true && e.ci?.status === 'CI_PASSED' && e.accepted?.status === 'accepted' && e.accepted?.sha === e.planHead;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6i-github-restart-recovery-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/github-restart-recovery/run.json' });
+  }
+}
 // 生产路径 Docker 交接：A 正式 REST/容器 writer，杀死 A 后 B 经 Supervisor cleanup/recovery 接管。
 {
   const run = spawnSync(process.execPath, ['scripts/docker-production-handoff-e2e.mjs'], { encoding: 'utf8', timeout: 360_000, maxBuffer: 32 * 1024 * 1024 });
