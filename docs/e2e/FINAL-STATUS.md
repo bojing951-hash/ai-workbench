@@ -137,3 +137,5 @@
 - CI 新增 Docker 冻结 Job，构建 runtime 镜像与确定性容器代理 fixture，上传同 SHA 验收证据。
 
 - 2026-11-20: `publishRun` 增加 Draft PR 回执恢复：按 head 查询已存在 PR，校验 repo/base/head.sha=审计 SHA 后认领；SHA 不符拒绝重复创建。
+
+- 2026-11-20: CI run 保留 headSha；`/ci-refresh` 仅在同 SHA 全部完成且成功时写 CI_PASSED，异 SHA 绿拒绝；发布恢复按 head/base/SHA 认领已有 Draft；新增回环 GitHub 发布/CI//accept 恢复专项。

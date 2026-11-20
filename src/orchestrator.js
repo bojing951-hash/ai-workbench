@@ -2233,11 +2233,13 @@ export class Orchestrator {
     const publish = await this.publishRun(latest, project, planBranch, planHead, projectTasks);
     const after = this.store.getRun(run.id);
     const next = this.store.getRun(run.id);
+    const ciPassed = publish.ci?.status === 'passed' && String(publish.ci?.sha || '') === String(planHead);
     this.store.updateRun(run.id, {
       result_json: { ...(after.result_json || {}), publish, ci: publish.ci || null, publishedAfterAcceptance: true, publishedAt: nowIso() },
       ci_status: publish.ci?.status || (next?.ci_status || ''),
       ci_url: publish.ci?.htmlUrl || (next?.ci_url || ''),
       verified_sha: planHead,
+      verification_status: ciPassed ? 'CI_PASSED' : (publish.ci?.status === 'failed' ? 'CI_FAILED' : (next?.verification_status || 'LOCAL_VERIFIED')),
     });
     this.emit({ runId: run.id, projectId: project.id, type: 'post_acceptance_publish', message: publish.pr?.url ? `产品终审 PASS 后已创建 Draft PR：${publish.pr.url}` : '产品终审 PASS 后的远端发布已处理', data: { publish } });
     return publish;
@@ -2388,9 +2390,17 @@ export class Orchestrator {
     const runs = await gh.listWorkflowRunsForSha(this.config, owner, repo, sha);
     const finished = runs.length > 0 && runs.every((r) => r.status === 'completed');
     const conclusion = finished ? (runs.every((r) => r.conclusion === 'success') ? 'success' : 'failure') : runs.length ? 'in_progress' : 'queued';
-    this.store.updateAction(ci.id, { status: finished ? 'done' : 'running', result: { conclusion, runs, checkedAt: nowIso() } });
-    this.emit({ runId, type: 'ci_update', message: `GitHub Actions 状态刷新：${conclusion}`, data: { conclusion } });
-    return { ok: true, conclusion, runs };
+    // 每个 CI run 必须与持久化动作绑定的 SHA 一致；异 SHA 的绿不得流入通过状态。
+    const mismatched = runs.filter((r) => String(r.headSha || r.head_sha || '') !== String(sha || ''));
+    const passed = finished && conclusion === 'success' && mismatched.length === 0 && String(run.verified_sha || '') === String(sha || '');
+    this.store.updateAction(ci.id, { status: finished ? 'done' : 'running', result: { conclusion, runs, checkedAt: nowIso(), requiredSha: sha, mismatched: mismatched.map((r) => r.headSha || r.head_sha || '') } });
+    if (run.status === RunStatus.AWAITING_ACCEPTANCE) {
+      if (passed) this.store.updateRun(runId, { verification_status: 'CI_PASSED', ci_status: 'passed', ci_checked_at: nowIso(), ci_url: runs.find((r) => r.html_url)?.html_url || '' });
+      else if (finished && (conclusion !== 'success' || mismatched.length)) this.store.updateRun(runId, { verification_status: 'CI_FAILED', ci_status: 'failed', ci_checked_at: nowIso() });
+      else if (!finished) this.store.updateRun(runId, { ci_status: conclusion, ci_checked_at: nowIso() });
+    }
+    this.emit({ runId, type: 'ci_update', message: `GitHub Actions 状态刷新：${conclusion}${mismatched.length ? '（存在异 SHA run，拒绝通过）' : ''}`, data: { conclusion, requiredSha: sha, mismatched: mismatched.map((r) => r.headSha || r.head_sha || '') } });
+    return { ok: true, conclusion, requiredSha: sha, mismatched: mismatched.map((r) => r.headSha || r.head_sha || ''), runs };
   }
 
   buildPrBody(run, project, tasks, planHead = '') {

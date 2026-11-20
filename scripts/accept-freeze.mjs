@@ -44,6 +44,22 @@ for (const group of groups) {
   if (!ok) hardFailure = true;
   results.push({ name: '6a-independent-b506', status: ok ? 'PASS' : 'FAIL', code: independent.status, output: `${independent.stdout || ''}${independent.stderr || ''}`.slice(-800) });
 }
+// GitHub 发布/CI/正式验收恢复：裸 Git + 回环 GitHub API，重复 Draft 创建=0。
+{
+  const run = spawnSync(process.execPath, ['scripts/github-publish-recovery-e2e.mjs'], { encoding: 'utf8', timeout: 180_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6g-github-publish-recovery', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1000) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/github-publish/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      ok = e.candidateSha === head && e.creates === 1 && e.ci?.conclusion === 'success' && e.acceptedSha === e.verifiedSha && e.action?.recovered === true && e.mismatchNegative?.blocked === true;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6g-github-publish-recovery-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/github-publish/run.json' });
+  }
+}
 // Loop 终态发布门控：裸 Git + 陈旧 Run 快照 + 终审失败/取消/ref 漂移零发布。
 {
   const run = spawnSync(process.execPath, ['scripts/loop-terminal-e2e.mjs'], { encoding: 'utf8', timeout: 120_000 });

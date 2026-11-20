@@ -30,3 +30,5 @@ demo/evidence/offline-e2e/
 demo/evidence/docker-handoff/
 demo/evidence/chat-upgrade/
 demo/evidence/loop-terminal/
+
+demo/evidence/github-publish/

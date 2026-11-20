@@ -136,6 +136,7 @@ export async function listWorkflowRunsForSha(config, owner, repo, sha) {
     conclusion: r.conclusion,
     htmlUrl: r.html_url,
     headBranch: r.head_branch,
+    headSha: r.head_sha || '',
     createdAt: r.created_at,
   }));
 }
