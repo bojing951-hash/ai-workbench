@@ -96,7 +96,7 @@ try{
  assert.equal(acc.status,200,JSON.stringify(acc));
  assert.equal(acc.data.data.status,'accepted');
  assert.equal(acc.data.data.result_json?.acceptedSha,finalRun.planHead);
- const candidateSha = spawnSync('git',['rev-parse','HEAD'],{cwd:process.cwd(),encoding:'utf8'}).stdout.trim();
+ const candidateSha = process.env.CANDIDATE_SHA || spawnSync('git',['rev-parse','HEAD'],{cwd:process.cwd(),encoding:'utf8'}).stdout.trim();
  const evidenceDir = path.resolve(process.env.LOOP_REST_EVIDENCE_DIR || 'demo/evidence/loop-rest-publish');
  fs.mkdirSync(evidenceDir,{recursive:true});
  fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-rest-publish',candidateSha,projectId,loopId,status:snap.status,round:snap.round,repairCount:snap.product_repair_count,bareRemote:bare,finalRunId:finalRun.id,finalSha:finalRun.planHead,bareHead,prCreates,prNumber:21,ciSha:bareHead,acceptedSha:acc.data.data.result_json?.acceptedSha,runIds:detailed.map(r=>r.id)},null,2));

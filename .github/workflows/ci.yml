@@ -72,4 +72,5 @@ jobs:
             demo/evidence/github-restart-recovery
             demo/evidence/loop-rest-publish
             demo/evidence/ci-evidence
+            demo/evidence/install-acceptance
           if-no-files-found: error

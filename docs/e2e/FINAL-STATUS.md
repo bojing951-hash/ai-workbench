@@ -147,3 +147,5 @@
 - 2026-11-20: 新增正式 REST+Supervisor+裸 Git+回环 GitHub 的 Loop 队列耗尽终态专项：产品两轮自动修复后只发布审计 SHA、裸库 ref 命中、单 Draft、同 SHA CI 绿、正式 /accept 成功。
 
 - 2026-11-20: 同 SHA CI 证据统一入 run.result_json.ciEvidence；首次轮询/刷新/重启恢复共用 evaluateCiEvidence；/accept 要求证据 SHA=verified_sha 且无缺检查/异 SHA；发布按审计提交对象推送并复核远端 ref；恢复覆盖分支已推未建 Draft、Draft 丢回执、Draft 已记录 CI 未完成三窗口。
+
+- 2026-11-20: 固定候选干净环境安装验收：HEAD 导出→npm install→启动→首个项目/Draft→CI→/accept，并接入 accept:freeze 与 CI 附件。

@@ -92,6 +92,22 @@ for (const group of groups) {
     results.push({ name: '6e-chat-upgrade-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/chat-upgrade/run.json' });
   }
 }
+// 固定候选干净环境安装：HEAD 导出 → npm install → 启动 → 首个项目/Draft → CI → /accept。
+{
+  const run = spawnSync(process.execPath, ['scripts/install-acceptance-e2e.mjs'], { encoding: 'utf8', timeout: 360_000, maxBuffer: 32 * 1024 * 1024 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6l-install-acceptance', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1200) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/install-acceptance/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      ok = e.candidateSha === head && e.installExitCode === 0 && e.firstDraft?.creates === 1 && e.acceptedSha === e.finalSha && e.packageVersion === '3.3.0';
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6l-install-acceptance-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/install-acceptance/run.json' });
+  }
+}
 // 同 SHA CI 统一证据与 /accept：绿/红/待定转绿/缺必需检查/异 SHA/历史无证据 + 审计 SHA 推送源。
 {
   const run = spawnSync(process.execPath, ['scripts/ci-evidence-accept-e2e.mjs'], { encoding: 'utf8', timeout: 240_000 });
