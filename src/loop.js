@@ -339,8 +339,9 @@ export class LoopManager {
           this.emit(loop, 'loop_blocked', reason, 'warn', { qualityGate: qIncomplete });
           return;
         }
-        await this.publishLoopFinal(loop, project);
+        const deliveredR = await this.publishLoopFinal(loop, project);
         if (!loopStillRunning(this.store, loop.id)) return;
+        if (project.remote_push_authorized === 1 && !deliveredR) { const reason = '达到轮次上限但远端发布未完成；保留非完成状态'; this.store.updateLoop(id, { status: 'blocked', stop_reason: reason }); this.emit(loop, 'loop_blocked', reason, 'warn'); return; }
         this.store.updateLoop(id, { status: 'completed', stop_reason: `已达到最大轮次 ${loop.max_rounds}，产品级验收 PASS` });
         this.emit(loop, 'loop_completed', `研发循环完成：${loop.round} 轮，产品级验收 PASS`);
         return;
@@ -382,8 +383,9 @@ export class LoopManager {
             this.emit(loop, 'loop_blocked', reason, 'warn', { qualityGate: qIncomplete });
             return;
           }
-          await this.publishLoopFinal(loop, project);
+          const deliveredQ = await this.publishLoopFinal(loop, project);
           if (!loopStillRunning(this.store, loop.id)) return;
+          if (project.remote_push_authorized === 1 && !deliveredQ) { const reason = '队列已空但远端发布未完成；保留非完成状态'; this.store.updateLoop(id, { status: 'blocked', stop_reason: reason }); this.emit(loop, 'loop_blocked', reason, 'warn'); return; }
           this.store.updateLoop(id, { status: 'completed', stop_reason: '队列已空，产品级验收 PASS' });
           this.emit(loop, 'loop_completed', '研发循环完成：没有更多真实任务，产品级验收 PASS');
           return;
@@ -465,8 +467,9 @@ export class LoopManager {
               this.emit(loop, 'loop_blocked', reason, 'warn', { qualityGate: qNoTask });
               return;
             }
-            await this.publishLoopFinal(loop, project);
+            const delivered = await this.publishLoopFinal(loop, project);
             if (!loopStillRunning(this.store, loop.id)) return;
+            if (project.remote_push_authorized === 1 && !delivered) { const reason = '产品/质量门通过但远端发布未完成；保留非完成状态'; this.store.updateLoop(id, { status: 'blocked', stop_reason: reason }); this.emit(loop, 'loop_blocked', reason, 'warn'); return; }
             this.store.updateLoop(id, { status: 'completed', stop_reason: `Planner 未发现真实任务；产品级验收${product.required ? ' PASS' : '未配置（旧项目）'}` });
             this.emit(loop, 'loop_completed', `研发循环完成：没有新的真实任务；产品级验收${product.required ? ' PASS' : '未配置'}`);
             return;
@@ -571,7 +574,14 @@ export class LoopManager {
       this.emit(loop, 'post_acceptance_publish_blocked', `发布前 SHA 核对失败：ref=${refSha || 'missing'} audit=${planHead}`, 'warn', { planHead, refSha });
       return null;
     }
-    try { return await this.orchestrator.publishAcceptedRun(latest, project, planHead, this.store.listTasks({ runId: latest.id })); }
+    try {
+      const publish = await this.orchestrator.publishAcceptedRun(latest, project, planHead, this.store.listTasks({ runId: latest.id }));
+      if (publish?.blocked?.length || !publish?.pr) {
+        this.emit(loop, 'post_acceptance_publish_blocked', `产品终审/质量门通过后远端发布未完成：${publish?.blocked?.join('；') || '无 Draft'}`, 'warn', { planHead });
+        return null;
+      }
+      return publish;
+    }
     catch (err) { this.emit(loop, 'post_acceptance_publish_failed', `产品终审/质量门通过后发布失败：${err.message}`, 'warn', { planHead }); return null; }
   }
 
@@ -927,8 +937,9 @@ export class LoopManager {
       }
     }
     if (nextStatus === 'completed') {
-      await this.publishLoopFinal(loop, project, { run });
+      const deliveredF = await this.publishLoopFinal(loop, project, { run });
       if (!loopStillRunning(this.store, loop.id)) return;
+      if (project.remote_push_authorized === 1 && !deliveredF) { nextStatus = 'blocked'; stopReason = '末轮完成但远端发布未完成；保留非完成状态'; }
     }
     this.store.updateLoop(loop.id, { round: nextRound, current_run_id: '', history_json: history, status: nextStatus, stop_reason: stopReason });
     this.emit(loop, 'loop_round_completed', `第 ${nextRound}/${loop.max_rounds} 轮通过：${task.title || run.id}（${verification}，commit ${String(commit).slice(0, 8)}）`, 'info', { runId: run.id, commit, verification });

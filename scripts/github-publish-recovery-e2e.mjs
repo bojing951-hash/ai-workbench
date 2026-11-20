@@ -31,6 +31,7 @@ const runId = 'run_ghpub00001'; const branch = `wb/plan-${runId.slice(-6)}`;
 git(['branch', branch, planHead]);
 git(['push', '-q', 'origin', branch]);
 let pulls = 0; let creates = 0; let existingSha = planHead; let draftExists = false; let draftCreated = 0; let ciShaOverride = ''; let existingDraft = true;
+let delayNextPull = false; let releasePull = null; let pullStartedResolve = null; let pullStarted = Promise.resolve();
 const mock = http.createServer(async (req, res) => {
   let bodyText='';
   for await (const c of req) bodyText+=c;
@@ -39,6 +40,7 @@ const mock = http.createServer(async (req, res) => {
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') {
     pulls += 1;
+    if (delayNextPull) { delayNextPull = false; if (pullStartedResolve) pullStartedResolve(); await new Promise((r) => { releasePull = r; }); }
     if (!draftExists) return send(200, []);
     const qhead = String(u.searchParams.get('head') || 'fixture:');
     const ref = qhead.includes(':') ? qhead.slice(qhead.indexOf(':') + 1) : qhead;
@@ -119,6 +121,19 @@ try {
   assert.equal(creates, 1, 'mismatch must not create a Draft');
   assert.notEqual(store.getRun(run2.id).status, 'accepted');
   existingSha = planHead;
+  // 3a) 慢 GET 后撤权：实际 Draft POST 前紧邻 guard 必须阻断。
+  const run5 = store.createRun({ id: 'run_ghpub00005', projectId: project.id, planId: plan.id, goal: 'revoke-gap', status: 'awaiting_acceptance', verificationStatus: 'LOCAL_VERIFIED' });
+  const branch5 = `wb/plan-${run5.id.slice(-6)}`; git(['branch', branch5, planHead]);
+  store.updateRun(run5.id, { verified_sha: planHead, result_json: { planHead, productAcceptance: 'PASS', productPlanHead: planHead } });
+  draftExists = false; delayNextPull = true; pullStarted = new Promise((r) => { pullStartedResolve = r; });
+  const publishPromise = orch.publishRun(store.getRun(run5.id), project, branch5, planHead, []);
+  await pullStarted;
+  store.db.prepare('UPDATE projects SET remote_push_authorized=0 WHERE id=?').run(project.id);
+  releasePull(); const revoked = await publishPromise;
+  assert.ok(revoked.blocked.length > 0, 'revoked during GET must block before POST');
+  assert.equal(creates, 1, 'revoked during GET must not create Draft');
+  store.db.prepare('UPDATE projects SET remote_push_authorized=1 WHERE id=?').run(project.id);
+  draftExists = true;
   // 3b) 已存在 PR 非 Draft：拒绝认领、零创建。
   const run4 = store.createRun({ id: 'run_ghpub00004', projectId: project.id, planId: plan.id, goal: 'nondraft', status: 'awaiting_acceptance', verificationStatus: 'LOCAL_VERIFIED' });
   const branch4 = `wb/plan-${run4.id.slice(-6)}`; git(['branch', branch4, planHead]);
@@ -133,7 +148,7 @@ try {
     kind: 'github-publish-ci-accept-recovery', creates: draftCreated, candidateSha: git(['rev-parse', 'HEAD'], REPO), runId, verifiedSha: planHead,
     pushRef: { branch, sha: git(['rev-parse', `refs/heads/${branch}`]) }, bareRemoteRef: git(['rev-parse', `refs/heads/${branch}`], bare),
     draft: { recovered: true, number: 7, creates, pulls, expectedOne: draftCreated === 1 }, ci: { conclusion: refreshed.conclusion, requiredSha: refreshed.requiredSha, mismatched: refreshed.mismatched }, acceptedSha: accepted.result_json.acceptedSha,
-    mismatchNegative: { blocked: true, creates }, nonDraftRejected: { blocked: true, creates },
+    mismatchNegative: { blocked: true, creates }, nonDraftRejected: { blocked: true, creates }, revokedDuringGet: { blocked: true, creates },
     action: { status: action.status, recovered: action.result_json?.recovered, sha: action.result_json?.sha }, at: new Date().toISOString(),
   };
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true }); fs.writeFileSync(path.join(EVIDENCE_DIR, 'run.json'), JSON.stringify(evidence, null, 2));
