@@ -339,6 +339,7 @@ export class LoopManager {
           this.emit(loop, 'loop_blocked', reason, 'warn', { qualityGate: qIncomplete });
           return;
         }
+        await this.publishLoopFinal(loop, project);
         this.store.updateLoop(id, { status: 'completed', stop_reason: `已达到最大轮次 ${loop.max_rounds}，产品级验收 PASS` });
         this.emit(loop, 'loop_completed', `研发循环完成：${loop.round} 轮，产品级验收 PASS`);
         return;
@@ -380,6 +381,7 @@ export class LoopManager {
             this.emit(loop, 'loop_blocked', reason, 'warn', { qualityGate: qIncomplete });
             return;
           }
+          await this.publishLoopFinal(loop, project);
           this.store.updateLoop(id, { status: 'completed', stop_reason: '队列已空，产品级验收 PASS' });
           this.emit(loop, 'loop_completed', '研发循环完成：没有更多真实任务，产品级验收 PASS');
           return;
@@ -454,6 +456,7 @@ export class LoopManager {
               this.emit(loop, 'loop_blocked', reason, 'warn', { productAcceptance: product.audit || product });
               return;
             }
+            await this.publishLoopFinal(loop, project);
             this.store.updateLoop(id, { status: 'completed', stop_reason: `Planner 未发现真实任务；产品级验收${product.required ? ' PASS' : '未配置（旧项目）'}` });
             this.emit(loop, 'loop_completed', `研发循环完成：没有新的真实任务；产品级验收${product.required ? ' PASS' : '未配置'}`);
             return;
@@ -538,6 +541,18 @@ export class LoopManager {
    * 产品级验收：所有计划任务结束后，在最终 Commit 上重新独立审计全部冻结条款。
    * 历史任务 PASS 只能作为累积证据，最终必须针对最终 Git SHA 重新确认。
    */
+  async publishLoopFinal(loop, project, { run = null } = {}) {
+    const history = Array.isArray(loop.history_json) ? loop.history_json : [];
+    const latest = run || (loop.current_run_id ? this.store.getRun(loop.current_run_id) : null)
+      || history.slice().reverse().map((h) => h.runId ? this.store.getRun(h.runId) : null).find(Boolean);
+    if (!latest || String(latest.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') return null;
+    const planHead = latest.result_json?.productPlanHead || latest.verified_sha || latest.result_json?.planHead || '';
+    if (!planHead) return null;
+    if (project.remote_push_authorized !== 1 || project.config_json?.publish === false) return null;
+    try { return await this.orchestrator.publishAcceptedRun(latest, project, planHead, this.store.listTasks({ runId: latest.id })); }
+    catch (err) { this.emit(loop, 'post_acceptance_publish_failed', `产品终审/质量门通过后发布失败：${err.message}`, 'warn', { planHead }); return null; }
+  }
+
   async productGate(loop, project, { run = null, task = null, baseCommit = '', allowRepair = true } = {}) {
     let expected = safeJsonArray(project?.config_json?.test_plan?.acceptance || project?.config_json?.test_plan?.acceptance_json || []);
     if (!expected.length && project?.local_path) {
@@ -578,14 +593,8 @@ export class LoopManager {
           verification_status: latestRun.verification_status || 'LOCAL_VERIFIED',
         });
       }
-      let publish = null;
-      const publishAllowed = project.remote_push_authorized === 1 && project.config_json?.publish !== false;
-      if (publishAllowed && latestRun && typeof this.orchestrator?.publishAcceptedRun === 'function') {
-        try { publish = await this.orchestrator.publishAcceptedRun(latestRun, project, planHead, this.store.listTasks({ runId: latestRun.id })); }
-        catch (err) { this.emit(loop, 'post_acceptance_publish_failed', `产品终审 PASS 后发布失败：${err.message}`, 'warn', { planHead }); }
-      }
-      this.emit(loop, 'product_acceptance_passed', `产品级验收 PASS：${expected.length} 条冻结条款在最终 Commit ${planHead.slice(0, 8)} 有独立审计证据`, 'info', { planHead, auditId: audit.auditRow?.id || '', publish });
-      return { ok: true, required: true, audit, planHead, publish };
+      this.emit(loop, 'product_acceptance_passed', `产品级验收 PASS：${expected.length} 条冻结条款在最终 Commit ${planHead.slice(0, 8)} 有独立审计证据`, 'info', { planHead, auditId: audit.auditRow?.id || '' });
+      return { ok: true, required: true, audit, planHead, latestRun };
     }
     // 只有可判定的产品缺陷才排修复；缺 SHA、缺证据、审计不可用/UNKNOWN 必须阻断，不能增加修复计数。
     const auditStatus = String(audit?.status || (audit?.verdict === 'pass' ? 'PASS' : 'UNKNOWN')).toUpperCase();
@@ -889,6 +898,7 @@ export class LoopManager {
         stopReason = `已完成 ${nextRound} 轮，产品级验收 PASS${quality ? '，质量闭环通过' : ''}`;
       }
     }
+    if (nextStatus === 'completed') await this.publishLoopFinal(loop, project, { run });
     this.store.updateLoop(loop.id, { round: nextRound, current_run_id: '', history_json: history, status: nextStatus, stop_reason: stopReason });
     this.emit(loop, 'loop_round_completed', `第 ${nextRound}/${loop.max_rounds} 轮通过：${task.title || run.id}（${verification}，commit ${String(commit).slice(0, 8)}）`, 'info', { runId: run.id, commit, verification });
     if (nextStatus === 'completed') this.emit(loop, 'loop_completed', `研发循环完成：${nextRound} 轮${quality ? '，原始需求覆盖矩阵全部 PASS' : ''}`);

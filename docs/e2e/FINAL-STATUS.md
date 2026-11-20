@@ -112,3 +112,10 @@
 - 删除 finalizeRun 的旧 OR 发布分支；Loop 中间 Run 只本地提交/验证，产品终审 PASS 后由 publishAcceptedRun 发布同一 SHA。
 - 发布已开始后取消：保留取消状态和已发生动作，不覆盖为 awaiting_acceptance。
 - 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺 Docker 两项及裸 Git/GitHub 发布专项实测。
+
+## 52e8884 复审整改（2026-11-20）
+
+- productGate 只做产品终审并记录 PASS；实际远端发布移至队列耗尽/轮次上限/Planner no_task/任务完成四个终态的质量门之后，共用 publishLoopFinal。
+- 发布使用 productPlanHead/verified_sha 的实际审计 SHA；未授权/未配置时不发布。
+- 原版 23/23、补充 7/7、npm test 419/419、宿主两轮产品 PASS（产品 SHA `ff0b824af2cf4a4b74f94a89e0aa05528b67c173`）。
+- 仍缺本地裸 Git/GitHub API 发布专项和两项 Docker。
