@@ -64,6 +64,12 @@ async function startWriterRun(port, root, worktree, name) {
   assert.equal(loop.status, 201, JSON.stringify(loop)); const loopId = loop.data.data.id;
   const end = Date.now() + 90_000; let id = '';
   while (Date.now() < end) { id = dockerIdByProject(projectId); if (id) break; await sleep(300); }
+  if (!id) {
+    const ps = docker(['ps', '-a', '--filter', 'label=ai-workbench.container=1', '--format', '{{.ID}} {{.Status}} {{.Label "ai-workbench.project-id"}}']);
+    let log = ''; try { log = fs.readFileSync(path.join(root, 'supervisor-A.log'), 'utf8'); } catch { /* ignore */ }
+    fs.writeFileSync(path.join(root, 'writer-failure.txt'), `${ps.stdout || ''}\n${ps.stderr || ''}\n--- log ---\n${log}`);
+    throw new Error('生产容器 writer 未启动\n' + (ps.stdout || '') + (ps.stderr || '') + '\n--- supervisor ---\n' + log.slice(-4000));
+  }
   assert.ok(id, '生产容器 writer 未启动');
   const info = containerInfo(id); assert.ok(info && info.running);
   assert.ok(info.workspace, '容器 workspace 挂载点缺失');
