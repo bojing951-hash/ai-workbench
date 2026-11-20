@@ -54,21 +54,31 @@ function prepareRoot(tag) {
   const worktree = path.join(root, 'product'); fs.mkdirSync(worktree);
   const git = (args) => { const r = spawnSync('git', args, { cwd: worktree, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   git(['init', '-q', '-b', 'main']); git(['config', 'user.name', 'fixture']); git(['config', 'user.email', 'fixture@example.invalid']);
-  fs.writeFileSync(path.join(worktree, 'README.md'), '# writer\n'); git(['add', '-A']); git(['commit', '-qm', 'base']);
+  fs.mkdirSync(path.join(worktree, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(worktree, 'README.md'), '# writer\n');
+  fs.writeFileSync(path.join(worktree, 'TEST_PLAN.json'), JSON.stringify({ acceptance: ['持续 writer 写入'] }));
+  fs.writeFileSync(path.join(worktree, 'tests/product.test.cjs'), "const {test}=require('node:test');const assert=require('node:assert/strict');test('writer exists',()=>assert.ok(require('node:fs').existsSync('writer-writes')));\n");
+  git(['add', '-A']); git(['commit', '-qm', 'base']);
   return { root, worktree, git };
 }
 async function startWriterRun(port, root, worktree, name) {
-  const reg = await api(port, 'prod-handoff-token', 'POST', '/api/projects', { name, repo: worktree, defaultBranch: 'main', testCommand: 'true', agentKind: 'claude', agentIsolation: 'docker', auditProvider: 'openai', ciRequired: false, supervisorManaged: true, contractFiles: [], testPlan: { acceptance: [] }, publish: false, allowLocalAcceptance: true });
+  const reg = await api(port, 'prod-handoff-token', 'POST', '/api/projects', { name, repo: worktree, defaultBranch: 'main', testCommand: 'node --test tests/product.test.cjs', agentKind: 'claude', agentIsolation: 'docker', auditProvider: 'openai', ciRequired: false, supervisorManaged: true, contractFiles: ['TEST_PLAN.json'], testPlan: { acceptance: ['持续 writer 写入'] }, publish: false, allowLocalAcceptance: true });
   assert.equal(reg.status, 201, JSON.stringify(reg)); const projectId = reg.data.data.id;
-  const loop = await api(port, 'prod-handoff-token', 'POST', `/api/projects/${projectId}/loops`, { goal: '持续写入直到被清理停止', mode: 'queue', maxRounds: 1, queue: [{ title: '持续 writer', description: 'writer', agent: 'claude', acceptance: ['写入'], testCommand: 'true' }] });
+  const loop = await api(port, 'prod-handoff-token', 'POST', `/api/projects/${projectId}/loops`, { goal: '持续写入直到被清理停止', mode: 'queue', maxRounds: 1, queue: [{ title: '持续 writer', description: 'writer', agent: 'claude', acceptance: ['持续 writer 写入'], testCommand: 'node --test tests/product.test.cjs' }] });
   assert.equal(loop.status, 201, JSON.stringify(loop)); const loopId = loop.data.data.id;
-  const end = Date.now() + 90_000; let id = '';
-  while (Date.now() < end) { id = dockerIdByProject(projectId); if (id) break; await sleep(300); }
+  const end = Date.now() + 90_000; let id = ''; let lastState = null;
+  while (Date.now() < end) {
+    id = dockerIdByProject(projectId);
+    if (id) break;
+    try { const st = await api(port, 'prod-handoff-token', 'GET', `/api/loops/${loopId}`); lastState = st.data?.data; } catch { /* ignore */ }
+    if (lastState && ['blocked', 'paused', 'completed', 'cancelled'].includes(lastState.status)) break;
+    await sleep(300);
+  }
   if (!id) {
     const ps = docker(['ps', '-a', '--filter', 'label=ai-workbench.container=1', '--format', '{{.ID}} {{.Status}} {{.Label "ai-workbench.project-id"}}']);
     let log = ''; try { log = fs.readFileSync(path.join(root, 'supervisor-A.log'), 'utf8'); } catch { /* ignore */ }
     fs.writeFileSync(path.join(root, 'writer-failure.txt'), `${ps.stdout || ''}\n${ps.stderr || ''}\n--- log ---\n${log}`);
-    throw new Error('生产容器 writer 未启动\n' + (ps.stdout || '') + (ps.stderr || '') + '\n--- supervisor ---\n' + log.slice(-4000));
+    throw new Error('生产容器 writer 未启动\n' + (ps.stdout || '') + (ps.stderr || '') + '\n--- loop ---\n' + JSON.stringify(lastState || {}) + '\n--- supervisor ---\n' + log.slice(-4000));
   }
   assert.ok(id, '生产容器 writer 未启动');
   const info = containerInfo(id); assert.ok(info && info.running);
