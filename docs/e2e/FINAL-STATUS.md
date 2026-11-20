@@ -159,3 +159,5 @@
 - 2026-11-20: 远端 POST 前紧邻权限/状态 guard；GitHub createPullRequest 返回完整 PR 字段，Draft 初查/复查/创建响应/已存结果均校验 repo/base/head.ref/head.sha/draft；Loop no_task 增加质量门、发布后重读取消状态、重复通知不覆盖 cancelled/blocked。
 
 - 2026-11-20: 慢 GET 后撤权回归：GET 挂起期间 REST/DB 撤权，Draft POST 前 guard 阻断，POST=0；Loop 远端发布被阻断时保留 blocked 而非 completed。
+
+- 2026-11-20: Docker 清理失败证据记录 B 的 Run 状态并允许 BLOCKED/暂停或 B 不健康两种正式阻断形态，不再以 healthB 布尔单一条件误判。

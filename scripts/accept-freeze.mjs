@@ -168,7 +168,7 @@ for (const group of groups) {
       const e = JSON.parse(fs.readFileSync('demo/evidence/docker-production-handoff/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
       const n = e.scenarios?.normal || {}; const c = e.scenarios?.cleanupFailure || {};
-      ok = e.candidateSha === head && n.oldStillAliveAfterAKill === true && n.ordering?.oldExitBeforeNewFirstWrite === true && Number(n.b?.fence) > Number(n.a?.fence) && n.a?.container?.labels?.['ai-workbench.run-id'] === n.b?.container?.labels?.['ai-workbench.run-id'] && c.blocked === true && c.healthB === false && c.secondWriterWrites === 0 && c.oldContainerStillRunning === true;
+      ok = e.candidateSha === head && n.oldStillAliveAfterAKill === true && n.ordering?.oldExitBeforeNewFirstWrite === true && Number(n.b?.fence) > Number(n.a?.fence) && n.a?.container?.labels?.['ai-workbench.run-id'] === n.b?.container?.labels?.['ai-workbench.run-id'] && c.blocked === true && c.secondWriterWrites === 0 && c.oldContainerStillRunning === true && (c.healthB === false || ['paused','blocked'].includes(c.runStatus));
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6h-docker-production-handoff-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/docker-production-handoff/run.json' });

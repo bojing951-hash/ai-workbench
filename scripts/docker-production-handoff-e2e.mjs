@@ -175,7 +175,9 @@ fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   const writes = fs.readFileSync(path.join(w.agentWorktree, 'writer-writes'), 'utf8').trim().split('\n').filter(Boolean);
   const secondHostWrites = writes.filter((l) => l.split('-')[0] !== oldHost);
   assert.equal(secondHostWrites.length, 0, '清理失败时不得有第二 writer 写入');
-  evidence.scenarios.cleanupFailure = { supervisorLog: path.relative(EVIDENCE_DIR, B.log), wrapper, healthB, newContainer: newId || null, oldContainerStillRunning: !!containerInfo(w.containerId)?.running, secondWriterWrites: secondHostWrites.length, blocked };
+  let runStatus = 'unknown';
+  if (healthB) { try { const st = await api(portB, 'prod-handoff-token', 'GET', `/api/runs/${w.runId}`); runStatus = st.data?.data?.status || 'unknown'; } catch { /* ignore */ } }
+  evidence.scenarios.cleanupFailure = { supervisorLog: path.relative(EVIDENCE_DIR, B.log), wrapper, healthB, runStatus, newContainer: newId || null, oldContainerStillRunning: !!containerInfo(w.containerId)?.running, secondWriterWrites: secondHostWrites.length, blocked };
   try { B.sup.kill('SIGKILL'); } catch { /* ignore */ }
   try { const s = JSON.parse(fs.readFileSync(path.join(root, 'data/supervisor/state.json'), 'utf8')); if (s.childPid) process.kill(s.childPid, 'SIGKILL'); } catch { /* ignore */ }
   docker(['rm', '-f', w.containerId]);
