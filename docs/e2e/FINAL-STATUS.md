@@ -143,3 +143,5 @@
 - 2026-11-20: 新增生产路径 Docker 交接专项：A 经正式 REST→Loop→容器适配器持续 writer，杀死 Supervisor+子进程后旧容器仍存活；B 启动走 cleanup/recovery，fence 1→3，旧容器退出早于新 writer 首写；B 清理失败时 BLOCKED 且零第二 writer。
 
 - 2026-11-20: 新增真实 Supervisor/Workbench 重启恢复专项：A 运行中持久化 github-pr running 动作；杀死 A 后 B 启动 `recoverPublishActions` 认领原 Draft（creates=0），同 SHA CI 进入 CI_PASSED，正式 `/accept` 成功。
+
+- 2026-11-20: 新增正式 REST+Supervisor+裸 Git+回环 GitHub 的 Loop 队列耗尽终态专项：产品两轮自动修复后只发布审计 SHA、裸库 ref 命中、单 Draft、同 SHA CI 绿、正式 /accept 成功。

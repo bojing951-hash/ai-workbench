@@ -92,6 +92,22 @@ for (const group of groups) {
     results.push({ name: '6e-chat-upgrade-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/chat-upgrade/run.json' });
   }
 }
+// 正式 REST+Supervisor+裸 Git+回环 GitHub：Loop 队列耗尽终态只发布审计 SHA、单 Draft、同 SHA CI、/accept。
+{
+  const run = spawnSync(process.execPath, ['scripts/loop-rest-publish-e2e.mjs'], { encoding: 'utf8', timeout: 240_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6j-loop-rest-publish', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1000) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/loop-rest-publish/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      ok = e.candidateSha === head && e.status === 'completed' && e.bareHead === e.finalSha && e.prCreates === 1 && e.acceptedSha === e.finalSha;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6j-loop-rest-publish-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-rest-publish/run.json' });
+  }
+}
 // 真实 Supervisor/Workbench 重启后认领原 Draft：A 运行中持久化动作，杀死 A 后 B 启动恢复并 /accept。
 {
   const run = spawnSync(process.execPath, ['scripts/github-restart-recovery-e2e.mjs'], { encoding: 'utf8', timeout: 240_000 });
