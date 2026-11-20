@@ -92,6 +92,23 @@ for (const group of groups) {
     results.push({ name: '6e-chat-upgrade-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/chat-upgrade/run.json' });
   }
 }
+// 生产路径 Docker 交接：A 正式 REST/容器 writer，杀死 A 后 B 经 Supervisor cleanup/recovery 接管。
+{
+  const run = spawnSync(process.execPath, ['scripts/docker-production-handoff-e2e.mjs'], { encoding: 'utf8', timeout: 360_000, maxBuffer: 32 * 1024 * 1024 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6h-docker-production-handoff', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1200) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/docker-production-handoff/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      const n = e.scenarios?.normal || {}; const c = e.scenarios?.cleanupFailure || {};
+      ok = e.candidateSha === head && n.oldStillAliveAfterAKill === true && n.ordering?.oldExitBeforeNewFirstWrite === true && Number(n.b?.fence) > Number(n.a?.fence) && n.a?.container?.labels?.['ai-workbench.run-id'] === n.b?.container?.labels?.['ai-workbench.run-id'] && c.blocked === true && c.healthB === false && c.secondWriterWrites === 0 && c.oldContainerStillRunning === true;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6h-docker-production-handoff-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/docker-production-handoff/run.json' });
+  }
+}
 // 真实 Docker 两项专项：每次冻结都实际执行，不接受手填摘要或仅 daemon 在线。
 for (const spec of [
   { name: '6c-docker-two-process-handoff', script: 'scripts/docker-handoff-e2e.mjs', evidence: 'demo/evidence/docker-handoff/run.json' },

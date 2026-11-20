@@ -49,8 +49,10 @@ jobs:
       - name: Build runtime image
         run: docker build -t ai-workbench-runtime:2.2 -f docker/runtime.Dockerfile .
 
-      - name: Build deterministic container-agent fixture
-        run: docker build -t ai-workbench-e2e:fixture tests/fixtures/docker-e2e
+      - name: Build deterministic container-agent fixtures
+        run: |
+          docker build -t ai-workbench-e2e:fixture tests/fixtures/docker-e2e
+          docker build -t ai-workbench-e2e:longwriter tests/fixtures/docker-longwriter
 
       - name: Freeze acceptance (real Docker + Chat upgrade + Loop + regressions)
         run: npm run accept:freeze
@@ -64,6 +66,7 @@ jobs:
             demo/evidence/offline-e2e
             demo/evidence/docker-handoff
             demo/evidence/chat-upgrade
+            demo/evidence/docker-production-handoff
             demo/evidence/loop-terminal
             demo/evidence/github-publish
           if-no-files-found: error
