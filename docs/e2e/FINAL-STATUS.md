@@ -129,3 +129,9 @@
 
 - publishLoopFinal 发布前统一核对 live Loop 状态、审计 SHA 与实际 wb/plan ref；不一致零发布。
 - 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺四条终态裸 Git/GitHub 专项与两项 Docker。
+
+## 5d6741b 冻结专项接入（2026-11-20）
+
+- 新增真实 Docker 双进程交接专项、真实容器两轮产品 E2E、fc5fbce 旧库 Chat 升级 1/0/1/0、Loop 终态发布门控专项。
+- `npm run accept:freeze` 现实际执行四项专项并校验同候选 SHA/时序/Run/bundle/clean-clone；本机退出 0。
+- CI 新增 Docker 冻结 Job，构建 runtime 镜像与确定性容器代理 fixture，上传同 SHA 验收证据。

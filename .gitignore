@@ -24,3 +24,9 @@ coverage/
 
 # 本机截图/浏览器临时目录（脚本产物）
 data/chrome-*/
+
+# accept:freeze 同次运行生成的可下载验收证据（由 CI artifact 保存，不入库）
+demo/evidence/offline-e2e/
+demo/evidence/docker-handoff/
+demo/evidence/chat-upgrade/
+demo/evidence/loop-terminal/

@@ -2,6 +2,7 @@
 // 离线工程冻结总验收：六组分别运行；任何失败、跳过、必跑项未执行都返回非零。
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 
 const groups = [
   { name: '1-product-completion', files: ['tests/handoff-product-plan.test.js', 'tests/handoff-test-evidence.test.js', 'tests/handoff-audit-chunks.test.js', 'tests/v32-product-gate.test.js', 'tests/v35-product-audit-middiff.test.js', 'tests/freeze-final-evidence.test.js'] },
@@ -42,6 +43,59 @@ for (const group of groups) {
   const ok = independent.status === 0;
   if (!ok) hardFailure = true;
   results.push({ name: '6a-independent-b506', status: ok ? 'PASS' : 'FAIL', code: independent.status, output: `${independent.stdout || ''}${independent.stderr || ''}`.slice(-800) });
+}
+// Loop 终态发布门控：裸 Git + 陈旧 Run 快照 + 终审失败/取消/ref 漂移零发布。
+{
+  const run = spawnSync(process.execPath, ['scripts/loop-terminal-e2e.mjs'], { encoding: 'utf8', timeout: 120_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6f-loop-terminal', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-800) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/loop-terminal/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      ok = e.candidateSha === head && Object.values(e.negativeCases).every((v) => v === 0) && e.positiveCases.staleRunSnapshotReread === 1 && e.totalPublishCalls === 2;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6f-loop-terminal-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-terminal/run.json' });
+  }
+}
+// Chat 旧库升级专项：fc5fbce 正式 HTTP 生成旧库，当前版本升级后四步物理发送 1/0/1/0。
+{
+  const run = spawnSync(process.execPath, ['scripts/chat-upgrade-e2e.mjs'], { encoding: 'utf8', timeout: 180_000, maxBuffer: 32 * 1024 * 1024 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6e-chat-upgrade', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1000) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/chat-upgrade/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      ok = e.candidateSha === head && Array.isArray(e.increments) && e.increments.join(',') === '1,0,1,0' && Number(e.legacyUnknownPreserved) === 0 && e.reservationsBefore === e.reservationsAfter;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6e-chat-upgrade-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/chat-upgrade/run.json' });
+  }
+}
+// 真实 Docker 两项专项：每次冻结都实际执行，不接受手填摘要或仅 daemon 在线。
+for (const spec of [
+  { name: '6c-docker-two-process-handoff', script: 'scripts/docker-handoff-e2e.mjs', evidence: 'demo/evidence/docker-handoff/run.json' },
+  { name: '6d-docker-product-e2e', script: 'scripts/docker-product-e2e.mjs', evidence: 'demo/evidence/offline-e2e/run.json' },
+]) {
+  if (!fs.existsSync(spec.script)) { results.push({ name: spec.name, status: 'UNEXECUTED', missing: spec.script }); hardFailure = true; continue; }
+  const run = spawnSync(process.execPath, [spec.script], { encoding: 'utf8', timeout: 360_000, maxBuffer: 32 * 1024 * 1024 });
+  const ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: spec.name, status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1200) });
+  if (!ok) continue;
+  try {
+    const e = JSON.parse(fs.readFileSync(spec.evidence, 'utf8'));
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+    let valid = e.candidateSha === head;
+    if (spec.name.includes('handoff')) valid = valid && e.ordering?.oldLastWriteBeforeExit === true && e.ordering?.oldExitBeforeNewFirstWrite === true && e.cleanupFailure?.secondWriterStarted === false && e.processes?.length === 2 && e.processes[0].fence < e.processes[1].fence;
+    else valid = valid && e.productSha && e.runIds?.length === 2 && e.contractHash && e.initialFailure === true && e.finalAudit === 'PASS' && e.status === 'awaiting_acceptance' && (e.cleanClone?.initial === 'FAIL_AS_EXPECTED' || e.cleanClone?.initialBehavior === 'FAIL_AS_EXPECTED') && (e.cleanClone?.final === 'PASS' || e.cleanClone?.finalBehavior === 'PASS') && fs.existsSync(path.join('demo/evidence/offline-e2e','product.bundle'));
+    if (!valid) hardFailure = true;
+    results.push({ name: spec.name + '-evidence', status: valid ? 'PASS' : 'FAIL', evidence: spec.evidence, reason: valid ? '' : '证据未绑定当前候选 SHA 或字段/时序/clean-clone 不符' });
+  } catch (err) { hardFailure = true; results.push({ name: spec.name + '-evidence', status: 'FAIL', reason: err.message }); }
 }
 // 真实 Docker 与连续离线产品 E2E 是第六组必跑项；未提供证据时明确标 UNEXECUTED，不得静默通过。
 try {

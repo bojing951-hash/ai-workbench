@@ -31,3 +31,38 @@ jobs:
         run: |
           echo "Demo projects are acceptance fixtures; their tests are expected to fail before an agent implements them."
           ls demo/*/tests/*.test.js | wc -l
+
+  freeze-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (full history for fixed historical commits)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Build runtime image
+        run: docker build -t ai-workbench-runtime:2.2 -f docker/runtime.Dockerfile .
+
+      - name: Build deterministic container-agent fixture
+        run: docker build -t ai-workbench-e2e:fixture tests/fixtures/docker-e2e
+
+      - name: Freeze acceptance (real Docker + Chat upgrade + Loop + regressions)
+        run: npm run accept:freeze
+
+      - name: Upload same-run acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freeze-evidence-${{ github.sha }}
+          path: |
+            demo/evidence/offline-e2e
+            demo/evidence/docker-handoff
+            demo/evidence/chat-upgrade
+            demo/evidence/loop-terminal
+          if-no-files-found: error
