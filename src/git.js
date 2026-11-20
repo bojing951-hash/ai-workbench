@@ -214,6 +214,22 @@ export async function pushBranch(config, repo, branch, { logPath = '', remote = 
   return true;
 }
 
+export async function pushCommitToBranch(config, repo, sha, branch, { logPath = '', remote = 'origin' } = {}) {
+  if (!config.github?.token) {
+    const err = new Error('缺少 GITHUB_TOKEN：无法推送远端分支');
+    err.code = 'GITHUB_TOKEN_MISSING';
+    throw err;
+  }
+  await git(repo, ['push', remote, `${sha}:refs/heads/${branch}`], {
+    timeoutMs: 10 * 60 * 1000,
+    env: gitAuthEnv(config),
+    logPath,
+  });
+  const ls = await git(repo, ['ls-remote', remote, `refs/heads/${branch}`], { env: gitAuthEnv(config), allowFail: true, timeoutMs: 60_000 });
+  const remoteSha = String(ls.stdout || '').trim().split(/\s+/)[0] || '';
+  return { ok: ls.code === 0 && remoteSha === sha, remoteSha };
+}
+
 export async function listTree(repo, ref = 'HEAD', { max = 400 } = {}) {
   const res = await git(repo, ['ls-tree', '-r', '--name-only', ref], { allowFail: true });
   if (res.code !== 0) return [];

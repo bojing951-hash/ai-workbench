@@ -92,6 +92,23 @@ for (const group of groups) {
     results.push({ name: '6e-chat-upgrade-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/chat-upgrade/run.json' });
   }
 }
+// 同 SHA CI 统一证据与 /accept：绿/红/待定转绿/缺必需检查/异 SHA/历史无证据 + 审计 SHA 推送源。
+{
+  const run = spawnSync(process.execPath, ['scripts/ci-evidence-accept-e2e.mjs'], { encoding: 'utf8', timeout: 240_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6k-ci-evidence-accept', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1200) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/ci-evidence/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      const r = e.results || {};
+      ok = e.candidateSha === head && r.sameShaGreen === 'accepted' && r.redRejected === true && r.pendingToGreen === 'accepted' && r.missingCheckRejected === true && r.foreignShaRejected === true && r.staleCiPassedRejected === true && r.auditedShaPushed?.remote === e.planHead && r.auditedShaPushed?.remote !== r.auditedShaPushed?.drift;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6k-ci-evidence-accept-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/ci-evidence/run.json' });
+  }
+}
 // 正式 REST+Supervisor+裸 Git+回环 GitHub：Loop 队列耗尽终态只发布审计 SHA、单 Draft、同 SHA CI、/accept。
 {
   const run = spawnSync(process.execPath, ['scripts/loop-rest-publish-e2e.mjs'], { encoding: 'utf8', timeout: 240_000 });

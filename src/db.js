@@ -1235,6 +1235,10 @@ export class Store {
     return this.getAction(id);
   }
 
+  listPublishRecoveryRuns() {
+    return this.db.prepare("SELECT DISTINCT run_id FROM actions WHERE run_id<>'' AND type IN ('github-push','github-pr','github-ci') ORDER BY run_id").all().map((r) => r.run_id);
+  }
+
   listOpenPublishActions() {
     return this.db.prepare("SELECT * FROM actions WHERE type IN ('github-pr','github-push') AND status IN ('running','pending') ORDER BY created_at ASC").all().map((r) => parseRow(r, { payload_json: {}, result_json: {} }));
   }

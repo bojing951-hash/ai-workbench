@@ -2191,7 +2191,24 @@ export class Orchestrator {
     });
   }
 
-  async waitForCi(owner, repo, sha) {
+  evaluateCiEvidence(runs, requiredSha, requiredChecks = []) {
+    const mismatched = runs.filter((r) => String(r.headSha || r.head_sha || '') !== String(requiredSha || ''));
+    const finished = runs.length > 0 && runs.every((r) => r.status === 'completed');
+    const allSuccess = finished && runs.every((r) => r.conclusion === 'success');
+    const names = runs.map((r) => String(r.name || ''));
+    const missingChecks = (requiredChecks || []).filter((name) => !names.includes(name) || runs.find((r) => r.name === name)?.conclusion !== 'success');
+    const evidence = {
+      requiredSha: requiredSha || '', requiredChecks: requiredChecks || [],
+      runs: runs.map((r) => ({ id: r.id, name: r.name, status: r.status, conclusion: r.conclusion, headSha: r.headSha || r.head_sha || '', htmlUrl: r.htmlUrl || r.html_url || '' })),
+      mismatched: mismatched.map((r) => r.headSha || r.head_sha || ''), missingChecks,
+      status: (allSuccess && mismatched.length === 0 && missingChecks.length === 0) ? 'passed' : (finished ? 'failed' : 'pending'),
+      conclusion: finished ? (allSuccess && mismatched.length === 0 && missingChecks.length === 0 ? 'success' : 'failure') : null,
+      checkedAt: nowIso(), source: '',
+    };
+    return evidence;
+  }
+
+  async waitForCi(owner, repo, sha, requiredChecks = []) {
     const attempts = Number(this.config.policy.ciPollAttempts || 12);
     const interval = Number(this.config.policy.ciPollIntervalMs || 10_000);
     let last = { status: 'pending', conclusion: null, runs: [], sha };
@@ -2199,18 +2216,8 @@ export class Orchestrator {
       try {
         const runs = await gh.listWorkflowRunsForSha(this.config, owner, repo, sha);
         if (runs.length) {
-          const finished = runs.every((r) => r.status === 'completed');
-          const conclusion = finished
-            ? runs.every((r) => r.conclusion === 'success') ? 'success' : 'failure'
-            : 'pending';
-          last = {
-            status: finished ? (conclusion === 'success' ? 'passed' : 'failed') : 'pending',
-            conclusion: finished ? conclusion : null,
-            runs,
-            sha,
-            htmlUrl: runs[0]?.htmlUrl || '',
-            checkedAt: nowIso(),
-          };
+          const ev = this.evaluateCiEvidence(runs, sha, requiredChecks);
+          last = { status: ev.status === 'passed' ? 'passed' : ev.status === 'failed' ? 'failed' : 'pending', conclusion: ev.conclusion, runs, sha, htmlUrl: runs[0]?.htmlUrl || '', checkedAt: nowIso(), evidence: ev };
         }
       } catch (err) {
         last = { status: 'pending', conclusion: null, runs: [], sha, error: redact(err.message, this.config) };
@@ -2234,8 +2241,9 @@ export class Orchestrator {
     const after = this.store.getRun(run.id);
     const next = this.store.getRun(run.id);
     const ciPassed = publish.ci?.status === 'passed' && String(publish.ci?.sha || '') === String(planHead);
+    const ciEvidence = publish.ci?.evidence ? { ...publish.ci.evidence, source: 'publish', sha: planHead, runId: run.id } : (after.result_json?.ciEvidence || null);
     this.store.updateRun(run.id, {
-      result_json: { ...(after.result_json || {}), publish, ci: publish.ci || null, publishedAfterAcceptance: true, publishedAt: nowIso() },
+      result_json: { ...(after.result_json || {}), publish, ci: publish.ci || null, ciEvidence, publishedAfterAcceptance: true, publishedAt: nowIso() },
       ci_status: publish.ci?.status || (next?.ci_status || ''),
       ci_url: publish.ci?.htmlUrl || (next?.ci_url || ''),
       verified_sha: planHead,
@@ -2249,7 +2257,13 @@ export class Orchestrator {
     const actions = [];
     const blocked = [];
     const ownerRepo = parseGithubRemote(await gitops.remoteUrl(project.local_path)) || null;
-    const projectConfig = project.config_json || {};
+    const freshProject = this.store.getProject(project.id) || project;
+    const freshRun = this.store.getRun(run.id) || run;
+    const projectConfig = freshProject.config_json || {};
+    if (!freshProject.remote_push_authorized) return { actions, blocked: ['项目已撤权远端推送，零远端写入'], pr: null, localOnly: true, planBranch, planHead, ci: null };
+    if (projectConfig.publish === false) return { actions, blocked: ['项目已关闭远端发布，零远端写入'], pr: null, localOnly: true, planBranch, planHead, ci: null };
+    if (freshRun.status === RunStatus.CANCELLED) return { actions, blocked: ['Run 已取消，零远端写入'], pr: null, localOnly: true, planBranch, planHead, ci: null };
+    if (freshRun.result_json?.loopId && String(freshRun.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') return { actions, blocked: ['Loop Run 产品终审未 PASS，零远端写入'], pr: null, localOnly: true, planBranch, planHead, ci: null };
     const canPush = !!this.config.github.token && this.config.policy.autoPush && this.config.github.push && projectConfig.publish !== false;
     if (!canPush) {
       const reason = !this.config.github.token
@@ -2280,8 +2294,13 @@ export class Orchestrator {
         }
       }
       const pushAction = this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-push', status: 'running', payload: { owner, repo, planBranch, sha: planHead } });
-      await gitops.pushBranch(this.config, project.local_path, planBranch, { logPath: path.join(this.logsDir(run.id), 'push-plan.log') });
-      this.store.updateAction(pushAction.id, { status: 'done', result: { owner, repo, planBranch, sha: planHead, pushedAt: nowIso() } });
+      // 推送已审计提交对象，而不是可能被推进的本地分支引用；随后用远端 ref 复核实际 SHA。
+      const pushed = await gitops.pushCommitToBranch(this.config, project.local_path, planHead, planBranch, { logPath: path.join(this.logsDir(run.id), 'push-plan.log') });
+      if (!pushed.ok || pushed.remoteSha !== planHead) {
+        this.store.updateAction(pushAction.id, { status: 'blocked', result: { owner, repo, planBranch, sha: planHead, remoteSha: pushed.remoteSha } });
+        throw new Error(`远端 ref 校验失败：期望 ${planHead}，实际 ${pushed.remoteSha || 'missing'}`);
+      }
+      this.store.updateAction(pushAction.id, { status: 'done', result: { owner, repo, planBranch, sha: planHead, remoteSha: pushed.remoteSha, pushedAt: nowIso() } });
       actions.push(this.store.getAction(pushAction.id));
       this.emit({ runId: run.id, projectId: project.id, type: 'branch_pushed', message: `已推送分支 ${planBranch}（${planHead.slice(0, 8)}）到 GitHub`, data: { owner, repo, planBranch, sha: planHead } });
 
@@ -2317,7 +2336,8 @@ export class Orchestrator {
       actions.push(this.store.getAction(prAction.id));
       this.emit({ runId: run.id, projectId: project.id, type: 'pr_created', message: `已创建草稿 PR #${pr.number}（未合并）：${pr.url}`, data: pr });
 
-      const ci = await this.waitForCi(owner, repo, planHead);
+      const requiredChecks = Array.isArray(projectConfig.required_checks) ? projectConfig.required_checks : (projectConfig.required_checks ? parseList(projectConfig.required_checks) : []);
+      const ci = await this.waitForCi(owner, repo, planHead, requiredChecks);
       const ciAction = this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-ci', status: ci.status === 'pending' ? 'pending' : 'done', payload: { owner, repo, sha: planHead, planBranch }, result: ci });
       actions.push(this.store.getAction(ciAction.id));
       this.emit({
@@ -2388,19 +2408,20 @@ export class Orchestrator {
     if (!ci) return { ok: false, message: '该运行没有 CI 记录（可能未推送 GitHub）' };
     const { owner, repo, sha } = ci.payload_json || {};
     const runs = await gh.listWorkflowRunsForSha(this.config, owner, repo, sha);
-    const finished = runs.length > 0 && runs.every((r) => r.status === 'completed');
-    const conclusion = finished ? (runs.every((r) => r.conclusion === 'success') ? 'success' : 'failure') : runs.length ? 'in_progress' : 'queued';
-    // 每个 CI run 必须与持久化动作绑定的 SHA 一致；异 SHA 的绿不得流入通过状态。
-    const mismatched = runs.filter((r) => String(r.headSha || r.head_sha || '') !== String(sha || ''));
-    const passed = finished && conclusion === 'success' && mismatched.length === 0 && String(run.verified_sha || '') === String(sha || '');
-    this.store.updateAction(ci.id, { status: finished ? 'done' : 'running', result: { conclusion, runs, checkedAt: nowIso(), requiredSha: sha, mismatched: mismatched.map((r) => r.headSha || r.head_sha || '') } });
+    const project = this.store.getProject(run.project_id);
+    const requiredChecks = Array.isArray(project?.config_json?.required_checks) ? project.config_json.required_checks : (project?.config_json?.required_checks ? parseList(project.config_json.required_checks) : []);
+    const ev = this.evaluateCiEvidence(runs, sha, requiredChecks);
+    ev.source = 'refresh';
+    const passed = ev.status === 'passed' && String(run.verified_sha || '') === String(sha || '');
+    this.store.updateAction(ci.id, { status: ev.status === 'pending' ? 'running' : 'done', result: { ...ev } });
     if (run.status === RunStatus.AWAITING_ACCEPTANCE) {
-      if (passed) this.store.updateRun(runId, { verification_status: 'CI_PASSED', ci_status: 'passed', ci_checked_at: nowIso(), ci_url: runs.find((r) => r.html_url)?.html_url || '' });
-      else if (finished && (conclusion !== 'success' || mismatched.length)) this.store.updateRun(runId, { verification_status: 'CI_FAILED', ci_status: 'failed', ci_checked_at: nowIso() });
-      else if (!finished) this.store.updateRun(runId, { ci_status: conclusion, ci_checked_at: nowIso() });
+      const nextResult = { ...(run.result_json || {}), ciEvidence: { ...ev, sha, runId } };
+      if (passed) this.store.updateRun(runId, { verification_status: 'CI_PASSED', ci_status: 'passed', ci_checked_at: nowIso(), ci_url: ev.runs.find((r) => r.htmlUrl)?.htmlUrl || '', result_json: nextResult });
+      else if (ev.status === 'failed') this.store.updateRun(runId, { verification_status: 'CI_FAILED', ci_status: 'failed', ci_checked_at: nowIso(), result_json: nextResult });
+      else this.store.updateRun(runId, { ci_status: ev.status === 'pending' ? 'pending' : ev.status, ci_checked_at: nowIso(), result_json: nextResult });
     }
-    this.emit({ runId, type: 'ci_update', message: `GitHub Actions 状态刷新：${conclusion}${mismatched.length ? '（存在异 SHA run，拒绝通过）' : ''}`, data: { conclusion, requiredSha: sha, mismatched: mismatched.map((r) => r.headSha || r.head_sha || '') } });
-    return { ok: true, conclusion, requiredSha: sha, mismatched: mismatched.map((r) => r.headSha || r.head_sha || ''), runs };
+    this.emit({ runId, type: 'ci_update', message: `GitHub Actions 状态刷新：${ev.status}${ev.mismatched.length ? '（存在异 SHA run，拒绝通过）' : ''}${ev.missingChecks.length ? '（缺必需检查：' + ev.missingChecks.join('、') + '）' : ''}`, data: { status: ev.status, requiredSha: sha, mismatched: ev.mismatched, missingChecks: ev.missingChecks } });
+    return { ok: true, conclusion: ev.conclusion, status: ev.status, requiredSha: sha, mismatched: ev.mismatched, missingChecks: ev.missingChecks, runs, evidence: ev };
   }
 
   buildPrBody(run, project, tasks, planHead = '') {
@@ -2759,29 +2780,45 @@ export class Orchestrator {
 
   async recoverPublishActions() {
     const recovered = []; const blocked = [];
-    for (const action of this.store.listOpenPublishActions?.() || []) {
-      if (action.type !== 'github-pr') continue;
-      const run = this.store.getRun(action.run_id);
+    const runIds = new Set([...(this.store.listPublishRecoveryRuns?.() || []), ...(this.store.listOpenPublishActions?.() || []).map((a) => a.run_id).filter(Boolean)]);
+    for (const runId of runIds) {
+      const run = this.store.getRun(runId);
       const project = run ? this.store.getProject(run.project_id) : null;
-      if (!run || !project) { blocked.push({ actionId: action.id, reason: 'run/project missing' }); continue; }
-      const payload = action.payload_json || {};
+      if (!run || !project) { blocked.push({ runId, reason: 'run/project missing' }); continue; }
+      const actions = this.store.listActions(run.id);
+      const prAction = actions.filter((a) => a.type === 'github-pr').at(-1);
+      const ciAction = actions.filter((a) => a.type === 'github-ci').at(-1);
+      if (!project.remote_push_authorized || project.config_json?.publish === false) { blocked.push({ runId, reason: '远端发布已撤权，零新增远端写' }); continue; }
+      if (run.status === RunStatus.CANCELLED) { blocked.push({ runId, reason: 'Run 已取消，零新增远端写' }); continue; }
+      if (run.result_json?.loopId && String(run.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') { blocked.push({ runId, reason: '产品终审未 PASS，零新增远端写' }); continue; }
+      // 窗口 3：Draft 已记录、CI 尚未完成 → 续查同 SHA CI，不重复创建 Draft。
+      if (prAction?.status === 'done' && prAction.result_json?.pr) {
+        try { const ci = await this.refreshCi(run.id); recovered.push({ runId, window: 'ci-refresh', pr: prAction.result_json.pr.number, status: ci.status || ci.conclusion }); }
+        catch (err) { blocked.push({ runId, reason: String(err?.message || err).slice(0, 500) }); }
+        continue;
+      }
+      // 窗口 1/2：分支已推未建 Draft，或 Draft 已创建但动作仍 running → 走同一 publishRun 续建/认领。
+      const payload = prAction?.payload_json || actions.filter((a) => a.type === 'github-push').at(-1)?.payload_json || {};
       const sha = String(payload.sha || run.verified_sha || '');
-      if (!sha) { blocked.push({ actionId: action.id, reason: 'sha missing' }); continue; }
-      if (String(run.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') { blocked.push({ actionId: action.id, reason: 'product acceptance not PASS' }); continue; }
+      if (!sha) { blocked.push({ runId, reason: 'sha missing' }); continue; }
       try {
-        const publish = await this.publishRun(run, project, String(payload.head || `wb/plan-${run.id.slice(-6)}`), sha, this.store.listTasks({ runId: run.id }));
+        const publish = await this.publishRun(run, project, String(payload.head || payload.planBranch || `wb/plan-${run.id.slice(-6)}`), sha, this.store.listTasks({ runId: run.id }));
         const after = this.store.getRun(run.id);
         const ciPassed = publish.ci?.status === 'passed' && String(publish.ci?.sha || '') === sha;
+        let ciEvidence = publish.ci?.evidence ? { ...publish.ci.evidence, source: 'restart-recovery', sha, runId: run.id } : (after.result_json?.ciEvidence || null);
+        if (ciPassed && !ciEvidence) {
+          try { const ev = await this.refreshCi(run.id); ciEvidence = this.store.getRun(run.id).result_json?.ciEvidence || null; } catch { /* keep null */ }
+        }
         this.store.updateRun(run.id, {
-          result_json: { ...(after.result_json || {}), publishRecovered: true, publish, ci: publish.ci || null },
+          result_json: { ...(after.result_json || {}), publishRecovered: true, publish, ci: publish.ci || null, ciEvidence },
           ci_status: publish.ci?.status || after.ci_status || '',
           ci_url: publish.ci?.htmlUrl || after.ci_url || '',
           verified_sha: sha,
           verification_status: ciPassed ? 'CI_PASSED' : (publish.ci?.status === 'failed' ? 'CI_FAILED' : (after.verification_status || 'LOCAL_VERIFIED')),
         });
-        if (publish.pr) recovered.push({ actionId: action.id, runId: run.id, pr: publish.pr.number, sha, recovered: !!publish.pr.recovered, ci: publish.ci?.status || null });
-        else blocked.push({ actionId: action.id, reason: publish.blocked?.join('；') || 'publish blocked' });
-      } catch (err) { blocked.push({ actionId: action.id, reason: String(err?.message || err).slice(0, 500) }); }
+        if (publish.pr) recovered.push({ runId: run.id, window: prAction?.status === 'running' ? 'claim-draft' : 'create-draft', pr: publish.pr.number, sha, recovered: !!publish.pr.recovered, ci: publish.ci?.status || null });
+        else blocked.push({ runId, reason: publish.blocked?.join('；') || 'publish blocked' });
+      } catch (err) { blocked.push({ runId, reason: String(err?.message || err).slice(0, 500) }); }
     }
     return { recovered, blocked };
   }
@@ -3020,6 +3057,11 @@ export class Orchestrator {
     }
     const verification = run.verification_status || '';
     const verifiedSha = run.verified_sha || '';
+    const ciEvidence = run.result_json?.ciEvidence || null;
+    const evidenceOk = !!ciEvidence && ciEvidence.status === 'passed' && String(ciEvidence.sha || '') === String(verifiedSha || '') && String(ciEvidence.requiredSha || '') === String(verifiedSha || '') && !(ciEvidence.mismatched || []).length && !(ciEvidence.missingChecks || []).length;
+    if (verification === 'CI_PASSED' && !evidenceOk) {
+      throw new PolicyError('CI_EVIDENCE_MISSING', 'CI_PASSED 缺少同 SHA 的持久化证据（或历史证据早于新远端状态）；必须重新刷新同一 SHA 的 CI 后才能验收');
+    }
     if (verification !== 'CI_PASSED') {
       const localOk = verification === 'LOCAL_VERIFIED' && confirmLocalOnly && project?.allow_local_acceptance;
       if (!localOk) {

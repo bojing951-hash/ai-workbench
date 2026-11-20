@@ -145,3 +145,5 @@
 - 2026-11-20: 新增真实 Supervisor/Workbench 重启恢复专项：A 运行中持久化 github-pr running 动作；杀死 A 后 B 启动 `recoverPublishActions` 认领原 Draft（creates=0），同 SHA CI 进入 CI_PASSED，正式 `/accept` 成功。
 
 - 2026-11-20: 新增正式 REST+Supervisor+裸 Git+回环 GitHub 的 Loop 队列耗尽终态专项：产品两轮自动修复后只发布审计 SHA、裸库 ref 命中、单 Draft、同 SHA CI 绿、正式 /accept 成功。
+
+- 2026-11-20: 同 SHA CI 证据统一入 run.result_json.ciEvidence；首次轮询/刷新/重启恢复共用 evaluateCiEvidence；/accept 要求证据 SHA=verified_sha 且无缺检查/异 SHA；发布按审计提交对象推送并复核远端 ref；恢复覆盖分支已推未建 Draft、Draft 丢回执、Draft 已记录 CI 未完成三窗口。
