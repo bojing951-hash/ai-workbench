@@ -44,9 +44,9 @@ const mock = http.createServer(async (req, res) => {
     if (!draftExists) return send(200, []);
     const qhead = String(u.searchParams.get('head') || 'fixture:');
     const ref = qhead.includes(':') ? qhead.slice(qhead.indexOf(':') + 1) : qhead;
-    return send(200, [{ number: 7, html_url: 'https://example.invalid/pr/7', state: 'open', draft: existingDraft, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref, sha: existingSha } }]);
+    return send(200, [{ number: 7, html_url: 'https://example.invalid/pr/7', state: 'open', draft: existingDraft, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref, sha: existingSha, repo: { full_name: 'fixture/repo' } } }]);
   }
-  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { creates += 1; draftCreated += 1; draftExists = true; const body=JSON.parse(bodyText||'{}'); return send(201, { number: 8, html_url: 'https://example.invalid/pr/8', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head) } }); }
+  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { creates += 1; draftCreated += 1; draftExists = true; const body=JSON.parse(bodyText||'{}'); return send(201, { number: 8, html_url: 'https://example.invalid/pr/8', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head), repo: { full_name: 'fixture/repo' } } }); }
   if (u.pathname === '/repos/fixture/repo/actions/runs') {
     const sha = u.searchParams.get('head_sha') || '';
     return send(200, { workflow_runs: [{ id: 1, name: 'ci', status: 'completed', conclusion: 'success', head_sha: ciShaOverride || sha, html_url: 'https://example.invalid/ci/1' }] });
@@ -144,11 +144,21 @@ try {
   assert.ok(nonDraft.blocked.length > 0, 'non-draft existing PR must block');
   assert.equal(creates, 1, 'non-draft must not create a Draft');
   existingDraft = true;
+  // 3c) GITHUB_CREATE_PR=false：允许推送，但必须零 Draft POST。
+  const run6 = store.createRun({ id: 'run_ghpub00006', projectId: project.id, planId: plan.id, goal: 'no-pr', status: 'awaiting_acceptance', verificationStatus: 'LOCAL_VERIFIED' });
+  const branch6 = `wb/plan-${run6.id.slice(-6)}`; git(['branch', branch6, planHead]);
+  store.updateRun(run6.id, { verified_sha: planHead, result_json: { planHead } });
+  const configNoPr = { ...config, github: { ...config.github, createPr: false } };
+  const orchNoPr = new Orchestrator({ config: configNoPr, store, bus: new EventBus() });
+  const noPr = await orchNoPr.publishRun(store.getRun(run6.id), project, branch6, planHead, []);
+  assert.ok(noPr.blocked.length > 0, 'GITHUB_CREATE_PR=false must block Draft');
+  assert.equal(creates, 1, 'GITHUB_CREATE_PR=false must not POST Draft');
+  assert.ok(store.listActions(run6.id).some((a) => a.type === 'github-push' && a.status === 'done'));
   const evidence = {
     kind: 'github-publish-ci-accept-recovery', creates: draftCreated, candidateSha: git(['rev-parse', 'HEAD'], REPO), runId, verifiedSha: planHead,
     pushRef: { branch, sha: git(['rev-parse', `refs/heads/${branch}`]) }, bareRemoteRef: git(['rev-parse', `refs/heads/${branch}`], bare),
     draft: { recovered: true, number: 7, creates, pulls, expectedOne: draftCreated === 1 }, ci: { conclusion: refreshed.conclusion, requiredSha: refreshed.requiredSha, mismatched: refreshed.mismatched }, acceptedSha: accepted.result_json.acceptedSha,
-    mismatchNegative: { blocked: true, creates }, nonDraftRejected: { blocked: true, creates }, revokedDuringGet: { blocked: true, creates },
+    mismatchNegative: { blocked: true, creates }, nonDraftRejected: { blocked: true, creates }, revokedDuringGet: { blocked: true, creates }, createPrDisabled: { blocked: noPr.blocked.join('；'), creates },
     action: { status: action.status, recovered: action.result_json?.recovered, sha: action.result_json?.sha }, at: new Date().toISOString(),
   };
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true }); fs.writeFileSync(path.join(EVIDENCE_DIR, 'run.json'), JSON.stringify(evidence, null, 2));

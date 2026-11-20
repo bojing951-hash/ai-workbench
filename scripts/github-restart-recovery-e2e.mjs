@@ -32,9 +32,9 @@ const mock = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
-  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') { pulls += 1; return send(200, [{ number: 11, html_url: 'https://example.invalid/pr/11', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: branch, sha: planHead } }]); }
+  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') { pulls += 1; return send(200, [{ number: 11, html_url: 'https://example.invalid/pr/11', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: branch, sha: planHead, repo: { full_name: 'fixture/repo' } } }]); }
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { creates += 1; return send(201, { number: 12, html_url: 'https://example.invalid/pr/12', state: 'open', draft: true }); }
-  if (u.pathname === '/repos/fixture/repo/pulls/11' && req.method === 'GET') return send(200, restartPr || { number: 11, html_url: 'https://example.invalid/pr/11', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: branch, sha: planHead } });
+  if (u.pathname === '/repos/fixture/repo/pulls/11' && req.method === 'GET') return send(200, restartPr || { number: 11, html_url: 'https://example.invalid/pr/11', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: branch, sha: planHead, repo: { full_name: 'fixture/repo' } } });
   if (u.pathname === '/repos/fixture/repo/actions/runs') { const sha = u.searchParams.get('head_sha') || ''; return send(200, { workflow_runs: [{ id: 2, name: 'ci', status: 'completed', conclusion: 'success', head_sha: sha, html_url: 'https://example.invalid/ci/2' }] }); }
   return send(404, { message: 'not found' });
 });
@@ -85,7 +85,7 @@ try {
   storeC0.updateRun(run2Id, { verified_sha: planHead, result_json: { planHead } });
   storeC0.createAction({ id: 'act_restart_pr2', runId: run2Id, type: 'github-pr', status: 'done', payload: { owner: 'fixture', repo: 'repo', head: branch2, base: 'main', sha: planHead }, result: { pr: { number: 11, url: 'https://example.invalid/pr/11', draft: true, head: branch2, base: 'main', sha: planHead }, sha: planHead } });
   storeC0.close();
-  restartPr = { number: 11, html_url: 'https://example.invalid/pr/11', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: branch2, sha: planHead } };
+  restartPr = { number: 11, html_url: 'https://example.invalid/pr/11', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: branch2, sha: planHead, repo: { full_name: 'fixture/repo' } } };
   const childB = killTree(B.proc); await new Promise((r) => setTimeout(r, 500));
   const pC = await freePort(); const C = startSup(pC, 'C');
   assert.ok(await waitHealth(pC, 120_000), fs.readFileSync(C.log, 'utf8'));

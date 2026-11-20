@@ -163,3 +163,5 @@
 - 2026-11-20: Docker 清理失败证据记录 B 的 Run 状态并允许 BLOCKED/暂停或 B 不健康两种正式阻断形态，不再以 healthB 布尔单一条件误判。
 
 - 2026-11-20: 新增正式 REST Loop 发布中取消（Loop/Run 均 cancelled、Draft POST=0）与质量门缺证终态（Loop blocked、零 Draft、零发布分支）回归，并接入 accept:freeze/CI。
+
+- 2026-11-21: 发布边界收口：源/目标 repo、open、draft、base/head/SHA 严格校验；GITHUB_CREATE_PR=false 零 Draft POST；Loop 发布中取消保持 cancelled；质量门缺证零发布；对应 REST/重启专项接入 take:freeze。

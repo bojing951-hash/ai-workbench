@@ -29,7 +29,7 @@ const mock = http.createServer(async (req, res) => {
   const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') return send(200, []);
-  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { const body=JSON.parse(bodyText||'{}'); return send(201, { number: 31, html_url: 'https://example.invalid/pr/31', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head) } }); }
+  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { const body=JSON.parse(bodyText||'{}'); return send(201, { number: 31, html_url: 'https://example.invalid/pr/31', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head), repo: { full_name: 'fixture/repo' } } }); }
   if (u.pathname === '/repos/fixture/repo/actions/runs') {
     const sha = u.searchParams.get('head_sha') || '';
     if (pendingOnce) { pendingOnce = false; return send(200, { workflow_runs: [{ id: 31, name: checkName, status: 'in_progress', conclusion: null, head_sha: sha, html_url: 'https://example.invalid/ci/31' }] }); }

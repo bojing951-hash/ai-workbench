@@ -2231,15 +2231,21 @@ export class Orchestrator {
   }
 
   validateDraftIdentity(pr, { owner, repo, baseBranch, planBranch, planHead }) {
-    const repoFull = pr?.base?.repo?.full_name || pr?.head?.repo?.full_name || '';
+    const expectedRepo = `${owner}/${repo}`;
+    const baseRepo = pr?.base?.repo?.full_name || '';
+    const headRepo = pr?.head?.repo?.full_name || '';
+    const repoFull = baseRepo && headRepo && baseRepo === headRepo ? baseRepo : '';
     const baseRef = pr?.base?.ref || '';
     const headRef = pr?.head?.ref || '';
     const headSha = String(pr?.head?.sha || '');
     if (!pr || !Number(pr.number)) return { ok: false, reason: '缺少 PR number' };
-    if (pr.state && pr.state !== 'open') return { ok: false, reason: `PR 状态 ${pr.state}` };
+    if (pr.state !== 'open') return { ok: false, reason: `PR 状态 ${pr.state || 'missing'} 非 open` };
     if (pr.draft !== true) return { ok: false, reason: 'PR 非 Draft' };
-    if (!repoFull) return { ok: false, reason: '缺少源/目标 repo 身份' };
-    if (repoFull !== `${owner}/${repo}`) return { ok: false, reason: `repo 身份不符 ${repoFull}` };
+    if (!baseRepo) return { ok: false, reason: '缺少目标 repo 身份' };
+    if (!headRepo) return { ok: false, reason: '缺少源 repo 身份' };
+    if (baseRepo !== expectedRepo) return { ok: false, reason: `目标 repo 不符 ${baseRepo}` };
+    if (headRepo !== expectedRepo) return { ok: false, reason: `源 repo 不符 ${headRepo}` };
+    if (!repoFull) return { ok: false, reason: '源/目标 repo 不一致' };
     if (baseRef !== baseBranch) return { ok: false, reason: `base ref 不符 ${baseRef}` };
     if (headRef !== planBranch) return { ok: false, reason: `head ref 不符 ${headRef}` };
     if (headSha !== planHead) return { ok: false, reason: `head SHA 不符 ${headSha}` };
@@ -2341,6 +2347,13 @@ export class Orchestrator {
       actions.push(this.store.getAction(pushAction.id));
       this.emit({ runId: run.id, projectId: project.id, type: 'branch_pushed', message: `已推送分支 ${planBranch}（${planHead.slice(0, 8)}）到 GitHub`, data: { owner, repo, planBranch, sha: planHead } });
 
+      if (this.config.github.createPr === false) {
+        const reason = 'GITHUB_CREATE_PR=false：已按授权推送分支，但禁止创建 Draft PR';
+        const action = this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-publish', status: 'blocked', payload: { owner, repo, planBranch, sha: planHead }, result: { reason } });
+        actions.push(action);
+        this.emit({ runId: run.id, projectId: project.id, type: 'publish_blocked', level: 'warn', message: reason, data: { planBranch, planHead } });
+        return { actions, blocked: [reason], pr: null, localOnly: true, owner, repo, planBranch, planHead, ci: null };
+      }
       let pr = null;
       const beforeDraft = this.publishStillAuthorized(run.id, project.id, planHead, 'push-to-draft');
       if (!beforeDraft.ok) throw new Error(beforeDraft.reason);
