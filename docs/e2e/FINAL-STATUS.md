@@ -124,3 +124,8 @@
 
 - `publishLoopFinal` 在终审写入后重新读取 Run，避免旧快照 productAcceptance 未更新导致最终 SHA 不发布；取消/失败 Run 拒绝发布。
 - 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺四项 Loop 终态专项与两项 Docker。
+
+## 38a65a5 复审整改（2026-11-20）
+
+- publishLoopFinal 发布前统一核对 live Loop 状态、审计 SHA 与实际 wb/plan ref；不一致零发布。
+- 原版 23/23、补充 7/7、npm test 419/419 通过；仍缺四条终态裸 Git/GitHub 专项与两项 Docker。

@@ -548,10 +548,19 @@ export class LoopManager {
     // 终审刚写入 PASS 后必须重新读取 Run；调用方传入的 run 可能仍是终审前的旧快照。
     const latest = candidate?.id ? this.store.getRun(candidate.id) : null;
     if (!latest || String(latest.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') return null;
+    const liveLoop = this.store.getLoop(loop.id);
+    if (!liveLoop || liveLoop.status !== 'running') return null;
     if (latest.status === 'cancelled' || latest.status === 'failed') return null;
     const planHead = latest.result_json?.productPlanHead || latest.verified_sha || latest.result_json?.planHead || '';
     if (!planHead) return null;
     if (project.remote_push_authorized !== 1 || project.config_json?.publish === false) return null;
+    // 发布前核对实际待推 ref 与审计绑定的 SHA 完全一致。
+    const planBranch = `wb/plan-${latest.id.slice(-6)}`;
+    const refSha = await gitops.branchRef(project.local_path, planBranch);
+    if (!refSha || refSha !== planHead) {
+      this.emit(loop, 'post_acceptance_publish_blocked', `发布前 SHA 核对失败：ref=${refSha || 'missing'} audit=${planHead}`, 'warn', { planHead, refSha });
+      return null;
+    }
     try { return await this.orchestrator.publishAcceptedRun(latest, project, planHead, this.store.listTasks({ runId: latest.id })); }
     catch (err) { this.emit(loop, 'post_acceptance_publish_failed', `产品终审/质量门通过后发布失败：${err.message}`, 'warn', { planHead }); return null; }
   }
