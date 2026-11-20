@@ -2832,6 +2832,16 @@ export class Orchestrator {
         if (!ciAction) {
           try {
             const publish = await this.publishRun(run, project, String(payload.head || `wb/plan-${run.id.slice(-6)}`), sha, this.store.listTasks({ runId: run.id }));
+            const after = this.store.getRun(run.id);
+            const ciPassed2 = publish.ci?.status === 'passed' && String(publish.ci?.sha || '') === sha;
+            const ciEvidence2 = publish.ci?.evidence ? { ...publish.ci.evidence, source: 'restart-recovery-ci-rebuild', sha, runId: run.id } : (after.result_json?.ciEvidence || null);
+            this.store.updateRun(run.id, {
+              result_json: { ...(after.result_json || {}), publishRecovered: true, publish, ci: publish.ci || null, ciEvidence: ciEvidence2 },
+              ci_status: publish.ci?.status || after.ci_status || '',
+              ci_url: publish.ci?.htmlUrl || after.ci_url || '',
+              verified_sha: sha,
+              verification_status: ciPassed2 ? 'CI_PASSED' : (publish.ci?.status === 'failed' ? 'CI_FAILED' : (after.verification_status || 'LOCAL_VERIFIED')),
+            });
             recovered.push({ runId, window: 'ci-action-rebuild', pr: prAction.result_json.pr.number, ci: publish.ci?.status || null });
           } catch (err) { blocked.push({ runId, reason: String(err?.message || err).slice(0, 500) }); }
           continue;

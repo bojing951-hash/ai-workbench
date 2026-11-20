@@ -75,7 +75,30 @@ try {
   assert.equal(accepted.data.data.status, 'accepted');
   assert.equal(accepted.data.data.result_json?.acceptedSha, planHead);
   storeB.close();
-  const evidence = { kind: 'github-restart-recovery', candidateSha: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).stdout.trim(), runId, planHead, branch, a: { supervisorLog: path.relative(EVIDENCE_DIR, A.log), childPid: childA }, b: { supervisorLog: path.relative(EVIDENCE_DIR, B.log) }, draft: { recovered: action.result_json?.recovered, number: action.result_json?.pr?.number, creates, pulls }, ci: { status: runB.verification_status, sha: runB.verified_sha }, accepted: { status: accepted.data.data.status, sha: accepted.data.data.result_json?.acceptedSha }, at: new Date().toISOString() };
+  // 第二窗口：Draft 已持久化 done、CI action 尚未建立 → 重启后经同一 Draft 续建 CI。
+  const run2Id = 'run_restart00002'; const branch2 = `wb/plan-${run2Id.slice(-6)}`;
+  git(['branch', branch2, planHead]); git(['push', '-q', 'origin', branch2]);
+  const storeC0 = openStore(config.paths.dbPath);
+  const plan2 = storeC0.createPlan({ id: 'plan_restart2', projectId: project.id, runId: run2Id, goal: 'restart2', title: 'restart2' });
+  storeC0.createRun({ id: run2Id, projectId: project.id, planId: plan2.id, goal: 'restart2', status: 'awaiting_acceptance', verificationStatus: 'LOCAL_VERIFIED' });
+  storeC0.updateRun(run2Id, { verified_sha: planHead, result_json: { planHead } });
+  storeC0.createAction({ id: 'act_restart_pr2', runId: run2Id, type: 'github-pr', status: 'done', payload: { owner: 'fixture', repo: 'repo', head: branch2, base: 'main', sha: planHead }, result: { pr: { number: 11, url: 'https://example.invalid/pr/11', draft: true, head: branch2, base: 'main', sha: planHead }, sha: planHead } });
+  storeC0.close();
+  const childB = killTree(B.proc); await new Promise((r) => setTimeout(r, 500));
+  const pC = await freePort(); const C = startSup(pC, 'C');
+  assert.ok(await waitHealth(pC, 120_000), fs.readFileSync(C.log, 'utf8'));
+  const storeC = openStore(config.paths.dbPath);
+  const run2 = storeC.getRun(run2Id);
+  const actions2 = storeC.listActions(run2Id);
+  assert.equal(creates, 0, 'CI action 重建窗口不得重复创建 Draft');
+  assert.equal(run2.verification_status, 'CI_PASSED');
+  assert.ok(actions2.some((a) => a.type === 'github-ci' && a.status === 'done'));
+  const accepted2 = await api(pC, 'POST', `/api/runs/${run2Id}/accept`, {});
+  assert.equal(accepted2.status, 200, JSON.stringify(accepted2));
+  assert.equal(accepted2.data.data.status, 'accepted');
+  storeC.close();
+  try { C.proc.kill('SIGKILL'); } catch { /* ignore */ }
+  const evidence = { kind: 'github-restart-recovery', candidateSha: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).stdout.trim(), runId, planHead, branch, a: { supervisorLog: path.relative(EVIDENCE_DIR, A.log), childPid: childA }, b: { supervisorLog: path.relative(EVIDENCE_DIR, B.log) }, draft: { recovered: action.result_json?.recovered, number: action.result_json?.pr?.number, creates, pulls }, ci: { status: runB.verification_status, sha: runB.verified_sha }, accepted: { status: accepted.data.data.status, sha: accepted.data.data.result_json?.acceptedSha }, ciActionRebuildWindow: { runId: run2Id, creates, ciStatus: run2.verification_status, acceptedStatus: accepted2.data.data.status, acceptedSha: accepted2.data.data.result_json?.acceptedSha }, at: new Date().toISOString() };
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true }); fs.writeFileSync(path.join(EVIDENCE_DIR, 'run.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify({ ok: true, evidence: path.relative(REPO, path.join(EVIDENCE_DIR, 'run.json')), creates, acceptedSha: planHead, recovered: true }));
 } finally { try { A?.proc.kill('SIGKILL'); } catch { /* ignore */ } try { B?.proc.kill('SIGKILL'); } catch { /* ignore */ } mock.close(); }

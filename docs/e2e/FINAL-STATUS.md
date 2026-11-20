@@ -153,3 +153,5 @@
 - 2026-11-20: Docker 交接脚本改用宿主观察时钟并等待旧 Workbench 子进程消失后再启动 B，消除时序/租约存活误判抖动。
 
 - 2026-11-20: 远端写入前 guard 复验权限/Run/Loop/产品终审/审计 SHA；push 到 Draft POST 间隔再次检查；Draft 创建/认领校验 repo/base/head/immutable SHA/draft，拒绝非 Draft；Draft done 但 CI action 未建的重启窗口经同 SHA 续建 CI；普通 Run 发布结果持久化 ciEvidence。
+
+- 2026-11-20: 真实重启补测“Draft done、CI action 未建立”窗口：重启后经同一 Draft 续建 CI，creates=0、CI_PASSED、/accept 成功；/accept 证据校验含该窗口。

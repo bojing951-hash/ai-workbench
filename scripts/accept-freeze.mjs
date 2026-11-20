@@ -151,7 +151,7 @@ for (const group of groups) {
     try {
       const e = JSON.parse(fs.readFileSync('demo/evidence/github-restart-recovery/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
-      ok = e.candidateSha === head && e.draft?.creates === 0 && e.draft?.recovered === true && e.ci?.status === 'CI_PASSED' && e.accepted?.status === 'accepted' && e.accepted?.sha === e.planHead;
+      ok = e.candidateSha === head && e.draft?.creates === 0 && e.draft?.recovered === true && e.ci?.status === 'CI_PASSED' && e.accepted?.status === 'accepted' && e.accepted?.sha === e.planHead && e.ciActionRebuildWindow?.creates === 0 && e.ciActionRebuildWindow?.ciStatus === 'CI_PASSED' && e.ciActionRebuildWindow?.acceptedStatus === 'accepted';
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6i-github-restart-recovery-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/github-restart-recovery/run.json' });
