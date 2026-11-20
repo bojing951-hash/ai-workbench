@@ -2285,17 +2285,33 @@ export class Orchestrator {
 
       let pr = null;
       const baseBranch = (await gh.getRepo(this.config, owner, repo))?.default_branch || project.default_branch || 'main';
-      const prAction = this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-pr', status: 'running', payload: { owner, repo, head: planBranch, sha: planHead } });
-      const plan = this.store.getPlan(run.plan_id);
-      pr = await gh.createPullRequest(this.config, {
-        owner, repo,
-        title: `[AI Workbench] ${plan?.title || run.goal} (${tasks.length} 个任务, ${planHead.slice(0, 8)})`,
-        head: planBranch,
-        base: baseBranch,
-        body: this.buildPrBody(run, project, tasks, planHead),
-        draft: true,
-      });
-      this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead } });
+      let prAction = this.store.listActions(run.id).find((a) => a.type === 'github-pr' && ['running', 'done'].includes(a.status));
+      if (prAction?.status === 'done' && prAction.result_json?.pr) {
+        pr = prAction.result_json.pr;
+      } else {
+        if (!prAction) prAction = this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-pr', status: 'running', payload: { owner, repo, head: planBranch, base: baseBranch, sha: planHead } });
+        // 发布回执恢复：先按 head 查询已存在的 Draft；repo/base/head.sha 全部匹配才认领，避免重复 PR。
+        const existing = await gh.findPullRequestByHead(this.config, owner, repo, planBranch);
+        const match = existing.find((x) => x?.state === 'open' && x?.base?.ref === baseBranch && String(x?.head?.sha || x?.head?.ref || '') && String(x?.head?.sha || '') === planHead);
+        if (match) {
+          pr = { number: match.number, url: match.html_url, draft: match.draft !== false, head: planBranch, base: baseBranch, sha: planHead, recovered: true };
+          this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead, recovered: true } });
+        } else if (existing.length) {
+          throw new Error(`GITHUB_PR_SHA_MISMATCH：head=${planBranch} 已有 PR 但 base/SHA 与审计 SHA 不一致，拒绝重复创建`);
+        }
+      }
+      if (!pr) {
+        const plan = this.store.getPlan(run.plan_id);
+        pr = await gh.createPullRequest(this.config, {
+          owner, repo,
+          title: `[AI Workbench] ${plan?.title || run.goal} (${tasks.length} 个任务, ${planHead.slice(0, 8)})`,
+          head: planBranch,
+          base: baseBranch,
+          body: this.buildPrBody(run, project, tasks, planHead),
+          draft: true,
+        });
+        this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead } });
+      }
       actions.push(this.store.getAction(prAction.id));
       this.emit({ runId: run.id, projectId: project.id, type: 'pr_created', message: `已创建草稿 PR #${pr.number}（未合并）：${pr.url}`, data: pr });
 

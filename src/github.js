@@ -114,6 +114,11 @@ export async function createPullRequest(config, { owner, repo, title, head, base
   return { number: pr.number, url: pr.html_url, reused: false };
 }
 
+export async function findPullRequestByHead(config, owner, repo, head) {
+  const data = await api(config, 'GET', `/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(`${owner}:${head}`)}&state=open&per_page=20`);
+  return Array.isArray(data) ? data : [];
+}
+
 export async function getPullRequest(config, owner, repo, number) {
   return api(config, 'GET', `/repos/${owner}/${repo}/pulls/${number}`);
 }
