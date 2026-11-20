@@ -29,7 +29,7 @@ const planHead = git(['rev-parse', 'HEAD']);
 const runId = 'run_ghpub00001'; const branch = `wb/plan-${runId.slice(-6)}`;
 git(['branch', branch, planHead]);
 git(['push', '-q', 'origin', branch]);
-let pulls = 0; let creates = 0; let existingSha = planHead; let draftExists = false; let draftCreated = 0; let ciShaOverride = '';
+let pulls = 0; let creates = 0; let existingSha = planHead; let draftExists = false; let draftCreated = 0; let ciShaOverride = ''; let existingDraft = true;
 const mock = http.createServer(async (req, res) => {
   req.resume();
   for await (const _ of req) { /* drain */ }
@@ -39,7 +39,9 @@ const mock = http.createServer(async (req, res) => {
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') {
     pulls += 1;
     if (!draftExists) return send(200, []);
-    return send(200, [{ number: 7, html_url: 'https://example.invalid/pr/7', state: 'open', draft: true, base: { ref: 'main' }, head: { ref: branch, sha: existingSha } }]);
+    const qhead = String(u.searchParams.get('head') || 'fixture:');
+    const ref = qhead.includes(':') ? qhead.slice(qhead.indexOf(':') + 1) : qhead;
+    return send(200, [{ number: 7, html_url: 'https://example.invalid/pr/7', state: 'open', draft: existingDraft, base: { ref: 'main' }, head: { ref, sha: existingSha } }]);
   }
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { creates += 1; draftCreated += 1; draftExists = true; return send(201, { number: 8, html_url: 'https://example.invalid/pr/8', state: 'open', draft: true }); }
   if (u.pathname === '/repos/fixture/repo/actions/runs') {
@@ -116,11 +118,21 @@ try {
   assert.equal(creates, 1, 'mismatch must not create a Draft');
   assert.notEqual(store.getRun(run2.id).status, 'accepted');
   existingSha = planHead;
+  // 3b) 已存在 PR 非 Draft：拒绝认领、零创建。
+  const run4 = store.createRun({ id: 'run_ghpub00004', projectId: project.id, planId: plan.id, goal: 'nondraft', status: 'awaiting_acceptance', verificationStatus: 'LOCAL_VERIFIED' });
+  const branch4 = `wb/plan-${run4.id.slice(-6)}`; git(['branch', branch4, planHead]);
+  store.updateRun(run4.id, { verified_sha: planHead, result_json: { planHead, productAcceptance: 'PASS', productPlanHead: planHead } });
+  store.createAction({ id: 'act_pr_nondraft', runId: run4.id, type: 'github-pr', status: 'running', payload: { owner: 'fixture', repo: 'repo', head: branch4, base: 'main', sha: planHead } });
+  draftExists = true; existingDraft = false;
+  const nonDraft = await orch.publishRun(store.getRun(run4.id), project, branch4, planHead, []);
+  assert.ok(nonDraft.blocked.length > 0, 'non-draft existing PR must block');
+  assert.equal(creates, 1, 'non-draft must not create a Draft');
+  existingDraft = true;
   const evidence = {
     kind: 'github-publish-ci-accept-recovery', creates: draftCreated, candidateSha: git(['rev-parse', 'HEAD'], REPO), runId, verifiedSha: planHead,
     pushRef: { branch, sha: git(['rev-parse', `refs/heads/${branch}`]) }, bareRemoteRef: git(['rev-parse', `refs/heads/${branch}`], bare),
     draft: { recovered: true, number: 7, creates, pulls, expectedOne: draftCreated === 1 }, ci: { conclusion: refreshed.conclusion, requiredSha: refreshed.requiredSha, mismatched: refreshed.mismatched }, acceptedSha: accepted.result_json.acceptedSha,
-    mismatchNegative: { blocked: true, creates },
+    mismatchNegative: { blocked: true, creates }, nonDraftRejected: { blocked: true, creates },
     action: { status: action.status, recovered: action.result_json?.recovered, sha: action.result_json?.sha }, at: new Date().toISOString(),
   };
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true }); fs.writeFileSync(path.join(EVIDENCE_DIR, 'run.json'), JSON.stringify(evidence, null, 2));

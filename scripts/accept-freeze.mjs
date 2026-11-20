@@ -54,7 +54,7 @@ for (const group of groups) {
     try {
       const e = JSON.parse(fs.readFileSync('demo/evidence/github-publish/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
-      ok = e.candidateSha === head && e.creates === 1 && e.ci?.conclusion === 'success' && e.acceptedSha === e.verifiedSha && e.action?.recovered === true && e.mismatchNegative?.blocked === true;
+      ok = e.candidateSha === head && e.creates === 1 && e.ci?.conclusion === 'success' && e.acceptedSha === e.verifiedSha && e.action?.recovered === true && e.mismatchNegative?.blocked === true && e.nonDraftRejected?.blocked === true;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6g-github-publish-recovery-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/github-publish/run.json' });

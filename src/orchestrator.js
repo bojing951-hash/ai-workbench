@@ -2122,10 +2122,12 @@ export class Orchestrator {
       verification.ci = ci;
     }
 
+    const ciEvidence = publish.ci?.evidence ? { ...publish.ci.evidence, source: 'publish', sha: planHead, runId: run.id } : (run.result_json?.ciEvidence || null);
     const result = {
       planBranch,
       planHead,
       verifiedSha: planHead,
+      ciEvidence,
       loopId: run.result_json?.loopId || '',
       taskLevelOnly: !!loopScoped,
       verificationStatus: verification.status,
@@ -2228,6 +2230,28 @@ export class Orchestrator {
     return last;
   }
 
+  publishStillAuthorized(runId, projectId, expectedSha, stage = 'remote-write') {
+    const project = this.store.getProject(projectId);
+    const run = this.store.getRun(runId);
+    if (!project || !run) return { ok: false, reason: `${stage}: Run/Project 不存在` };
+    if (!project.remote_push_authorized) return { ok: false, reason: `${stage}: 项目已撤权远端推送` };
+    if (project.config_json?.publish === false) return { ok: false, reason: `${stage}: 项目已关闭远端发布` };
+    if (run.status === RunStatus.CANCELLED || run.status === RunStatus.FAILED) return { ok: false, reason: `${stage}: Run 状态 ${run.status}` };
+    const loopId = run.result_json?.loopId;
+    if (loopId) {
+      const loop = this.store.getLoop(loopId);
+      if (!loop) return { ok: false, reason: `${stage}: Loop 不存在` };
+      if (loop.status === 'cancelled' || loop.status === 'blocked') return { ok: false, reason: `${stage}: Loop 状态 ${loop.status}` };
+      if (String(run.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') return { ok: false, reason: `${stage}: 产品终审未 PASS` };
+      const auditSha = run.result_json?.productPlanHead || run.verified_sha || '';
+      if (auditSha && auditSha !== expectedSha) return { ok: false, reason: `${stage}: 审计 SHA 偏差 ${auditSha} != ${expectedSha}` };
+    }
+    if (run.verified_sha && run.verified_sha !== expectedSha && !loopId) {
+      return { ok: false, reason: `${stage}: Run verified_sha 偏差 ${run.verified_sha} != ${expectedSha}` };
+    }
+    return { ok: true, project, run };
+  }
+
   async publishAcceptedRun(run, project, planHead, tasks = []) {
     const latest = this.store.getRun(run.id) || run;
     if (!latest || !planHead) return { blocked: ['缺少最终 SHA'], pr: null, localOnly: true, ci: null };
@@ -2257,13 +2281,10 @@ export class Orchestrator {
     const actions = [];
     const blocked = [];
     const ownerRepo = parseGithubRemote(await gitops.remoteUrl(project.local_path)) || null;
-    const freshProject = this.store.getProject(project.id) || project;
-    const freshRun = this.store.getRun(run.id) || run;
+    const pre = this.publishStillAuthorized(run.id, project.id, planHead, 'push-before');
+    if (!pre.ok) return { actions, blocked: [pre.reason], pr: null, localOnly: true, planBranch, planHead, ci: null };
+    const freshProject = pre.project; const freshRun = pre.run;
     const projectConfig = freshProject.config_json || {};
-    if (!freshProject.remote_push_authorized) return { actions, blocked: ['项目已撤权远端推送，零远端写入'], pr: null, localOnly: true, planBranch, planHead, ci: null };
-    if (projectConfig.publish === false) return { actions, blocked: ['项目已关闭远端发布，零远端写入'], pr: null, localOnly: true, planBranch, planHead, ci: null };
-    if (freshRun.status === RunStatus.CANCELLED) return { actions, blocked: ['Run 已取消，零远端写入'], pr: null, localOnly: true, planBranch, planHead, ci: null };
-    if (freshRun.result_json?.loopId && String(freshRun.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') return { actions, blocked: ['Loop Run 产品终审未 PASS，零远端写入'], pr: null, localOnly: true, planBranch, planHead, ci: null };
     const canPush = !!this.config.github.token && this.config.policy.autoPush && this.config.github.push && projectConfig.publish !== false;
     if (!canPush) {
       const reason = !this.config.github.token
@@ -2305,20 +2326,28 @@ export class Orchestrator {
       this.emit({ runId: run.id, projectId: project.id, type: 'branch_pushed', message: `已推送分支 ${planBranch}（${planHead.slice(0, 8)}）到 GitHub`, data: { owner, repo, planBranch, sha: planHead } });
 
       let pr = null;
+      const beforeDraft = this.publishStillAuthorized(run.id, project.id, planHead, 'push-to-draft');
+      if (!beforeDraft.ok) throw new Error(beforeDraft.reason);
       const baseBranch = (await gh.getRepo(this.config, owner, repo))?.default_branch || project.default_branch || 'main';
       let prAction = this.store.listActions(run.id).find((a) => a.type === 'github-pr' && ['running', 'done'].includes(a.status));
       if (prAction?.status === 'done' && prAction.result_json?.pr) {
         pr = prAction.result_json.pr;
+        const stored = prAction.payload_json || {};
+        if (pr.draft === false) throw new Error('GITHUB_DRAFT_IDENTITY_MISMATCH：已存 PR 不是 Draft');
+        if (pr.number && pr.head && pr.head !== planBranch) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：已存 PR head=${pr.head}`);
+        if (pr.base && pr.base !== baseBranch) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：已存 PR base=${pr.base}`);
+        if (pr.sha && pr.sha !== planHead) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：已存 PR sha=${pr.sha}`);
+        if (stored.owner && pr.owner && stored.owner !== pr.owner) throw new Error('GITHUB_DRAFT_IDENTITY_MISMATCH：repo owner');
       } else {
         if (!prAction) prAction = this.store.createAction({ id: newId('act'), runId: run.id, type: 'github-pr', status: 'running', payload: { owner, repo, head: planBranch, base: baseBranch, sha: planHead } });
         // 发布回执恢复：先按 head 查询已存在的 Draft；repo/base/head.sha 全部匹配才认领，避免重复 PR。
         const existing = await gh.findPullRequestByHead(this.config, owner, repo, planBranch);
-        const match = existing.find((x) => x?.state === 'open' && x?.base?.ref === baseBranch && String(x?.head?.sha || x?.head?.ref || '') && String(x?.head?.sha || '') === planHead);
+        const match = existing.find((x) => x?.state === 'open' && x?.draft === true && x?.base?.ref === baseBranch && x?.head?.ref === planBranch && String(x?.head?.sha || '') === planHead);
         if (match) {
-          pr = { number: match.number, url: match.html_url, draft: match.draft !== false, head: planBranch, base: baseBranch, sha: planHead, recovered: true };
+          pr = { number: match.number, url: match.html_url, draft: true, head: planBranch, base: baseBranch, sha: planHead, recovered: true };
           this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead, recovered: true } });
         } else if (existing.length) {
-          throw new Error(`GITHUB_PR_SHA_MISMATCH：head=${planBranch} 已有 PR 但 base/SHA 与审计 SHA 不一致，拒绝重复创建`);
+          throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：head=${planBranch} 已有 PR 但非 Draft/head/base/SHA 与审计 SHA 不一致，拒绝重复创建`);
         }
       }
       if (!pr) {
@@ -2331,6 +2360,10 @@ export class Orchestrator {
           body: this.buildPrBody(run, project, tasks, planHead),
           draft: true,
         });
+        if (!pr?.number || pr.draft === false || (pr.head?.ref && pr.head.ref !== planBranch) || (pr.base?.ref && pr.base.ref !== baseBranch) || (pr.head?.sha && String(pr.head.sha) !== planHead)) {
+          throw new Error('GITHUB_DRAFT_IDENTITY_MISMATCH：创建响应 repo/base/head/SHA/draft 校验失败，拒绝记作成功');
+        }
+        pr = { number: pr.number, url: pr.html_url || pr.url, draft: true, head: planBranch, base: baseBranch, sha: planHead };
         this.store.updateAction(prAction.id, { status: 'done', result: { pr, sha: planHead } });
       }
       actions.push(this.store.getAction(prAction.id));
@@ -2791,8 +2824,18 @@ export class Orchestrator {
       if (!project.remote_push_authorized || project.config_json?.publish === false) { blocked.push({ runId, reason: '远端发布已撤权，零新增远端写' }); continue; }
       if (run.status === RunStatus.CANCELLED) { blocked.push({ runId, reason: 'Run 已取消，零新增远端写' }); continue; }
       if (run.result_json?.loopId && String(run.result_json?.productAcceptance || '').toUpperCase() !== 'PASS') { blocked.push({ runId, reason: '产品终审未 PASS，零新增远端写' }); continue; }
-      // 窗口 3：Draft 已记录、CI 尚未完成 → 续查同 SHA CI，不重复创建 Draft。
+      // 窗口 3：Draft 已记录、CI 尚未完成 → 续查同 SHA CI；若 CI action 尚未建立，则经 publishRun 续建并查同一 SHA。
       if (prAction?.status === 'done' && prAction.result_json?.pr) {
+        const payload = prAction.payload_json || {};
+        const sha = String(payload.sha || run.verified_sha || '');
+        if (!sha) { blocked.push({ runId, reason: 'sha missing' }); continue; }
+        if (!ciAction) {
+          try {
+            const publish = await this.publishRun(run, project, String(payload.head || `wb/plan-${run.id.slice(-6)}`), sha, this.store.listTasks({ runId: run.id }));
+            recovered.push({ runId, window: 'ci-action-rebuild', pr: prAction.result_json.pr.number, ci: publish.ci?.status || null });
+          } catch (err) { blocked.push({ runId, reason: String(err?.message || err).slice(0, 500) }); }
+          continue;
+        }
         try { const ci = await this.refreshCi(run.id); recovered.push({ runId, window: 'ci-refresh', pr: prAction.result_json.pr.number, status: ci.status || ci.conclusion }); }
         catch (err) { blocked.push({ runId, reason: String(err?.message || err).slice(0, 500) }); }
         continue;
