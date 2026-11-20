@@ -16,7 +16,7 @@ import { spawn, spawnSync } from 'node:child_process';
 const NODE = process.execPath;
 const REPO = process.cwd();
 const IMAGE = process.env.PROD_HANDOFF_IMAGE || 'ai-workbench-e2e:longwriter';
-const DOCKER = process.env.DOCKER_BIN || '/Applications/Docker.app/Contents/Resources/bin/docker';
+const DOCKER = process.env.DOCKER_BIN || 'docker';
 const DOCKER_CONFIG = process.env.DOCKER_CONFIG || path.join(os.homedir(), '.docker');
 const EVIDENCE_DIR = path.resolve(process.env.PROD_HANDOFF_EVIDENCE_DIR || 'demo/evidence/docker-production-handoff');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
