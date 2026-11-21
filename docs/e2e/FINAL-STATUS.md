@@ -169,3 +169,5 @@
 - 2026-11-21: 正式 REST 发布等待中撤权（PATCH project remotePushAuthorized=false，Draft POST=0、Loop 非完成）与正式两轮 Loop 在 Draft done/CI action 未持久化窗口 SIGKILL 后恢复（不重跑编码/审计、同 SHA CI 绿、/accept 成功）专项接入 accept:freeze/CI。
 
 - 2026-11-21: 新增最后 PR GET 期间直接取消父 Loop（零 Draft、/accept 拒绝）、重启后 Loop completed/Run accepted/二次重启幂等且审计 HTTP 零增量、待续 CI 下当前 Draft head 变化拒绝旧 SHA；全部接入 accept:freeze/CI。
+
+- 2026-11-21: /accept 改为重新读取当前 Draft 并与刷新/恢复共用身份规则；CI 已绿后 Draft head 变化、CI pending 时 base 变化（head SHA 相同）均拒绝验收；记录拒绝原因、PR GET 次数与请求 SHA；新增直接取消父 Loop 专项。

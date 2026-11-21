@@ -422,7 +422,7 @@ test('场景A：单任务完整流水线，审计先 fail 后 pass，第二轮 A
     assert.ok(/未授权远端推送|GITHUB_TOKEN/.test(String(actions[0].result_json.reason || '')));
 
     // ---- 人工验收：只记录验收，不合并主分支 ----
-    const accepted = h.orchestrator.acceptRun(started.runId, { confirmLocalOnly: true });
+    const accepted = await h.orchestrator.acceptRun(started.runId, { confirmLocalOnly: true });
     assert.equal(accepted.status, 'accepted');
     assert.equal(accepted.result_json.merged, false);
     assert.equal(accepted.result_json.localOnlyAccepted, true);
@@ -639,7 +639,7 @@ test('场景D：预算耗尽时暂停运行并记录预算原因', { timeout: 12
     const pausedEvents = eventsOfType(h.store, started.runId, 'run_paused');
     assert.ok(pausedEvents.some((e) => e.data_json?.kind === 'budget'), 'run_paused 事件应标注 kind=budget');
     // 暂停在 awaiting_acceptance 之前，不允许人工验收
-    assert.throws(() => h.orchestrator.acceptRun(started.runId), (err) => err?.code === 'RUN_NOT_READY');
+    await assert.rejects(() => h.orchestrator.acceptRun(started.runId), (err) => err?.code === 'RUN_NOT_READY');
   } finally {
     await h.cleanup();
   }

@@ -2489,7 +2489,7 @@ export class Orchestrator {
         draftCurrent = { number: prNumber, headSha: currentHead, draft: full?.draft, state: full?.state, base: full?.base?.ref, head: full?.head?.ref, baseRepo, headRepo };
         const expectedRepo = `${owner}/${repo}`;
         if (currentHead !== sha) { ev.status = 'failed'; ev.conclusion = 'failure'; ev.draftMismatch = { expectedSha: sha, currentHeadSha: currentHead, pr: prNumber }; }
-        else if (full?.draft !== true || full?.state !== 'open' || (baseRepo && baseRepo !== expectedRepo) || (headRepo && headRepo !== expectedRepo)) { ev.status = 'failed'; ev.conclusion = 'failure'; ev.draftMismatch = { expectedSha: sha, currentHeadSha: currentHead, pr: prNumber, reason: 'draft/state/repo mismatch' }; }
+        else if (full?.draft !== true || full?.state !== 'open' || (baseRepo && baseRepo !== expectedRepo) || (headRepo && headRepo !== expectedRepo) || String(full?.base?.ref || '') !== String(prAction?.payload_json?.base || full?.base?.ref || '')) { ev.status = 'failed'; ev.conclusion = 'failure'; ev.draftMismatch = { expectedSha: sha, currentHeadSha: currentHead, pr: prNumber, currentBase: full?.base?.ref || '', expectedBase: prAction?.payload_json?.base || '', reason: 'draft/state/repo/base mismatch' }; }
       } catch (err) {
         ev.status = 'failed'; ev.conclusion = 'failure'; ev.draftMismatch = { expectedSha: sha, pr: prNumber, reason: String(err?.message || err).slice(0, 300) };
       }
@@ -3158,7 +3158,7 @@ export class Orchestrator {
     return this.store.getRun(runId);
   }
 
-  acceptRun(runId, { confirmLocalOnly = false } = {}) {
+  async acceptRun(runId, { confirmLocalOnly = false } = {}) {
     const run = this.store.getRun(runId);
     if (!run) throw new PolicyError('RUN_NOT_FOUND', `运行不存在：${runId}`);
     this.ensureControlLease(run.project_id);
@@ -3178,6 +3178,22 @@ export class Orchestrator {
     const verification = run.verification_status || '';
     const verifiedSha = run.verified_sha || '';
     const ciEvidence = run.result_json?.ciEvidence || null;
+    // 最终验收与刷新/恢复共用同一 Draft 身份规则：验收时重新读取当前远端 Draft。
+    const prAction = this.store.listActions(run.id).filter((a) => a.type === 'github-pr' && a.status === 'done').at(-1);
+    if (prAction?.result_json?.pr?.number) {
+      const payload = prAction.payload_json || {};
+      const owner = String(payload.owner || ''); const repo = String(payload.repo || '');
+      if (!owner || !repo) throw new PolicyError('DRAFT_IDENTITY_MISMATCH', '当前 Draft 缺少 repo 身份，拒绝验收');
+      const full = await gh.getPullRequest(this.config, owner, repo, prAction.result_json.pr.number);
+      const bound = this.validateDraftIdentity(full, {
+        owner, repo,
+        baseBranch: String(payload.base || full?.base?.ref || ''),
+        planBranch: String(payload.head || full?.head?.ref || ''),
+        planHead: verifiedSha,
+      });
+      if (!bound.ok) throw new PolicyError('DRAFT_IDENTITY_MISMATCH', `验收拒绝：当前 Draft 与审计绑定不一致（${bound.reason}）`);
+      if (String(payload.sha || '') !== String(verifiedSha || '')) throw new PolicyError('DRAFT_IDENTITY_MISMATCH', `验收拒绝：Draft 审计 SHA ${payload.sha || 'missing'} != ${verifiedSha}`);
+    }
     const evidenceOk = !!ciEvidence && ciEvidence.status === 'passed' && String(ciEvidence.sha || '') === String(verifiedSha || '') && String(ciEvidence.requiredSha || '') === String(verifiedSha || '') && !(ciEvidence.mismatched || []).length && !(ciEvidence.missingChecks || []).length;
     if (verification === 'CI_PASSED' && !evidenceOk) {
       throw new PolicyError('CI_EVIDENCE_MISSING', 'CI_PASSED 缺少同 SHA 的持久化证据（或历史证据早于新远端状态）；必须重新刷新同一 SHA 的 CI 后才能验收');

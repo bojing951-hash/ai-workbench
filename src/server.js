@@ -525,7 +525,7 @@ export function createApp({ config, store, orchestrator, loops = null }) {
       }
       if (action === 'accept') {
         const body = await readBody(req, maxBody).catch(() => ({}));
-        return sendJson(res, 200, { ok: true, data: orchestrator.acceptRun(runId, { confirmLocalOnly: !!body.confirmLocalOnly }) });
+        return sendJson(res, 200, { ok: true, data: await orchestrator.acceptRun(runId, { confirmLocalOnly: !!body.confirmLocalOnly }) });
       }
       if (action === 'ci-refresh') {
         return sendJson(res, 200, { ok: true, data: await orchestrator.refreshCi(runId) });

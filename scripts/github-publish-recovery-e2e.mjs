@@ -98,7 +98,7 @@ try {
   assert.equal(refreshed.mismatched.length, 0);
   const afterRefresh = store.getRun(run.id);
   assert.equal(afterRefresh.verification_status, 'CI_PASSED');
-  const accepted = orch.acceptRun(run.id, {});
+  const accepted = await orch.acceptRun(run.id, {});
   assert.equal(accepted.status, 'accepted');
   assert.equal(accepted.result_json?.acceptedSha, planHead);
   // 2b) 异 SHA 绿灯不得流入 CI_PASSED。

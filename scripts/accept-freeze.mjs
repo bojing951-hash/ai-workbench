@@ -199,7 +199,7 @@ for (const group of groups) {
       const e = JSON.parse(fs.readFileSync('demo/evidence/ci-evidence/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
       const r = e.results || {};
-      ok = e.candidateSha === head && r.sameShaGreen === 'accepted' && r.redRejected === true && r.pendingToGreen === 'accepted' && r.missingCheckRejected === true && r.foreignShaRejected === true && r.staleCiPassedRejected === true && r.draftHeadChangedRejected === true && r.sameDraftSameShaAccepted === true && r.auditedShaPushed?.remote === e.planHead && r.auditedShaPushed?.remote !== r.auditedShaPushed?.drift;
+      ok = e.candidateSha === head && r.sameShaGreen === 'accepted' && r.redRejected === true && r.pendingToGreen === 'accepted' && r.missingCheckRejected === true && r.foreignShaRejected === true && r.staleCiPassedRejected === true && r.draftHeadChangedRejected === true && r.sameDraftSameShaAccepted === true && r.acceptAfterHeadChangeRejected === true && r.restartBaseChangedRejected === true && /Draft/.test(String(r.acceptHeadChangeReason||'')) && /Draft/.test(String(r.restartBaseChangeReason||'')) && Number(r.prGets) > 0 && r.auditedShaPushed?.remote === e.planHead && r.auditedShaPushed?.remote !== r.auditedShaPushed?.drift;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6k-ci-evidence-accept-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/ci-evidence/run.json' });

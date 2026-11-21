@@ -36,7 +36,7 @@ test('v2.7 P1-D：失败的控制 API 不得泄漏 30 分钟项目写租约', as
     store.createProject({ id: 'p', name: 'control', localPath: '/tmp/none', testCommand: 'true' });
     store.createRun({ id: 'run1', projectId: 'p', planId: 'plan1', goal: 'g', mode: 'single', status: 'running' });
     const o = new Orchestrator({ config, store, bus: new EventBus(), deps: { runAgent: async () => ({}), chooseAgent: async () => 'claude', runAudit: async () => ({}), checkAgents: async () => [] } });
-    assert.throws(() => o.acceptRun('run1', { confirmLocalOnly: true }), /运行尚未完成/);
+    await assert.rejects(() => o.acceptRun('run1', { confirmLocalOnly: true }), /运行尚未完成/);
     assert.equal(store.getProjectLease('p').write_owner, '', 'acceptRun 失败后必须释放租约');
     store.updateRun('run1', { status: 'accepted' });
     await assert.rejects(async () => o.resumeRun('run1'), /运行已结束/);

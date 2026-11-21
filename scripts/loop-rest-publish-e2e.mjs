@@ -48,14 +48,15 @@ const mock=http.createServer(async(req,res)=>{
 });
 await new Promise(r=>mock.listen(0,'127.0.0.1',r));
 
-let prCreates = 0;
+let prCreates = 0; let prIdentity = null;
 const ghApi = http.createServer(async (req, res) => {
   let bodyText=''; for await (const c of req) bodyText+=c;
   const u = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') return send(200, []);
-  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { prCreates += 1; const body = bodyText ? JSON.parse(bodyText) : {}; return send(201, { number: 21, html_url: 'https://example.invalid/pr/21', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head), repo: { full_name: 'fixture/repo' } } }); }
+  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { prCreates += 1; const body = bodyText ? JSON.parse(bodyText) : {}; prIdentity = { number: 21, html_url: 'https://example.invalid/pr/21', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head), repo: { full_name: 'fixture/repo' } } }; return send(201, prIdentity); }
+  if (u.pathname === '/repos/fixture/repo/pulls/21' && req.method === 'GET') return send(200, prIdentity);
   if (u.pathname === '/repos/fixture/repo/actions/runs') { const sha = u.searchParams.get('head_sha') || ''; return send(200, { workflow_runs: [{ id: 21, name: 'ci', status: 'completed', conclusion: 'success', head_sha: sha, html_url: 'https://example.invalid/ci/21' }] }); }
   return send(404, { message: 'not found' });
 });
