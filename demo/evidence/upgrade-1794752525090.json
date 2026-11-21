@@ -1,0 +1,45 @@
+{
+  "type": "self-upgrade-candidate-validation",
+  "at": "2026-11-15T14:22:05.090Z",
+  "candidateId": "cand_mwhx9uwz_l3gw",
+  "candidateDir": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhx9uwz_l3gw",
+  "sourceRoot": "/Users/cast/Downloads/开发工作台",
+  "tests": {
+    "ok": true,
+    "code": 0,
+    "durationMs": 3930,
+    "logPath": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhx9uwz_l3gw/candidate-tests.log"
+  },
+  "smoke": {
+    "ok": true,
+    "httpStatus": 200,
+    "version": "2.2.0",
+    "projects": 0,
+    "agents": [
+      "dsh",
+      "claude",
+      "custom"
+    ],
+    "dataDir": "/Users/cast/Downloads/开发工作台/data/candidates/cand_mwhx9uwz_l3gw/candidate-data",
+    "port": 58136
+  },
+  "realE2E": {
+    "runId": "run_mwhx9ymad3373c9b",
+    "status": "awaiting_acceptance",
+    "verificationStatus": "LOCAL_VERIFIED",
+    "tasks": [
+      {
+        "seq": 1,
+        "status": "passed",
+        "attempts": 1,
+        "audits": [
+          "pass"
+        ]
+      }
+    ],
+    "stopReason": "部分发布动作待授权：项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR"
+  },
+  "passed": true,
+  "stableInstanceUnaffected": true,
+  "note": "候选版本验证通过后才允许创建升级 PR；当前脚本不自动替换运行实例、不合并主分支。"
+}

@@ -1,0 +1,9 @@
+✔ v3.5 真实 Workbench Server：Coding 中 SIGKILL → 重启自动恢复 → 测试/审计/Commit/awaiting_acceptance (3106.032375ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3187.953625

@@ -1,0 +1,65 @@
+{
+  "restarts": [
+    {
+      "at": "2026-11-16T06:55:47.689Z",
+      "reason": "process-exit",
+      "attempt": 1,
+      "delayMs": 5000
+    }
+  ],
+  "crashes": [
+    {
+      "at": "2026-11-16T06:55:47.688Z",
+      "code": null,
+      "signal": "SIGKILL",
+      "pid": 53050
+    }
+  ],
+  "recoveries": [
+    {
+      "at": "2026-11-16T06:54:41.676Z",
+      "ok": true,
+      "result": {
+        "recoveredRuns": [],
+        "recoveredLoops": [],
+        "at": "2026-11-16T06:54:41.674Z"
+      }
+    },
+    {
+      "at": "2026-11-16T06:55:59.255Z",
+      "ok": true,
+      "result": {
+        "recoveredRuns": [
+          {
+            "runId": "run_mwiws35q508a7352",
+            "resumed": false,
+            "reason": "项目写租约由其他执行者持有（wb:53050:mwiwroim:616vmw5t，fence=1），拒绝控制写入"
+          }
+        ],
+        "recoveredLoops": [],
+        "at": "2026-11-16T06:55:59.254Z"
+      }
+    },
+    {
+      "at": "2026-11-16T06:57:32.479Z",
+      "ok": true,
+      "result": {
+        "recoveredRuns": [
+          {
+            "runId": "run_mwiws35q508a7352",
+            "resumed": true
+          }
+        ],
+        "recoveredLoops": [],
+        "at": "2026-11-16T06:57:32.478Z"
+      }
+    }
+  ],
+  "startedAt": "2026-11-16T06:54:35.138Z",
+  "circuitOpen": false,
+  "childPid": 57442,
+  "supervisorPid": 57440,
+  "lastStartAt": "2026-11-16T06:57:25.840Z",
+  "heartbeatAt": "2026-11-16T06:58:55.845Z",
+  "nextRestartAt": "2026-11-16T06:55:52.689Z"
+}

@@ -1,0 +1,51 @@
+{
+  "version": "3.3.0",
+  "baseline": "v3.2.0 / PR #14",
+  "branch": "v3.3.0",
+  "tests": {
+    "total": 306,
+    "pass": 302,
+    "skipped": 4,
+    "fail": 0,
+    "log": "demo/evidence/v3.3/tests.log"
+  },
+  "playwright": {
+    "ok": true,
+    "checks": 15,
+    "errors": []
+  },
+  "p0_1": {
+    "perCallIdentity": true,
+    "unknownGlmNotExempt": true,
+    "legacyInferredNotUpgraded": true
+  },
+  "p0_2": {
+    "unknownRetained": true,
+    "independentRetry": true,
+    "settledNoReplay": true,
+    "ttlToUnknown": true
+  },
+  "finalAcceptance": {
+    "a_b_c_true": true,
+    "productAuditFinalSha": true,
+    "acceptRunAccepted": true,
+    "missingFeatureBlocked": true,
+    "fakeModelSimulation": true
+  },
+  "realE2E": "BLOCKED",
+  "24h": "NOT_VERIFIED",
+  "commit": "2bbf76e",
+  "pr": "https://github.com/bojing951-hash/ai-workbench/pull/15",
+  "budget": {
+    "remainingTokens": 0,
+    "remainingCostCny": 14.7625,
+    "usedBudgetTokens": 3495479,
+    "maxTokens": 3000000,
+    "reservedTokens": 0,
+    "noReset": true
+  },
+  "ci": {
+    "status": "success",
+    "url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43962421486"
+  }
+}

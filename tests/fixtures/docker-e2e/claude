@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+cat > /dev/null || true
+if [ -f /config/fake-invoked ]; then
+  printf "%s\n" "module.exports = () => 'READY';" > /workspace/format.cjs
+else
+  printf "%s\n" "module.exports = () => 'ready';" > /workspace/format.cjs
+  : > /config/fake-invoked
+fi
+printf '%s\n' '{"result":"fixture edited formatter","session_id":"fixture","total_cost_usd":0,"usage":{"input_tokens":2,"output_tokens":2}}'

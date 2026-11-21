@@ -31,3 +31,55 @@ jobs:
         run: |
           echo "Demo projects are acceptance fixtures; their tests are expected to fail before an agent implements them."
           ls demo/*/tests/*.test.js | wc -l
+
+  freeze-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (full history for fixed historical commits)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Build runtime image
+        run: docker build -t ai-workbench-runtime:2.2 -f docker/runtime.Dockerfile .
+
+      - name: Build deterministic container-agent fixtures
+        run: |
+          docker build -t ai-workbench-e2e:fixture tests/fixtures/docker-e2e
+          docker build -t ai-workbench-e2e:longwriter tests/fixtures/docker-longwriter
+
+      - name: Freeze acceptance (real Docker + Chat upgrade + Loop + regressions)
+        run: npm run accept:freeze
+
+      - name: Upload same-run acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freeze-evidence-${{ github.sha }}
+          path: |
+            demo/evidence/offline-e2e
+            demo/evidence/docker-handoff
+            demo/evidence/chat-upgrade
+            demo/evidence/docker-production-handoff
+            demo/evidence/loop-terminal
+            demo/evidence/github-publish
+            demo/evidence/github-restart-recovery
+            demo/evidence/loop-rest-publish
+            demo/evidence/loop-cancel-publish
+            demo/evidence/loop-cancel-direct-publish
+            demo/evidence/loop-revoke-publish
+            demo/evidence/accept-concurrency-cli
+            demo/evidence/ci-refresh-order
+            demo/evidence/ci-refresh-cross-process
+            demo/evidence/fixed-sha-trial
+            demo/evidence/loop-crash-recovery
+            demo/evidence/loop-quality-gate
+            demo/evidence/ci-evidence
+            demo/evidence/install-acceptance
+          if-no-files-found: error

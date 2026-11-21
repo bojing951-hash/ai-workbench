@@ -1,0 +1,6 @@
+{
+  "name": "w-autonomy-acceptance",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/" }
+}

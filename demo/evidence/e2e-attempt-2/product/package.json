@@ -1,0 +1,12 @@
+{
+  "name": "local-expense-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "本地消费记录小站：纯前端本地记账应用，数据保存在浏览器 localStorage，零依赖、无网络请求",
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

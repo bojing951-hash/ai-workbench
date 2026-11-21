@@ -1,0 +1,27 @@
+
+# 2026-11-17T13:05:50.089Z exec: /Applications/Docker.app/Contents/Resources/bin/docker run --rm -i --name ai-workbench.container-1794920750089-daa26f --label ai-workbench.container=1 --label ai-workbench.run-id=run_mwkp36m00feb7cc7 --label ai-workbench.task-id=task_mwkp36m4ef0bd65a --label ai-workbench.project-id=proj_mwkoho03f9af18df --label ai-workbench.owner=wb:43503:mwkpfofw:s8i2xisd --label ai-workbench.fence=11 --network none --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m --tmpfs /run:rw,nosuid,nodev,size=64m --pids-limit 512 --memory 2g --cpus 2 --user 501:20 --workdir /workspace -v /Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1:/workspace:rw --env-file /var/folders/9f/db_l8h8s5tz45287qy9v7ml40000gn/T/wb-container-env-IrgYdM/env --entrypoint sh ai-workbench-runtime:2.2 -c mkdir -p "$HOME" && "node" --test "tests/app.test.js"
+# cwd: /Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1
+✔ 金额校验：负数、非数字、零、超两位小数均给出明确错误 (2.270667ms)
+✔ 金额校验：合法金额通过并规范为两位小数数字 (0.738667ms)
+✔ 日期校验：非 YYYY-MM-DD 或不存在的日期均报错 (0.225834ms)
+✔ 分类 / 备注 / 类型校验：空分类、超长备注、非法类型报错 (0.161042ms)
+✔ 持久化：合法记录写入 localStorage，重新读取（模拟刷新）后仍存在 (1.257459ms)
+✔ 非法输入不写入 localStorage (0.215417ms)
+✔ 更新与删除记录并持久化 (0.489125ms)
+✔ 时间范围筛选：含端点、空范围返回全部；非法范围报错 (0.436ms)
+✔ 汇总统计：总收入、总支出、结余与分类统计（两位小数精度） (0.376584ms)
+✔ 消费预警：月度预算超支、单笔大额、结余低于下限 (0.446375ms)
+✔ 空数据或未设置阈值时不产生任何预警（不误报） (0.143875ms)
+✔ 格式化：金额两位小数、日期 YYYY-MM-DD (0.116208ms)
+✔ 阈值设置：负数 / 非数字报错，留空表示未设置，保存后可读取 (0.234917ms)
+✔ 静态结构：四个区域齐全，且无任何外部网络资源引用 (1.960292ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 68.034792
+
+# exit=0 signal= duration=281ms

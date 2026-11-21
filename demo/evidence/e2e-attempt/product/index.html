@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>本地消费记录小站</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="page-header">
+    <h1>本地消费记录小站</h1>
+    <p class="tagline">记录每一笔收支，看清明钱的去向。数据仅保存在本浏览器 localStorage，不联网、不上传。</p>
+  </header>
+
+  <main class="page-main">
+    <!-- 消费决策提示（无提示时整块隐藏） -->
+    <section id="alerts" class="alerts panel" hidden>
+      <h2>消费提示</h2>
+      <ul id="alert-list" class="alert-list"></ul>
+    </section>
+
+    <!-- 收支汇总 -->
+    <section class="summary-cards" aria-label="收支汇总">
+      <div class="card income-card">
+        <h2>收入合计</h2>
+        <p class="card-value" id="total-income">¥0.00</p>
+      </div>
+      <div class="card expense-card">
+        <h2>支出合计</h2>
+        <p class="card-value" id="total-expense">¥0.00</p>
+      </div>
+      <div class="card balance-card">
+        <h2>结余</h2>
+        <p class="card-value" id="total-balance">¥0.00</p>
+      </div>
+    </section>
+    <p class="summary-count" id="summary-count">当前时间范围共 0 条记录</p>
+
+    <!-- 时间范围筛选 -->
+    <section class="panel">
+      <h2>时间范围</h2>
+      <div class="range-bar">
+        <label for="range-select">范围</label>
+        <select id="range-select">
+          <option value="all" selected>全部</option>
+          <option value="month">本月</option>
+          <option value="30d">近 30 天</option>
+          <option value="year">本年</option>
+          <option value="custom">自定义</option>
+        </select>
+        <span id="custom-range" class="custom-range" hidden>
+          <label for="range-start">起</label>
+          <input type="date" id="range-start">
+          <label for="range-end">止</label>
+          <input type="date" id="range-end">
+        </span>
+      </div>
+    </section>
+
+    <!-- 记录表单（新增 / 编辑共用） -->
+    <section class="panel">
+      <h2 id="form-title">新增记录</h2>
+      <form id="record-form" autocomplete="off" novalidate>
+        <div class="form-row">
+          <span class="field-label">类型</span>
+          <label class="type-option"><input type="radio" name="record-type" value="expense" checked> 支出</label>
+          <label class="type-option"><input type="radio" name="record-type" value="income"> 收入</label>
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="record-amount">金额</label>
+          <input type="number" id="record-amount" min="0.01" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="record-category">分类</label>
+          <select id="record-category"></select>
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="record-date">日期</label>
+          <input type="date" id="record-date">
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="record-note">备注</label>
+          <input type="text" id="record-note" maxlength="100" placeholder="选填，如：午饭">
+        </div>
+        <div class="form-row form-actions">
+          <button type="submit" class="btn primary" id="submit-button">添加记录</button>
+          <button type="button" class="btn" id="cancel-edit-button" hidden>取消编辑</button>
+        </div>
+        <p id="form-error" class="form-error" hidden></p>
+      </form>
+    </section>
+
+    <!-- 分类支出趋势 -->
+    <section class="panel">
+      <h2>分类支出趋势</h2>
+      <div id="category-breakdown"></div>
+    </section>
+
+    <!-- 收支记录列表 -->
+    <section class="panel">
+      <h2>收支记录</h2>
+      <div class="record-head record-item">
+        <span class="record-date">日期</span>
+        <span class="record-type">类型</span>
+        <span class="record-category">分类</span>
+        <span class="record-note">备注</span>
+        <span class="record-amount">金额</span>
+        <span class="record-actions">操作</span>
+      </div>
+      <div id="record-list"></div>
+    </section>
+
+    <!-- 提示阈值设置 -->
+    <section class="panel">
+      <h2>消费提示设置</h2>
+      <form id="settings-form" autocomplete="off">
+        <div class="form-row">
+          <label class="field-label" for="setting-budget">支出预算</label>
+          <input type="number" id="setting-budget" min="0" step="0.01" placeholder="如 3000">
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="setting-large">大额阈值</label>
+          <input type="number" id="setting-large" min="0" step="0.01" placeholder="单笔超过多少提醒">
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="setting-floor">结余下限</label>
+          <input type="number" id="setting-floor" min="0" step="0.01" placeholder="结余低于多少提醒">
+        </div>
+        <div class="form-row form-actions">
+          <button type="submit" class="btn primary">保存设置</button>
+          <span id="settings-saved" class="saved-tip" hidden>设置已保存</span>
+        </div>
+        <p class="form-hint">留空或填 0 表示关闭对应提示；提示基于当前所选时间范围计算。</p>
+      </form>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <p>数据仅保存在本浏览器的 localStorage（键名 expense-tracker.records.v1 / expense-tracker.settings.v1），清除浏览器数据会一并删除记录。本站不包含任何账户、支付或云端上传功能。</p>
+  </footer>
+
+  <script src="js/store.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>

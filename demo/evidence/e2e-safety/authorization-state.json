@@ -1,0 +1,15 @@
+{
+  "activeContracts": 0,
+  "authorized": true,
+  "paidCalls": 0,
+  "budgetUnchanged": true,
+  "dockersAvailable": false,
+  "fullTests": {
+    "total": 380,
+    "pass": 380,
+    "skipped": 0,
+    "fail": 0
+  },
+  "realE2E": "FAILED",
+  "dockerIsolation": "PASS"
+}

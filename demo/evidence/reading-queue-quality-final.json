@@ -1,0 +1,1 @@
+{"requirements":[{"id":"R1","status":"pass","evidence":"隐藏检查：添加/重复拒绝通过","issues":[]},{"id":"R2","status":"pass","evidence":"隐藏检查：优先级/去重/完成与否/unplanned 通过","issues":[]},{"id":"R3","status":"pass","evidence":"隐藏检查：持久化与损坏文件错误通过","issues":[]},{"id":"R4","status":"pass","evidence":"隐藏检查：CLI plan JSON 输出通过","issues":[]}],"issues":[]}

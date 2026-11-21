@@ -98,12 +98,16 @@ export async function ensureRepo(config, { name, private: isPrivate = true, desc
   return { owner, repo: name, created: true, htmlUrl: created.html_url, cloneUrl: created.clone_url, defaultBranch: created.default_branch || 'main' };
 }
 
-export async function createPullRequest(config, { owner, repo, title, head, base, body, draft = true }) {
-  // 幂等：同 head 的 open PR 已存在则复用
-  const open = await api(config, 'GET', `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(owner + ':' + head)}`);
-  if (Array.isArray(open) && open.length > 0) {
-    return { number: open[0].number, url: open[0].html_url, reused: true };
+export async function createPullRequest(config, { owner, repo, title, head, base, body, draft = true, skipLookup = false, preflight = null }) {
+  // 幂等：同 head 的 open PR 已存在则复用。调用方已做查询时可 skipLookup，
+  // 并在最后一次异步查询后、实际 POST 前执行 preflight 授权复核。
+  if (!skipLookup) {
+    const open = await api(config, 'GET', `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(owner + ':' + head)}`);
+    if (Array.isArray(open) && open.length > 0) {
+      return { ...open[0], number: open[0].number, url: open[0].html_url, reused: true };
+    }
   }
+  if (preflight) await preflight();
   const pr = await api(config, 'POST', `/repos/${owner}/${repo}/pulls`, {
     title,
     head,
@@ -111,7 +115,12 @@ export async function createPullRequest(config, { owner, repo, title, head, base
     body,
     draft,
   });
-  return { number: pr.number, url: pr.html_url, reused: false };
+  return { ...pr, number: pr.number, url: pr.html_url, reused: false };
+}
+
+export async function findPullRequestByHead(config, owner, repo, head) {
+  const data = await api(config, 'GET', `/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(`${owner}:${head}`)}&state=open&per_page=20`);
+  return Array.isArray(data) ? data : [];
 }
 
 export async function getPullRequest(config, owner, repo, number) {
@@ -131,6 +140,7 @@ export async function listWorkflowRunsForSha(config, owner, repo, sha) {
     conclusion: r.conclusion,
     htmlUrl: r.html_url,
     headBranch: r.head_branch,
+    headSha: r.head_sha || '',
     createdAt: r.created_at,
   }));
 }

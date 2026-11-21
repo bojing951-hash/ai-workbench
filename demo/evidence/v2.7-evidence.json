@@ -1,0 +1,120 @@
+{
+  "type": "v2.7-quality-fencing-longrun",
+  "version": "2.7.0",
+  "tests": {
+    "total": 237,
+    "pass": 237,
+    "log": "demo/evidence/v2.7-reliability-tests.txt"
+  },
+  "qualityLoop": {
+    "status": "IMPLEMENTED+TESTED",
+    "files": [
+      "src/quality.js",
+      "src/loop.js"
+    ],
+    "unitTests": [
+      "tests/quality.test.js"
+    ],
+    "integration": [
+      "tests/quality-loop.test.js",
+      "tests/quality-plan-mode.test.js"
+    ],
+    "realE2E": "PASS"
+  },
+  "fencing": {
+    "status": "IMPLEMENTED+TESTED",
+    "tests": [
+      "tests/fencing.test.js",
+      "tests/fencing-workbench.test.js"
+    ],
+    "realProcessCompetition": "TESTED: two independent Node processes, only one fence",
+    "fullWorkbenchHttpProcesses": "TESTED: two real Workbench HTTP servers, one run"
+  },
+  "acceptanceProject": {
+    "name": "Reading Queue Planner（v2.7 独立验收）",
+    "projectId": "proj_mwiq4y5u848f07c5",
+    "loopId": "loop_mwisni5ka9abfb45",
+    "runId": "run_mwitigrv84784f80",
+    "status": "PRODUCT_E2E_VERIFIED",
+    "blocker": "",
+    "codingAgentCalled": true,
+    "hiddenQualityCheckRan": true,
+    "defectDiscoveryRate": "2 confirmed product defects",
+    "autoRepairRate": "2/2 fixed and re-audited",
+    "finalCodeCommit": "6bfdfac",
+    "finalRelease": "5eada62",
+    "qualityMatrix": {
+      "total": 4,
+      "pass": 4,
+      "issues": 1,
+      "fixed": 1
+    },
+    "visibleTests": "5/5",
+    "hiddenQuality": "4/4",
+    "audit": "10 calls, 4 PASS / 6 FAIL/UNKNOWN, final PASS",
+    "codingCostCny": 26.96299056,
+    "auditCostCny": 1.325574432,
+    "totalCostCny": 28.288564992,
+    "wallClockSeconds": 7694,
+    "humanProductCodeEdits": 0,
+    "agentAttempts": 8,
+    "agentSuccess": 7,
+    "agentTimeout": 1,
+    "defectDiscovery": 2,
+    "defectFixed": 2,
+    "taskRecords": 3,
+    "taskPassed": 2
+  },
+  "auditBudget": {
+    "globalRemainingTokens": 9869,
+    "specialBudgetCny": 30,
+    "specialUsedEstimateCny": 1.325574432,
+    "tokens": 408961,
+    "calls": 10,
+    "cdlBudgetBorrowed": false,
+    "otherBudgetsChanged": false,
+    "actualVendorInvoice": "NOT_AVAILABLE; estimated only",
+    "hardCapPrecision": "NOT_CLAIMED"
+  },
+  "longRun": {
+    "status": "24H_NOT_VERIFIED",
+    "reason": "product completed early (2h08m14s); no tasks manufactured",
+    "supervisorSIGKILLRecovery": "PASS",
+    "fullUnattendedEndToEnd": "NO"
+  },
+  "replay": {
+    "status": "IMPLEMENTED+TESTED",
+    "hardcodedProductRemoved": true,
+    "api": "/api/replay?projectId=&eventLimit=&eventBefore=",
+    "pagination": true,
+    "projects": true
+  },
+  "constraints": {
+    "cdlModified": false,
+    "abTouched": false,
+    "budgetChanged": false,
+    "merged": false,
+    "deployed": false,
+    "externalProductCode": false
+  },
+  "independentReview": {
+    "reviewer": "v27-auditor read-only agent",
+    "status": "FINDINGS_ACKNOWLEDGED_AND_PARTIALLY_REMEDIATED",
+    "initial": "no P0; 6 P1",
+    "path": "demo/evidence/v2.7-independent-audit.md",
+    "dshAudit": "BLOCKED/no new budget"
+  },
+  "evidenceConsistency": {
+    "checked": true,
+    "source": "tests/evidence-consistency.test.js",
+    "staleFieldsRemoved": true
+  },
+  "reliabilityAudit": {
+    "reviewer": "reliability-reviewer",
+    "firstRound": "no P0; 4 P1 confirmed",
+    "final": "no remaining P0/P1; P2 residuals documented",
+    "tests": 237,
+    "newE2E": "BLOCKED: no new DSH budget",
+    "24h": "NOT_VERIFIED"
+  }
+}

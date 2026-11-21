@@ -1,0 +1,659 @@
+{
+  "type": "v2-final-state",
+  "at": "2026-11-15T11:07:30.450664+00:00",
+  "budget": {
+    "maxTokens": 3000000,
+    "usedTokens": 8116217,
+    "usedBudgetTokens": 1323161,
+    "cacheTokenWeight": 0.1,
+    "maxCostCny": 30,
+    "usedCostCny": 9.2351,
+    "remainingTokens": 1676839,
+    "remainingCostCny": 20.764940787199997,
+    "tokensPercent": 44.1,
+    "costPercent": 30.8,
+    "breakdown": {
+      "tokens": 8116217,
+      "tokensIn": 403287,
+      "tokensOut": 165090,
+      "tokensCache": 7547840,
+      "costCny": 9.235059212800001,
+      "budgetTokens": 1323161,
+      "cacheTokenWeight": 0.1
+    },
+    "note": "预算按 cacheTokenWeight 对缓存读取折算；原始 token 与成本同时展示"
+  },
+  "projects": [
+    {
+      "id": "proj_mwhohcn0638b65b0",
+      "name": "AI Workbench（W）",
+      "agent": "claude",
+      "audit": "deepseek",
+      "default_branch": "v2.0.0",
+      "test_command": "npm test",
+      "remote_push_authorized": 1,
+      "ci_required": 1,
+      "allow_local_acceptance": 1
+    },
+    {
+      "id": "proj_mwhnn856d30828ae",
+      "name": "Investment Agent（B）",
+      "agent": "dsh",
+      "audit": "glm",
+      "default_branch": "main",
+      "test_command": "fail=0; for t in tests/test_*.py; do case \"$(basename \"$t\")\" in test_model_live.py) continue;; esac; python3 -B \"$t\" >/dev/null 2>&1 || { echo \"FAIL $t\"; fail=1; }; done; python3 -B scripts/rd_state_consistency.py --repo . --state-dir docs/autonomous-rd >/dev/null || exit 2; python3 -B scripts/thresholds_gate.py >/dev/null || exit 3; exit $fail",
+      "remote_push_authorized": 0,
+      "ci_required": 0,
+      "allow_local_acceptance": 1
+    },
+    {
+      "id": "proj_mwhnn83x45a46175",
+      "name": "Global Opportunity Engine（A）",
+      "agent": "claude",
+      "audit": "deepseek",
+      "default_branch": "architecture/research-v2",
+      "test_command": "/Users/cast/Downloads/金融系统/global-opportunity-engine/.venv/bin/python -m pytest -q -m \"not network\"",
+      "remote_push_authorized": 0,
+      "ci_required": 0,
+      "allow_local_acceptance": 1
+    },
+    {
+      "id": "proj_mwhkyo0s9b35aa21",
+      "name": "Notes API 并行（阶段三）",
+      "agent": "dsh",
+      "audit": "auto",
+      "default_branch": "main",
+      "test_command": "npm test",
+      "remote_push_authorized": 0,
+      "ci_required": 1,
+      "allow_local_acceptance": 1
+    },
+    {
+      "id": "proj_mwhkyngdf3a8d864",
+      "name": "Log Audit（阶段三）",
+      "agent": "auto",
+      "audit": "auto",
+      "default_branch": "main",
+      "test_command": "npm test",
+      "remote_push_authorized": 0,
+      "ci_required": 1,
+      "allow_local_acceptance": 1
+    },
+    {
+      "id": "proj_mwhk9vd4597568bd",
+      "name": "Notes API（阶段二）",
+      "agent": "auto",
+      "audit": "auto",
+      "default_branch": "main",
+      "test_command": "npm test",
+      "remote_push_authorized": 0,
+      "ci_required": 1,
+      "allow_local_acceptance": 1
+    },
+    {
+      "id": "proj_mwhk2xqed277274e",
+      "name": "TaskVault（阶段一）",
+      "agent": "auto",
+      "audit": "auto",
+      "default_branch": "main",
+      "test_command": "npm test",
+      "remote_push_authorized": 0,
+      "ci_required": 1,
+      "allow_local_acceptance": 1
+    }
+  ],
+  "runs": [
+    {
+      "project": "AI Workbench（W）",
+      "projectId": "proj_mwhohcn0638b65b0",
+      "run": {
+        "id": "run_mwhon0oj8e6db611",
+        "project_id": "proj_mwhohcn0638b65b0",
+        "plan_id": "plan_mwhon0okb65623f3",
+        "goal": "为工作台自身增加 /api/health 验证状态字段，并同步更新 API 契约文档。",
+        "mode": "single",
+        "status": "awaiting_acceptance",
+        "current_task_id": "",
+        "budget_json": {
+          "maxTokens": 900000,
+          "maxCostCny": 4,
+          "maxAttempts": 2,
+          "maxWallClockMs": 7200000
+        },
+        "spent_json": {
+          "tokens": 581194,
+          "costCny": 2.383153776,
+          "updatedAt": "2026-11-15T10:24:21.022Z"
+        },
+        "stop_reason": "",
+        "result_json": {
+          "planBranch": "wb/plan-6db611",
+          "planHead": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+          "verifiedSha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+          "verificationStatus": "CI_PASSED",
+          "verificationNote": "GitHub CI 通过，绑定 commit a8d4fe61",
+          "taskCount": 1,
+          "counts": {
+            "passed": 1
+          },
+          "publish": {
+            "actions": [
+              {
+                "id": "act_mwhp0ueb4297c825",
+                "run_id": "run_mwhon0oj8e6db611",
+                "task_id": "",
+                "type": "github-push",
+                "status": "done",
+                "payload_json": {
+                  "owner": "bojing951-hash",
+                  "repo": "ai-workbench",
+                  "planBranch": "wb/plan-6db611",
+                  "sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064"
+                },
+                "result_json": {
+                  "owner": "bojing951-hash",
+                  "repo": "ai-workbench",
+                  "planBranch": "wb/plan-6db611",
+                  "sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+                  "pushedAt": "2026-11-15T10:30:05.920Z"
+                },
+                "created_at": "2026-11-15T10:29:59.652Z",
+                "updated_at": "2026-11-15T10:30:05.920Z"
+              },
+              {
+                "id": "act_mwhp100gf09619cb",
+                "run_id": "run_mwhon0oj8e6db611",
+                "task_id": "",
+                "type": "github-pr",
+                "status": "done",
+                "payload_json": {
+                  "owner": "bojing951-hash",
+                  "repo": "ai-workbench",
+                  "head": "wb/plan-6db611",
+                  "sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064"
+                },
+                "result_json": {
+                  "pr": {
+                    "number": 1,
+                    "url": "https://github.com/bojing951-hash/ai-workbench/pull/1",
+                    "reused": false
+                  },
+                  "sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064"
+                },
+                "created_at": "2026-11-15T10:30:06.928Z",
+                "updated_at": "2026-11-15T10:30:09.275Z"
+              },
+              {
+                "id": "act_mwhp1j7p4b299d41",
+                "run_id": "run_mwhon0oj8e6db611",
+                "task_id": "",
+                "type": "github-ci",
+                "status": "done",
+                "payload_json": {
+                  "owner": "bojing951-hash",
+                  "repo": "ai-workbench",
+                  "sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+                  "planBranch": "wb/plan-6db611"
+                },
+                "result_json": {
+                  "status": "passed",
+                  "conclusion": "success",
+                  "runs": [
+                    {
+                      "id": 43704371912,
+                      "name": "AI Workbench CI",
+                      "status": "completed",
+                      "conclusion": "success",
+                      "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912",
+                      "headBranch": "wb/plan-6db611",
+                      "createdAt": "2026-11-15T10:30:11Z"
+                    },
+                    {
+                      "id": 43704365188,
+                      "name": "AI Workbench CI",
+                      "status": "completed",
+                      "conclusion": "success",
+                      "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704365188",
+                      "headBranch": "wb/plan-6db611",
+                      "createdAt": "2026-11-15T10:30:07Z"
+                    }
+                  ],
+                  "sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+                  "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912",
+                  "checkedAt": "2026-11-15T10:30:31.813Z"
+                },
+                "created_at": "2026-11-15T10:30:31.813Z",
+                "updated_at": "2026-11-15T10:30:31.813Z"
+              }
+            ],
+            "blocked": [],
+            "pr": {
+              "number": 1,
+              "url": "https://github.com/bojing951-hash/ai-workbench/pull/1",
+              "reused": false
+            },
+            "localOnly": false,
+            "owner": "bojing951-hash",
+            "repo": "ai-workbench",
+            "planBranch": "wb/plan-6db611",
+            "planHead": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+            "ci": {
+              "status": "passed",
+              "conclusion": "success",
+              "runs": [
+                {
+                  "id": 43704371912,
+                  "name": "AI Workbench CI",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912",
+                  "headBranch": "wb/plan-6db611",
+                  "createdAt": "2026-11-15T10:30:11Z"
+                },
+                {
+                  "id": 43704365188,
+                  "name": "AI Workbench CI",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704365188",
+                  "headBranch": "wb/plan-6db611",
+                  "createdAt": "2026-11-15T10:30:07Z"
+                }
+              ],
+              "sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+              "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912",
+              "checkedAt": "2026-11-15T10:30:31.813Z"
+            }
+          },
+          "ci": {
+            "status": "passed",
+            "conclusion": "success",
+            "runs": [
+              {
+                "id": 43704371912,
+                "name": "AI Workbench CI",
+                "status": "completed",
+                "conclusion": "success",
+                "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912",
+                "headBranch": "wb/plan-6db611",
+                "createdAt": "2026-11-15T10:30:11Z"
+              },
+              {
+                "id": 43704365188,
+                "name": "AI Workbench CI",
+                "status": "completed",
+                "conclusion": "success",
+                "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704365188",
+                "headBranch": "wb/plan-6db611",
+                "createdAt": "2026-11-15T10:30:07Z"
+              }
+            ],
+            "sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+            "htmlUrl": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912",
+            "checkedAt": "2026-11-15T10:30:31.813Z"
+          },
+          "budget": {
+            "maxTokens": 3000000,
+            "usedTokens": 5586091,
+            "usedBudgetTokens": 866577,
+            "cacheTokenWeight": 0.1,
+            "maxCostCny": 30,
+            "usedCostCny": 4.4448,
+            "remainingTokens": 2133422.6,
+            "remainingCostCny": 25.555159411200002,
+            "tokensPercent": 28.9,
+            "costPercent": 14.8,
+            "breakdown": {
+              "tokens": 5586091,
+              "tokensIn": 223321,
+              "tokensOut": 118866,
+              "tokensCache": 5243904,
+              "costCny": 4.4448405888,
+              "budgetTokens": 866577.4,
+              "cacheTokenWeight": 0.1
+            },
+            "note": "预算按 cacheTokenWeight 对缓存读取折算；原始 token 与成本同时展示"
+          },
+          "audit": {
+            "preferred": "auto",
+            "active": {
+              "name": "glm",
+              "label": "GLM",
+              "model": "glm-5.3"
+            },
+            "configured": [
+              "deepseek",
+              "glm"
+            ],
+            "gptConfigured": false,
+            "glmConfigured": true,
+            "deepseekConfigured": true,
+            "independent": false,
+            "note": "未要求或无法保证模型族独立"
+          }
+        },
+        "started_at": "2026-11-15T10:19:14.625Z",
+        "ended_at": "2026-11-15T10:30:31.816Z",
+        "created_at": "2026-11-15T10:19:14.614Z",
+        "updated_at": "2026-11-15T10:30:31.817Z",
+        "verification_status": "CI_PASSED",
+        "verified_sha": "a8d4fe61d96e6df60bef64efc7d09c6d1793f064",
+        "ci_status": "passed",
+        "ci_url": "https://github.com/bojing951-hash/ai-workbench/actions/runs/43704371912",
+        "ci_checked_at": "2026-11-15T10:30:31.816Z",
+        "wall_deadline": "2026-11-15T12:29:59.600Z",
+        "parent_run_id": ""
+      }
+    },
+    {
+      "project": "Investment Agent（B）",
+      "projectId": "proj_mwhnn856d30828ae",
+      "run": {
+        "id": "run_mwhpvzw61979a6d2",
+        "project_id": "proj_mwhnn856d30828ae",
+        "plan_id": "plan_mwhpvzw6e2d65c2b",
+        "goal": "为 Investment Agent（B）的 A→B 交接接口增加离线契约冒烟测试（纯新增测试，不改产品代码）。",
+        "mode": "single",
+        "status": "running",
+        "current_task_id": "task_mwhpvzw8c166e462",
+        "budget_json": {
+          "maxTokens": 1500000,
+          "maxCostCny": 4,
+          "maxAttempts": 2,
+          "maxWallClockMs": 7200000
+        },
+        "spent_json": {
+          "tokens": 1868463,
+          "costCny": 0.6037222464,
+          "updatedAt": "2026-11-15T10:57:07.555Z"
+        },
+        "stop_reason": "",
+        "result_json": {},
+        "started_at": "2026-11-15T10:54:13.113Z",
+        "ended_at": "",
+        "created_at": "2026-11-15T10:54:13.111Z",
+        "updated_at": "2026-11-15T10:58:21.542Z",
+        "verification_status": "LOCAL_VERIFIED",
+        "verified_sha": "",
+        "ci_status": "",
+        "ci_url": "",
+        "ci_checked_at": "",
+        "wall_deadline": "2026-11-15T12:54:13.110Z",
+        "parent_run_id": ""
+      }
+    },
+    {
+      "project": "Global Opportunity Engine（A）",
+      "projectId": "proj_mwhnn83x45a46175",
+      "run": {
+        "id": "run_mwhq4k6he623c53c",
+        "project_id": "proj_mwhnn83x45a46175",
+        "plan_id": "plan_mwhq4k6h0b86f818",
+        "goal": "为 Global Opportunity Engine 新增一份工作台接入说明文档，不修改任何代码与既有测试。",
+        "mode": "single",
+        "status": "awaiting_acceptance",
+        "current_task_id": "",
+        "budget_json": {
+          "maxTokens": 2000000,
+          "maxCostCny": 6,
+          "maxAttempts": 2,
+          "maxWallClockMs": 7200000
+        },
+        "spent_json": {
+          "tokens": 647266,
+          "costCny": 4.0149403776,
+          "updatedAt": "2026-11-15T11:06:59.391Z"
+        },
+        "stop_reason": "部分发布动作待授权：项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR",
+        "result_json": {
+          "planBranch": "wb/plan-23c53c",
+          "planHead": "d5f849a250ffde6fb49347e8622a5ec3a3fb66d7",
+          "verifiedSha": "d5f849a250ffde6fb49347e8622a5ec3a3fb66d7",
+          "verificationStatus": "LOCAL_VERIFIED",
+          "verificationNote": "本地验证完成并绑定 commit d5f849a2；项目未要求远端 CI（远端动作：项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR）",
+          "taskCount": 1,
+          "counts": {
+            "passed": 1
+          },
+          "publish": {
+            "blocked": [
+              "项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR"
+            ],
+            "pr": null,
+            "localOnly": true,
+            "planBranch": "wb/plan-23c53c",
+            "planHead": "d5f849a250ffde6fb49347e8622a5ec3a3fb66d7",
+            "ci": null
+          },
+          "ci": null,
+          "budget": {
+            "maxTokens": 3000000,
+            "usedTokens": 8116217,
+            "usedBudgetTokens": 1323161,
+            "cacheTokenWeight": 0.1,
+            "maxCostCny": 30,
+            "usedCostCny": 9.2351,
+            "remainingTokens": 1676839,
+            "remainingCostCny": 20.764940787199997,
+            "tokensPercent": 44.1,
+            "costPercent": 30.8,
+            "breakdown": {
+              "tokens": 8116217,
+              "tokensIn": 403287,
+              "tokensOut": 165090,
+              "tokensCache": 7547840,
+              "costCny": 9.235059212800001,
+              "budgetTokens": 1323161,
+              "cacheTokenWeight": 0.1
+            },
+            "note": "预算按 cacheTokenWeight 对缓存读取折算；原始 token 与成本同时展示"
+          },
+          "audit": {
+            "preferred": "auto",
+            "active": {
+              "name": "glm",
+              "label": "GLM",
+              "model": "glm-5.3"
+            },
+            "configured": [
+              "deepseek",
+              "glm"
+            ],
+            "gptConfigured": false,
+            "glmConfigured": true,
+            "deepseekConfigured": true,
+            "independent": false,
+            "note": "未要求或无法保证模型族独立"
+          }
+        },
+        "started_at": "2026-11-15T11:00:52.651Z",
+        "ended_at": "2026-11-15T11:06:59.713Z",
+        "created_at": "2026-11-15T11:00:52.649Z",
+        "updated_at": "2026-11-15T11:06:59.713Z",
+        "verification_status": "LOCAL_VERIFIED",
+        "verified_sha": "d5f849a250ffde6fb49347e8622a5ec3a3fb66d7",
+        "ci_status": "",
+        "ci_url": "",
+        "ci_checked_at": "2026-11-15T11:06:59.713Z",
+        "wall_deadline": "2026-11-15T13:00:52.649Z",
+        "parent_run_id": ""
+      }
+    },
+    {
+      "project": "Global Opportunity Engine（A）",
+      "projectId": "proj_mwhnn83x45a46175",
+      "run": {
+        "id": "run_mwho4kn5bdd916ca",
+        "project_id": "proj_mwhnn83x45a46175",
+        "plan_id": "plan_mwho4kn5018cd5e5",
+        "goal": "为 Global Opportunity Engine 增加 point-in-time（PIT）前视偏差回归测试，证明 no_lookahead_diff 会拒绝未来日期观测并保留历史观测。",
+        "mode": "single",
+        "status": "awaiting_acceptance",
+        "current_task_id": "",
+        "budget_json": {
+          "maxTokens": 3000000,
+          "maxCostCny": 10,
+          "maxAttempts": 3,
+          "maxWallClockMs": 10800000
+        },
+        "spent_json": {
+          "tokens": 4090619,
+          "costCny": 1.33821016,
+          "updatedAt": "2026-11-15T10:52:44.837Z"
+        },
+        "stop_reason": "部分发布动作待授权：项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR",
+        "result_json": {
+          "planBranch": "wb/plan-d916ca",
+          "planHead": "8dd439857f1d9dd89d9a521332cafa1c4125d16c",
+          "verifiedSha": "8dd439857f1d9dd89d9a521332cafa1c4125d16c",
+          "verificationStatus": "LOCAL_VERIFIED",
+          "verificationNote": "本地验证完成并绑定 commit 8dd43985；项目未要求远端 CI（远端动作：项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR）",
+          "taskCount": 1,
+          "counts": {
+            "passed": 1
+          },
+          "publish": {
+            "blocked": [
+              "项目未授权远端推送（remote_push_authorized=false），不创建 GitHub PR"
+            ],
+            "pr": null,
+            "localOnly": true,
+            "planBranch": "wb/plan-d916ca",
+            "planHead": "8dd439857f1d9dd89d9a521332cafa1c4125d16c",
+            "ci": null
+          },
+          "ci": null,
+          "budget": {
+            "maxTokens": 3000000,
+            "usedTokens": 5600744,
+            "usedBudgetTokens": 881230,
+            "cacheTokenWeight": 0.1,
+            "maxCostCny": 30,
+            "usedCostCny": 4.6164,
+            "remainingTokens": 2118769.6,
+            "remainingCostCny": 25.3836034112,
+            "tokensPercent": 29.4,
+            "costPercent": 15.4,
+            "breakdown": {
+              "tokens": 5600744,
+              "tokensIn": 228562,
+              "tokensOut": 128278,
+              "tokensCache": 5243904,
+              "costCny": 4.6163965888,
+              "budgetTokens": 881230.4,
+              "cacheTokenWeight": 0.1
+            },
+            "note": "预算按 cacheTokenWeight 对缓存读取折算；原始 token 与成本同时展示"
+          },
+          "audit": {
+            "preferred": "auto",
+            "active": {
+              "name": "glm",
+              "label": "GLM",
+              "model": "glm-5.3"
+            },
+            "configured": [
+              "deepseek",
+              "glm"
+            ],
+            "gptConfigured": false,
+            "glmConfigured": true,
+            "deepseekConfigured": true,
+            "independent": false,
+            "note": "未要求或无法保证模型族独立"
+          }
+        },
+        "started_at": "2026-11-15T10:04:54.020Z",
+        "ended_at": "2026-11-15T10:52:45.547Z",
+        "created_at": "2026-11-15T10:04:54.018Z",
+        "updated_at": "2026-11-15T10:52:45.548Z",
+        "verification_status": "LOCAL_VERIFIED",
+        "verified_sha": "8dd439857f1d9dd89d9a521332cafa1c4125d16c",
+        "ci_status": "",
+        "ci_url": "",
+        "ci_checked_at": "2026-11-15T10:52:45.547Z",
+        "wall_deadline": "2026-11-15T13:29:50.647Z",
+        "parent_run_id": ""
+      }
+    },
+    {
+      "project": "Global Opportunity Engine（A）",
+      "projectId": "proj_mwhnn83x45a46175",
+      "run": {
+        "id": "run_mwhnz2m61ebcda94",
+        "project_id": "proj_mwhnn83x45a46175",
+        "plan_id": "plan_mwhnz2m652b17702",
+        "goal": "为 Global Opportunity Engine 增加 point-in-time（PIT）前视偏差回归测试，证明 no_lookahead_diff 会拒绝未来日期观测并保留历史观测。",
+        "mode": "single",
+        "status": "cancelled",
+        "current_task_id": "task_mwhnz2m8c336b6a5",
+        "budget_json": {
+          "maxTokens": 600000,
+          "maxCostCny": 3,
+          "maxAttempts": 2,
+          "maxWallClockMs": 10800000
+        },
+        "spent_json": {
+          "tokens": 0,
+          "costCny": 0,
+          "updatedAt": "2026-11-15T10:04:43.435Z"
+        },
+        "stop_reason": "用户取消",
+        "result_json": {},
+        "started_at": "2026-11-15T10:00:37.377Z",
+        "ended_at": "2026-11-15T10:04:43.249Z",
+        "created_at": "2026-11-15T10:00:37.375Z",
+        "updated_at": "2026-11-15T10:04:43.435Z",
+        "verification_status": "LOCAL_VERIFIED",
+        "verified_sha": "",
+        "ci_status": "",
+        "ci_url": "",
+        "ci_checked_at": "",
+        "wall_deadline": "2026-11-15T13:00:37.374Z",
+        "parent_run_id": ""
+      }
+    },
+    {
+      "project": "Global Opportunity Engine（A）",
+      "projectId": "proj_mwhnn83x45a46175",
+      "run": {
+        "id": "run_mwhnngu33d968a1e",
+        "project_id": "proj_mwhnn83x45a46175",
+        "plan_id": "plan_mwhnngu36d3f45e7",
+        "goal": "为 Global Opportunity Engine 增加 point-in-time（PIT）前视偏差回归测试，证明 no_lookahead_diff 会拒绝未来日期观测并保留历史观测。",
+        "mode": "single",
+        "status": "cancelled",
+        "current_task_id": "task_mwhnngu62b9bae9b",
+        "budget_json": {
+          "maxTokens": 600000,
+          "maxCostCny": 3,
+          "maxAttempts": 2,
+          "maxWallClockMs": 10800000
+        },
+        "spent_json": {
+          "tokens": 0,
+          "costCny": 0,
+          "updatedAt": "2026-11-15T09:55:48.124Z"
+        },
+        "stop_reason": "用户取消",
+        "result_json": {},
+        "started_at": "2026-11-15T09:51:35.936Z",
+        "ended_at": "2026-11-15T09:55:48.076Z",
+        "created_at": "2026-11-15T09:51:35.932Z",
+        "updated_at": "2026-11-15T09:55:48.125Z",
+        "verification_status": "LOCAL_VERIFIED",
+        "verified_sha": "",
+        "ci_status": "",
+        "ci_url": "",
+        "ci_checked_at": "",
+        "wall_deadline": "2026-11-15T12:51:35.931Z",
+        "parent_run_id": ""
+      }
+    }
+  ],
+  "approvals": [],
+  "verification": {
+    "ciRequiredByDefault": true,
+    "note": "远端验收需要 CI_PASSED 且绑定 commit SHA；本地验收需显式确认"
+  }
+}

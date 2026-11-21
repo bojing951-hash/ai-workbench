@@ -1,0 +1,91 @@
+{
+  "status": "FAILED",
+  "reason": "第二次真实 E2E 在 Coding/测试命令基础设施缺陷修复后仍因单任务 Token 预算超限暂停；实验实际用量超过契约上限，未完成 DSH 产品审计与最终验收。不得声明 PASS。",
+  "project": {
+    "id": "proj_mwkoho03f9af18df",
+    "path": "/Users/cast/Downloads/开发工作台/projects/chat-本地消费记录小站-mwkohnar",
+    "conversation": "conv_mwkoh6pqskb0a",
+    "loop": "loop_mwkohoavafca83ec",
+    "run": "run_mwkp36m00feb7cc7"
+  },
+  "experiment": {
+    "id": "exp_mwkohd4momlwqc",
+    "status": "overspent",
+    "contractHash": "91f3c3a1fc4da4c621421f229eae2785601c552ebdb9710716287277fffddef5",
+    "limits": {
+      "tokens": 1940000,
+      "cost": 22.65,
+      "calls": 12,
+      "deadline": "2026-11-17T16:38:09.334Z"
+    },
+    "usage": {
+      "calls": 12,
+      "tokens": 2856734,
+      "costCny": 25.4897253504,
+      "byScope": {
+        "dsh": {
+          "calls": 1,
+          "tokens": 192899,
+          "costCny": 0.17420800320000002
+        },
+        "glm": {
+          "calls": 6,
+          "tokens": 2660718,
+          "costCny": 25.30938528
+        },
+        "global": {
+          "calls": 5,
+          "tokens": 3117,
+          "costCny": 0.006132067200000001
+        }
+      },
+      "rows": [
+        {
+          "scope": "dsh",
+          "status": "settled",
+          "calls": 1,
+          "tokens": 192899,
+          "cost": 0.17420800320000002
+        },
+        {
+          "scope": "glm",
+          "status": "settled",
+          "calls": 6,
+          "tokens": 2660718,
+          "cost": 25.30938528
+        },
+        {
+          "scope": "global",
+          "status": "settled",
+          "calls": 5,
+          "tokens": 3117,
+          "cost": 0.006132067200000001
+        }
+      ]
+    }
+  },
+  "run": {
+    "status": "paused",
+    "stop_reason": "基础设施/预算中断（budget）：Claude Code 超出单任务 token 预算（942159 > 169441）"
+  },
+  "tasks": [
+    {
+      "id": "task_mwkp36m4ef0bd65a",
+      "status": "blocked",
+      "attempt": 2,
+      "blocked_reason": "基础设施/预算中断（budget）：Claude Code 超出单任务 token 预算（942159 > 169441）",
+      "worktree": "/Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1",
+      "head": ""
+    }
+  ],
+  "budget": {
+    "maxTokens": 7498988,
+    "maxCostCny": 55.2456,
+    "note": "第一次实验 usage 2,058,883 + 第二次 usage 2,856,734; 第二次超过其 1,940,000 契约上限。"
+  },
+  "artifacts": {
+    "worktree": "/Users/cast/Downloads/开发工作台/data/worktrees/proj_mwkoho03f9af18df/run_mwkp36m00feb7cc7/task-1",
+    "logs": "data/logs/run_mwkp36m00feb7cc7"
+  },
+  "at": "2026-11-17T13:20:24.898Z"
+}

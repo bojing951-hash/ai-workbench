@@ -24,3 +24,39 @@ coverage/
 
 # 本机截图/浏览器临时目录（脚本产物）
 data/chrome-*/
+
+# accept:freeze 同次运行生成的可下载验收证据（由 CI artifact 保存，不入库）
+demo/evidence/offline-e2e/
+demo/evidence/docker-handoff/
+demo/evidence/chat-upgrade/
+demo/evidence/loop-terminal/
+
+demo/evidence/github-publish/
+
+demo/evidence/docker-production-handoff/
+
+demo/evidence/github-restart-recovery/
+
+demo/evidence/loop-rest-publish/
+
+demo/evidence/ci-evidence/
+
+demo/evidence/install-acceptance/
+
+demo/evidence/loop-cancel-publish/
+demo/evidence/loop-quality-gate/
+
+demo/evidence/loop-cancel-publish/
+demo/evidence/loop-quality-gate/
+
+demo/evidence/loop-revoke-publish/
+demo/evidence/loop-crash-recovery/
+
+demo/evidence/loop-cancel-direct-publish/
+
+demo/evidence/accept-concurrency-cli/
+
+demo/evidence/ci-refresh-order/
+
+demo/evidence/ci-refresh-cross-process/
+demo/evidence/fixed-sha-trial/

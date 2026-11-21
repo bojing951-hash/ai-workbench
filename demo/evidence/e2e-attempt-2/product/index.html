@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地消费记录小站</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="container">
+    <header class="app-header">
+      <h1>本地消费记录小站</h1>
+      <p class="app-subtitle">纯本地记账：数据保存在浏览器 localStorage 中，页面运行期间不发起任何网络请求。</p>
+    </header>
+
+    <main class="app-main">
+      <!-- 区域一：记录表单 -->
+      <section id="record-form-section" class="app-section" aria-labelledby="record-form-title">
+        <h2 id="record-form-title">添加记录</h2>
+        <form id="record-form" novalidate>
+          <div class="form-field">
+            <label for="record-type">类型</label>
+            <select id="record-type" name="type">
+              <option value="expense" selected>支出</option>
+              <option value="income">收入</option>
+            </select>
+            <p class="error-message" id="record-type-error"></p>
+          </div>
+          <div class="form-field">
+            <label for="record-amount">金额</label>
+            <input type="text" id="record-amount" name="amount" inputmode="decimal" placeholder="0.00" autocomplete="off">
+            <p class="error-message" id="record-amount-error"></p>
+          </div>
+          <div class="form-field">
+            <label for="record-date">日期</label>
+            <input type="text" id="record-date" name="date" placeholder="YYYY-MM-DD" autocomplete="off">
+            <p class="error-message" id="record-date-error"></p>
+          </div>
+          <div class="form-field">
+            <label for="record-category">分类</label>
+            <select id="record-category" name="category">
+              <option value="">请选择分类</option>
+            </select>
+            <p class="error-message" id="record-category-error"></p>
+          </div>
+          <div class="form-field">
+            <label for="record-note">备注（可选，最多 100 字）</label>
+            <input type="text" id="record-note" name="note" placeholder="例如：和朋友吃火锅" autocomplete="off">
+            <p class="error-message" id="record-note-error"></p>
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="record-submit" class="btn btn-primary">添加记录</button>
+            <button type="button" id="record-cancel" class="btn btn-ghost" hidden>取消编辑</button>
+          </div>
+          <p class="form-message" id="record-form-message" role="status"></p>
+        </form>
+      </section>
+
+      <!-- 区域二：汇总看板 -->
+      <section id="summary-section" class="app-section" aria-labelledby="summary-title">
+        <h2 id="summary-title">汇总看板</h2>
+        <p class="section-hint">以下统计基于当前筛选范围内的记录，金额均为两位小数。</p>
+        <div class="summary-cards">
+          <div class="summary-card">
+            <span class="summary-label">总收入</span>
+            <span class="summary-value value-income" id="summary-income">0.00</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">总支出</span>
+            <span class="summary-value value-expense" id="summary-expense">0.00</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-label">结余</span>
+            <span class="summary-value" id="summary-balance">0.00</span>
+          </div>
+        </div>
+        <div class="summary-categories">
+          <h3>分类统计</h3>
+          <ul id="summary-categories" class="category-list">
+            <li class="empty-placeholder">暂无数据</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 区域三：记录列表 -->
+      <section id="records-section" class="app-section" aria-labelledby="records-title">
+        <h2 id="records-title">记录列表</h2>
+        <form id="filter-form" class="filter-bar" novalidate>
+          <div class="form-field">
+            <label for="filter-start">开始日期</label>
+            <input type="text" id="filter-start" placeholder="YYYY-MM-DD" autocomplete="off">
+          </div>
+          <div class="form-field">
+            <label for="filter-end">结束日期</label>
+            <input type="text" id="filter-end" placeholder="YYYY-MM-DD" autocomplete="off">
+          </div>
+          <div class="filter-actions">
+            <button type="submit" id="filter-apply" class="btn">应用筛选</button>
+            <button type="button" id="filter-reset" class="btn btn-ghost">重置</button>
+          </div>
+          <p class="error-message" id="filter-error"></p>
+        </form>
+        <div class="table-wrapper">
+          <table id="records-table">
+            <thead>
+              <tr>
+                <th scope="col">类型</th>
+                <th scope="col">金额</th>
+                <th scope="col">日期</th>
+                <th scope="col">分类</th>
+                <th scope="col">备注</th>
+                <th scope="col">操作</th>
+              </tr>
+            </thead>
+            <tbody id="record-list">
+              <tr class="empty-row"><td colspan="6">暂无记录</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 区域四：预警与阈值设置 -->
+      <section id="alerts-section" class="app-section" aria-labelledby="alerts-title">
+        <h2 id="alerts-title">消费预警与阈值设置</h2>
+        <div class="alerts-box">
+          <h3>当前预警</h3>
+          <ul id="alerts-list" class="alerts-list">
+            <li class="empty-placeholder">暂无预警</li>
+          </ul>
+        </div>
+        <form id="settings-form" novalidate>
+          <h3>阈值设置</h3>
+          <div class="form-field">
+            <label for="setting-monthly-budget">月度预算（本月支出超过预算时提醒）</label>
+            <input type="text" id="setting-monthly-budget" inputmode="decimal" placeholder="留空表示不启用" autocomplete="off">
+            <p class="error-message" id="setting-monthly-budget-error"></p>
+          </div>
+          <div class="form-field">
+            <label for="setting-single-expense">单笔大额阈值（单笔支出达到该值时提醒）</label>
+            <input type="text" id="setting-single-expense" inputmode="decimal" placeholder="留空表示不启用" autocomplete="off">
+            <p class="error-message" id="setting-single-expense-error"></p>
+          </div>
+          <div class="form-field">
+            <label for="setting-min-balance">结余下限（结余低于该值时提醒）</label>
+            <input type="text" id="setting-min-balance" inputmode="decimal" placeholder="留空表示不启用" autocomplete="off">
+            <p class="error-message" id="setting-min-balance-error"></p>
+          </div>
+          <div class="form-actions">
+            <button type="submit" id="settings-save" class="btn btn-primary">保存设置</button>
+          </div>
+          <p class="form-message" id="settings-message" role="status"></p>
+        </form>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>所有数据仅保存在当前浏览器的 localStorage 中，清除浏览器数据会导致记录丢失。</p>
+    </footer>
+  </div>
+</body>
+</html>

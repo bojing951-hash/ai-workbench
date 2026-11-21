@@ -1,0 +1,61 @@
+{
+  "provider": "deepseek",
+  "providerLabel": "DeepSeek Harness",
+  "model": "deepseek",
+  "status": "UNKNOWN",
+  "verdict": "fail",
+  "score": 90,
+  "criteria": [
+    {
+      "criterion": "npm test 全部通过（unit+tsc/build+Playwright desktop/mobile）",
+      "status": "pass",
+      "evidence": "提供的测试输出退出码为 0：unit 9/9 通过，tsc 类型检查与 vite build 均成功，Playwright 为 3 passed、1 skipped。被跳过的是 tests/e2e/app.spec.ts:31 中仅限移动端的用例，它在 desktop 项目中按设计跳过，而该用例在 mobile 项目中执行通过。工作区中的产物与此相互印证：dist/index.html 引用的 index-CHwwQUTs.js、index-kJVSZbMq.css 与输出中的哈希一致，且该 JS 中包含新增的 aria-label 字符串；test-results/.last-run.json 记录 status=passed、failedTests=[]。"
+    },
+    {
+      "criterion": "画像→单笔→情景→证据→技巧流程可交互",
+      "status": "pass",
+      "evidence": "tests/e2e/app.spec.ts:4-29 覆盖完整流程，并在 desktop/mobile 两个项目中均通过；src/App.tsx:214-225 的导航按钮切换 view，159-177 保存画像，193-206 处理单笔分析，461-463 渲染情景、证据、技巧页面，675-700 渲染 5 条证据。"
+    },
+    {
+      "criterion": "移动视口无横向溢出",
+      "status": "pass",
+      "evidence": "tests/e2e/app.spec.ts:30-36 在 mobile 项目中断言 document.documentElement.scrollWidth - clientWidth <= 2，记录显示通过；src/styles.css:18-20 使用 border-box，43-49 容器 width:100%，150-154、241-246、440-444 等网格使用 minmax(min(100%,...),1fr)，156-179 输入框 min-width:0，565-571 对长 URL 使用 word-break:break-all，未发现固定宽度或 overflow-x:hidden 掩盖问题。"
+    },
+    {
+      "criterion": "敏感字段可选且本地保存、不上传",
+      "status": "pass",
+      "evidence": "src/domain.ts:11-17 画像字段全部 optional，121-133 空对象校验为 valid；src/App.tsx:253-254 声明所有字段可选，139-157 从 localStorage 读取，166-171 写入 localStorage，179-191 清除；对 src 的检索未发现 fetch、XMLHttpRequest、sendBeacon、WebSocket、axios 等网络调用，index.html 无外部脚本。"
+    },
+    {
+      "criterion": "产品源码全部由 Claude Code/GLM 生成，DSH 独立审计逐条核对",
+      "status": "unproven",
+      "evidence": "工作区没有 .git、提交元数据或生成日志，因此无法从代码或产物证明源码由 Claude Code/GLM 生成；可以确认 DSH 未参与编码，并独立完成本报告，但生成者归属无法审计。"
+    }
+  ],
+  "findings": [],
+  "requiredFixes": [
+    "未证实验收标准：产品源码全部由 Claude Code/GLM 生成，DSH 独立审计逐条核对（证据：工作区没有 .git、提交元数据或生成日志，因此无法从代码或产物证明源码由 Claude Code/GLM 生成；可以确认 DSH 未参与编码，并独立完成本报告，但生成者归属无法审计。）"
+  ],
+  "unknownReasons": [
+    "验收标准未证实：产品源码全部由 Claude Code/GLM 生成，DSH 独立审计逐条核对（工作区没有 .git、提交元数据或生成日志，因此无法从代码或产物证明源码由 Claude Code/GLM 生成；可以确认 DSH 未参与编码，并独立完成本报告，但生成者归属无法审计。）"
+  ],
+  "independence": {
+    "independent": true,
+    "coderFamily": "glm",
+    "note": "DSH CLI read-only audit; DeepSeek API budget"
+  },
+  "chunks": 1,
+  "versionInfo": {
+    "baseCommit": "9c7673a52a36a0fc430ac226ce91d110f90135c3",
+    "worktreeHash": "6d3e86c58733b5dc1f5968873a17fd412980223f",
+    "testedHash": "6d3e86c58733b5dc1f5968873a17fd412980223f"
+  },
+  "usage": {
+    "input": 49154,
+    "output": 29640,
+    "cacheRead": 630656,
+    "cacheWrite": 0
+  },
+  "costCny": 0.3158660736000001,
+  "raw": "{\"score\":90,\"criteria\":[{\"criterion\":\"npm test 全部通过（unit+tsc/build+Playwright desktop/mobile）\",\"status\":\"pass\",\"evidence\":\"提供的测试输出退出码为 0：unit 9/9 通过，tsc 类型检查与 vite build 均成功，Playwright 为 3 passed、1 skipped。被跳过的是 tests/e2e/app.spec.ts:31 中仅限移动端的用例，它在 desktop 项目中按设计跳过，而该用例在 mobile 项目中执行通过。工作区中的产物与此相互印证：dist/index.html 引用的 index-CHwwQUTs.js、index-kJVSZbMq.css 与输出中的哈希一致，且该 JS 中包含新增的 aria-label 字符串；test-results/.last-run.json 记录 status=passed、failedTests=[]。\"},{\"criterion\":\"画像→单笔→情景→证据→技巧流程可交互\",\"status\":\"pass\",\"evidence\":\"tests/e2e/app.spec.ts:4-29 覆盖完整流程，并在 desktop/mobile 两个项目中均通过；src/App.tsx:214-225 的导航按钮切换 view，159-177 保存画像，193-206 处理单笔分析，461-463 渲染情景、证据、技巧页面，675-700 渲染 5 条证据。\"},{\"criterion\":\"移动视口无横向溢出\",\"status\":\"pass\",\"evidence\":\"tests/e2e/app.spec.ts:30-36 在 mobile 项目中断言 document.documentElement.scrollWidth - clientWidth <= 2，记录显示通过；src/styles.css:18-20 使用 border-box，43-49 容器 width:100%，150-154、241-246、440-444 等网格使用 minmax(min(100%,...),1fr)，156-179 输入框 min-width:0，565-571 对长 URL 使用 word-break:break-all，未发现固定宽度或 overflow-x:hidden 掩盖问题。\"},{\"criterion\":\"敏感字段可选且本地保存、不上传\",\"status\":\"pass\",\"evidence\":\"src/domain.ts:11-17 画像字段全部 optional，121-133 空对象校验为 valid；src/App.tsx:253-254 声明所有字段可选，139-157 从 localStorage 读取，166-171 写入 localStorage，179-191 清除；对 src 的检索未发现 fetch、XMLHttpRequest、sendBeacon、WebSocket、axios 等网络调用，index.html 无外部脚本。\"},{\"criterion\":\"产品源码全部由 Claude Code/GLM 生成，DSH 独立审计逐条核对\",\"status\":\"unproven\",\"evidence\":\"工作区没有 .git、提交元数据或生成日志，因此无法从代码或产物证明源码由 Claude Code/GLM 生成；可以确认 DSH 未参与编码，并独立完成本报告，但生成者归属无法审计。\"}],\"findings\":[],\"required_fixes\":[],\"summary\":\"四项产品与测试标准有直接证据通过，唯一未能证实的是源码的 Claude Code/GLM 生成归属。\"}"
+}

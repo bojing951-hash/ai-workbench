@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+cat > /dev/null || true
+out="/workspace/writer-writes"
+: > "$out"
+while :; do
+  printf '%s-%s\n' "$(hostname)" "$(date +%s%N)" >> "$out"
+  sleep 0.05
+done
