@@ -382,6 +382,7 @@ export class Store {
         ['ci_status', "TEXT DEFAULT ''"],
         ['ci_url', "TEXT DEFAULT ''"],
         ['ci_checked_at', "TEXT DEFAULT ''"],
+        ['ci_refresh_seq', 'INTEGER DEFAULT 0'],
         ['wall_deadline', "TEXT DEFAULT ''"],
         ['parent_run_id', "TEXT DEFAULT ''"],
         ['lease_owner', "TEXT DEFAULT ''"],
@@ -805,6 +806,20 @@ export class Store {
       .prepare("SELECT * FROM runs WHERE status IN ('running','queued','paused') ORDER BY created_at ASC")
       .all()
       .map((r) => parseRow(r, { budget_json: {}, spent_json: {}, result_json: {} }));
+  }
+
+  beginCiRefresh(id) {
+    const r = this.db.prepare('UPDATE runs SET ci_refresh_seq=COALESCE(ci_refresh_seq,0)+1, updated_at=? WHERE id=?').run(nowIso(), String(id));
+    return Number(r.changes || 0) > 0 ? Number(this.getRun(id)?.ci_refresh_seq || 0) : 0;
+  }
+
+  applyCiRefreshIfCurrent(id, seq, sha, patch = {}, evidence = null) {
+    const cur = this.getRun(id);
+    if (!cur) return { ok: false, reason: 'run-missing' };
+    const nextResult = { ...(cur.result_json || {}), ciEvidence: evidence };
+    const r = this.db.prepare(`UPDATE runs SET verification_status=?, ci_status=?, ci_url=?, ci_checked_at=?, result_json=?, updated_at=? WHERE id=? AND status='awaiting_acceptance' AND verified_sha=? AND COALESCE(ci_refresh_seq,0)=?`)
+      .run(String(patch.verificationStatus || cur.verification_status || ''), String(patch.ciStatus || ''), String(patch.ciUrl || ''), String(patch.ciCheckedAt || ''), JSON.stringify(nextResult), nowIso(), String(id), String(sha || ''), Number(seq || 0));
+    return { ok: Number(r.changes || 0) > 0, run: this.getRun(id), reason: Number(r.changes || 0) > 0 ? '' : 'stale-or-not-awaiting' };
   }
 
   acceptRunIfCurrent(id, sha, resultJson, { requireCi = true } = {}) {

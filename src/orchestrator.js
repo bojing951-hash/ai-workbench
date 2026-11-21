@@ -2474,6 +2474,8 @@ export class Orchestrator {
     const ci = actions.find((a) => a.type === 'github-ci');
     if (!ci) return { ok: false, message: '该运行没有 CI 记录（可能未推送 GitHub）' };
     const { owner, repo, sha } = ci.payload_json || {};
+    // 刷新顺序在异步查询前原子分配；乱序返回时只用最新序号写回。
+    const refreshSeq = this.store.beginCiRefresh(runId);
     const runs = await gh.listWorkflowRunsForSha(this.config, owner, repo, sha);
     const project = this.store.getProject(run.project_id);
     const requiredChecks = Array.isArray(project?.config_json?.required_checks) ? project.config_json.required_checks : (project?.config_json?.required_checks ? parseList(project.config_json.required_checks) : []);
@@ -2499,15 +2501,24 @@ export class Orchestrator {
     }
     ev.currentDraft = draftCurrent;
     const passed = ev.status === 'passed' && String(run.verified_sha || '') === String(sha || '');
-    this.store.updateAction(ci.id, { status: ev.status === 'pending' ? 'running' : 'done', result: { ...ev } });
-    if (run.status === RunStatus.AWAITING_ACCEPTANCE) {
-      const nextResult = { ...(run.result_json || {}), ciEvidence: { ...ev, sha, runId } };
-      if (passed) this.store.updateRun(runId, { verification_status: 'CI_PASSED', ci_status: 'passed', ci_checked_at: nowIso(), ci_url: ev.runs.find((r) => r.htmlUrl)?.htmlUrl || '', result_json: nextResult });
-      else if (ev.status === 'failed') this.store.updateRun(runId, { verification_status: 'CI_FAILED', ci_status: 'failed', ci_checked_at: nowIso(), result_json: nextResult });
-      else this.store.updateRun(runId, { ci_status: ev.status === 'pending' ? 'pending' : ev.status, ci_checked_at: nowIso(), result_json: nextResult });
+    ev.refreshSeq = refreshSeq; ev.refreshStartedSha = sha;
+    const apply = this.store.applyCiRefreshIfCurrent(runId, refreshSeq, sha, {
+      verificationStatus: passed ? 'CI_PASSED' : (ev.status === 'failed' ? 'CI_FAILED' : (run.verification_status || 'LOCAL_VERIFIED')),
+      ciStatus: ev.status === 'passed' ? 'passed' : ev.status === 'failed' ? 'failed' : (ev.status === 'pending' ? 'pending' : ev.status),
+      ciUrl: ev.runs.find((r) => r.htmlUrl)?.htmlUrl || '',
+      ciCheckedAt: nowIso(),
+    }, { ...ev, sha, runId });
+    const current = this.store.getRun(runId);
+    if (!apply.ok) {
+      const reason = current?.status === RunStatus.ACCEPTED ? 'run-already-accepted'
+        : Number(current?.ci_refresh_seq || 0) !== Number(refreshSeq) ? 'out-of-order'
+          : (current?.status !== RunStatus.AWAITING_ACCEPTANCE ? `run-${current?.status || 'missing'}` : 'stale-ci-write');
+      this.emit({ runId, type: 'ci_refresh_stale', level: 'warn', message: `忽略过期 CI 刷新（${reason}，seq=${refreshSeq}）`, data: { reason, refreshSeq, currentSeq: current?.ci_refresh_seq, status: current?.status } });
+      return { ok: false, applied: false, reason, refreshSeq, status: current?.verification_status || '', currentStatus: current?.status || '', evidence: current?.result_json?.ciEvidence || null, runs };
     }
-    this.emit({ runId, type: 'ci_update', message: `GitHub Actions 状态刷新：${ev.status}${ev.mismatched.length ? '（存在异 SHA run，拒绝通过）' : ''}${ev.missingChecks.length ? '（缺必需检查：' + ev.missingChecks.join('、') + '）' : ''}`, data: { status: ev.status, requiredSha: sha, mismatched: ev.mismatched, missingChecks: ev.missingChecks } });
-    return { ok: true, conclusion: ev.conclusion, status: ev.status, requiredSha: sha, mismatched: ev.mismatched, missingChecks: ev.missingChecks, runs, evidence: ev };
+    this.store.updateAction(ci.id, { status: ev.status === 'pending' ? 'running' : 'done', result: { ...ev } });
+    this.emit({ runId, type: 'ci_update', message: `GitHub Actions 状态刷新：${ev.status}${ev.mismatched.length ? '（存在异 SHA run，拒绝通过）' : ''}${ev.missingChecks.length ? '（缺必需检查：' + ev.missingChecks.join('、') + '）' : ''}`, data: { status: ev.status, requiredSha: sha, mismatched: ev.mismatched, missingChecks: ev.missingChecks, refreshSeq } });
+    return { ok: true, applied: true, conclusion: ev.conclusion, status: ev.status, requiredSha: sha, mismatched: ev.mismatched, missingChecks: ev.missingChecks, runs, evidence: ev, refreshSeq };
   }
 
   buildPrBody(run, project, tasks, planHead = '') {

@@ -44,6 +44,23 @@ for (const group of groups) {
   if (!ok) hardFailure = true;
   results.push({ name: '6a-independent-b506', status: ok ? 'PASS' : 'FAIL', code: independent.status, output: `${independent.stdout || ''}${independent.stderr || ''}`.slice(-800) });
 }
+// CI 刷新顺序：验收后过期刷新不覆盖 accepted；同 SHA 乱序旧响应不覆盖较新失败，新绿可再验收。
+{
+  const run = spawnSync(process.execPath, ['scripts/ci-refresh-order-e2e.mjs'], { encoding: 'utf8', timeout: 300_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6s-ci-refresh-order', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1200) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/ci-refresh-order/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      const r = e.results || {};
+      ok = e.candidateSha === head && r.acceptedRefresh?.acceptedStatus === 'accepted' && r.acceptedRefresh?.acceptedShaSame === true && r.acceptedRefresh?.acceptedAtSame === true && r.acceptedRefresh?.successEvents === 1 && r.acceptedRefresh?.staleRefreshApplied === false && r.acceptedRefresh?.staleReason === 'run-already-accepted' && r.outOfOrder?.newRefreshStatus === 'CI_FAILED' && r.outOfOrder?.oldRefreshApplied === false && r.outOfOrder?.oldRefreshReason === 'out-of-order' && r.outOfOrder?.acceptAfterFailStatus !== 200 && r.greenAfterOrder?.status === 'accepted' && r.greenAfterOrder?.acceptedSha === e.planHead;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6s-ci-refresh-order-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/ci-refresh-order/run.json' });
+  }
+}
 // /accept 并发取消 + 父 Loop 取消拒绝 + CLI 退出码/持久化。
 {
   const run = spawnSync(process.execPath, ['scripts/accept-concurrency-cli-e2e.mjs'], { encoding: 'utf8', timeout: 300_000 });

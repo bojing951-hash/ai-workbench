@@ -55,3 +55,5 @@ demo/evidence/loop-crash-recovery/
 demo/evidence/loop-cancel-direct-publish/
 
 demo/evidence/accept-concurrency-cli/
+
+demo/evidence/ci-refresh-order/
