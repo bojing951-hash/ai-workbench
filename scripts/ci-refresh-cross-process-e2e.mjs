@@ -20,6 +20,7 @@ git(['init', '-q', '-b', 'main']); git(['config', 'user.name', 'fixture']); git(
 fs.writeFileSync(path.join(worktree, 'a.txt'), 'base\n'); git(['add', '-A']); git(['commit', '-qm', 'base']);
 const planHead = git(['rev-parse', 'HEAD']);
 let call = 0; let releaseA = null; let aStartedResolve = null; let aStarted = new Promise((r) => { aStartedResolve = r; });
+let receiptStartedResolve = null; let releaseReceipt = null; let receiptStarted = new Promise((r) => { receiptStartedResolve = r; });
 const mock = http.createServer(async (req, res) => {
   for await (const _ of req) { /* drain */ }
   const u = new URL(req.url, 'http://x'); const send = (c, o) => { res.writeHead(c, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
@@ -28,6 +29,7 @@ const mock = http.createServer(async (req, res) => {
     call += 1;
     if (call === 1) { aStartedResolve(); await new Promise((r) => { releaseA = r; }); return send(200, { workflow_runs: [{ id: 1, name: 'build', status: 'completed', conclusion: 'success', head_sha: planHead, html_url: 'https://example.invalid/ci/1' }] }); }
     if (call === 2) return send(200, { workflow_runs: [{ id: 2, name: 'build', status: 'completed', conclusion: 'failure', head_sha: planHead, html_url: 'https://example.invalid/ci/2' }] });
+    if (call === 3) { receiptStartedResolve(); await new Promise((r) => { releaseReceipt = r; }); return send(200, { workflow_runs: [{ id: 3, name: 'build', status: 'completed', conclusion: 'failure', head_sha: planHead, html_url: 'https://example.invalid/ci/3' }] }); }
     return send(200, { workflow_runs: [{ id: 3, name: 'build', status: 'completed', conclusion: 'success', head_sha: planHead, html_url: 'https://example.invalid/ci/3' }] });
   }
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
@@ -62,8 +64,18 @@ store.updateRun(runId, { verified_sha: planHead, result_json: { planHead, ciEvid
 store.createAction({ id: 'pr_' + runId, runId, type: 'github-pr', status: 'done', payload: { owner: 'fixture', repo: 'repo', head: 'wb/plan', base: 'main', sha: planHead }, result: { pr: { number: 31, url: 'https://example.invalid/pr/31', draft: true, head: 'wb/plan', base: 'main', sha: planHead }, sha: planHead } });
 store.createAction({ id: 'ci_' + runId, runId, type: 'github-ci', status: 'done', payload: { owner: 'fixture', repo: 'repo', sha: planHead }, result: { status: 'passed', conclusion: 'success', sha: planHead } });
 store.close();
-  return { runId };
+  return { runId, projectId: project.id, planId: plan.id };
 }
+function seedExtra(id, projectId, planId) {
+  const s = openStore(config.paths.dbPath);
+  s.createRun({ id, projectId, planId, goal: 'receipt-failure', status: 'awaiting_acceptance', verificationStatus: 'CI_PASSED' });
+  s.updateRun(id, { verified_sha: planHead, result_json: { planHead, ciEvidence: { status: 'passed', conclusion: 'success', sha: planHead, requiredSha: planHead, mismatched: [], missingChecks: [], runs: [{ id: 1, name: 'build', status: 'completed', conclusion: 'success', headSha: planHead }] } } });
+  s.createAction({ id: 'pr_' + id, runId: id, type: 'github-pr', status: 'done', payload: { owner: 'fixture', repo: 'repo', head: 'wb/plan', base: 'main', sha: planHead }, result: { pr: { number: 31, url: 'https://example.invalid/pr/31', draft: true, head: 'wb/plan', base: 'main', sha: planHead }, sha: planHead } });
+  s.createAction({ id: 'ci_' + id, runId: id, type: 'github-ci', status: 'done', payload: { owner: 'fixture', repo: 'repo', sha: planHead }, result: { status: 'passed', conclusion: 'success', sha: planHead } });
+  s.close();
+  return { runId: id, actionId: 'ci_' + id };
+}
+
 const ports = [await freePort(), await freePort()];
 const proc = (port, i) => spawn(NODE, [path.join(REPO, 'bin/workbench.js'), 'serve'], { cwd: root, env: { ...env, WORKBENCH_PORT: String(port) }, stdio: ['ignore', fs.openSync(path.join(root, `serve${i}.log`), 'a'), fs.openSync(path.join(root, `serve${i}.log`), 'a')] });
 const procs = [];
@@ -74,7 +86,7 @@ try {
   assert.ok(await waitHealth(ports[0]), fs.readFileSync(path.join(root, 'serve0.log'), 'utf8'));
   procs.push(proc(ports[1], 1));
   assert.ok(await waitHealth(ports[1]), fs.readFileSync(path.join(root, 'serve1.log'), 'utf8'));
-  const { runId } = seedFixtures(); currentRunId = runId;
+  const { runId, projectId, planId } = seedFixtures(); currentRunId = runId;
   const seqProbe = await concurrentSeqProbe(config.paths.dbPath, runId);
   assert.equal(seqProbe.duplicates, 0, `duplicate refresh seq in two processes: ${seqProbe.duplicates}`);
   assert.equal(seqProbe.distinct, 300);
@@ -89,6 +101,10 @@ try {
   assert.equal(store2Run().verification_status, 'CI_FAILED', 'stale success must not overwrite newer failure');
   const ciAction = store2Actions().filter((a) => a.type === 'github-ci').at(-1);
   assert.equal(ciAction?.result_json?.status, 'failed', 'stale refresh must not rewrite CI action receipt');
+  const runEvidence = store2Run().result_json?.ciEvidence || {};
+  assert.equal(runEvidence.refreshSeq, ciAction?.result_json?.refreshSeq, 'Run and CI action must share refreshSeq');
+  assert.equal(runEvidence.status, 'failed');
+  assert.equal(ciAction?.result_json?.status, 'failed');
   const seqA = oldRes.data?.data?.refreshSeq; const seqB = newRefresh.data?.data?.refreshSeq;
   assert.ok(Number(seqA) > 0 && Number(seqB) > 0 && seqA !== seqB, `cross-process seq must differ: ${seqA}/${seqB}`);
   assert.equal(oldRes.data?.data?.applied, false); assert.equal(oldRes.data?.data?.reason, 'out-of-order');
@@ -97,8 +113,26 @@ try {
   assert.equal(store2Run().result_json?.acceptedSha, undefined);
   assert.equal(store2Run().result_json?.acceptedAt, undefined);
   assert.equal(store2Events().filter((e) => e.type === 'run_accepted').length, 0);
+  results.receiptConsistency = { runSeq: runEvidence.refreshSeq, actionSeq: ciAction?.result_json?.refreshSeq, runStatus: runEvidence.status, actionStatus: ciAction?.result_json?.status };
   results.atomicSeq = { distinct: seqProbe.distinct, duplicates: seqProbe.duplicates, total: seqProbe.seqs.length };
   results.outOfOrder = { newStatus: 'CI_FAILED', staleApplied: false, staleReason: 'out-of-order', ciActionStatus: ciAction?.result_json?.status, seqA, seqB, acceptStatus: acceptFail.status, acceptedShaAbsent: true, acceptedAtAbsent: true, acceptedEvents: 0 };
+  // CI action 回执写入失败：Run 与 action 必须整体回滚，Run 保持原 CI_PASSED。
+  const extra = seedExtra('run_xproc_receipt_fail', projectId, planId);
+  const receiptRefresh = api(ports[0], 'POST', `/api/runs/${extra.runId}/ci-refresh`);
+  await receiptStarted;
+  const del = openDb(); const delRes = del.db.prepare('DELETE FROM actions WHERE id=?').run(extra.actionId); del.close();
+  assert.equal(Number(delRes.changes), 1);
+  releaseReceipt();
+  const receiptRes = await receiptRefresh;
+  const extraNow = store2RunById(extra.runId);
+  assert.equal(receiptRes.status, 200, JSON.stringify(receiptRes));
+  assert.equal(receiptRes.data?.data?.applied, false);
+  assert.equal(receiptRes.data?.data?.reason, 'action-receipt-write-failed');
+  assert.equal(extraNow.verification_status, 'CI_PASSED', 'receipt failure must roll back Run update');
+  assert.equal(extraNow.result_json?.ciEvidence?.status, 'passed');
+  const extraActions = store2ActionsById(extra.runId);
+  assert.equal(extraActions.filter((a) => a.type === 'github-ci').length, 0);
+  results.receiptWriteFailure = { applied: false, reason: 'action-receipt-write-failed', runStatus: extraNow.verification_status, runEvidenceStatus: extraNow.result_json?.ciEvidence?.status, actionRows: extraActions.length };
   // 有效新绿后同一 Draft/SHA 可验收。
   const green = await api(ports[1], 'POST', `/api/runs/${runId}/ci-refresh`);
   assert.equal(green.status, 200, JSON.stringify(green));
@@ -113,6 +147,8 @@ try {
   console.log(JSON.stringify({ ok: true, evidence: path.relative(REPO, path.join(EVIDENCE_DIR, 'run.json')), results }));
 } finally { for (const p of procs) { try { p.kill('SIGKILL'); } catch { /* ignore */ } } mock.close(); }
 function openDb() { return openStore(config.paths.dbPath); }
-function store2Run() { const s = openDb(); try { return s.getRun(currentRunId); } finally { s.close(); } }
+function store2Run() { return store2RunById(currentRunId); }
+function store2RunById(id) { const s = openDb(); try { return s.getRun(id); } finally { s.close(); } }
+function store2ActionsById(id) { const s = openDb(); try { return s.listActions(id); } finally { s.close(); } }
 function store2Actions() { const s = openDb(); try { return s.listActions(currentRunId); } finally { s.close(); } }
 function store2Events() { const s = openDb(); try { return s.listEvents({ runId: currentRunId }); } finally { s.close(); } }

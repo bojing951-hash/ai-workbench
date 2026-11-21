@@ -814,13 +814,34 @@ export class Store {
     return Number(row?.ci_refresh_seq || 0);
   }
 
-  applyCiRefreshIfCurrent(id, seq, sha, patch = {}, evidence = null) {
+  applyCiRefreshWithActionIfCurrent(id, seq, sha, patch = {}, evidence = null, actionId = '') {
     const cur = this.getRun(id);
     if (!cur) return { ok: false, reason: 'run-missing' };
     const nextResult = { ...(cur.result_json || {}), ciEvidence: evidence };
-    const r = this.db.prepare(`UPDATE runs SET verification_status=?, ci_status=?, ci_url=?, ci_checked_at=?, result_json=?, updated_at=? WHERE id=? AND status='awaiting_acceptance' AND verified_sha=? AND COALESCE(ci_refresh_seq,0)=?`)
-      .run(String(patch.verificationStatus || cur.verification_status || ''), String(patch.ciStatus || ''), String(patch.ciUrl || ''), String(patch.ciCheckedAt || ''), JSON.stringify(nextResult), nowIso(), String(id), String(sha || ''), Number(seq || 0));
-    return { ok: Number(r.changes || 0) > 0, run: this.getRun(id), reason: Number(r.changes || 0) > 0 ? '' : 'stale-or-not-awaiting' };
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const r = this.db.prepare(`UPDATE runs SET verification_status=?, ci_status=?, ci_url=?, ci_checked_at=?, result_json=?, updated_at=? WHERE id=? AND status='awaiting_acceptance' AND verified_sha=? AND COALESCE(ci_refresh_seq,0)=?`)
+        .run(String(patch.verificationStatus || cur.verification_status || ''), String(patch.ciStatus || ''), String(patch.ciUrl || ''), String(patch.ciCheckedAt || ''), JSON.stringify(nextResult), nowIso(), String(id), String(sha || ''), Number(seq || 0));
+      if (Number(r.changes || 0) === 0) {
+        this.db.exec('ROLLBACK');
+        return { ok: false, reason: this.getRun(id)?.status === 'accepted' ? 'run-already-accepted' : 'stale-or-not-awaiting', run: this.getRun(id) };
+      }
+      const a = this.db.prepare('UPDATE actions SET status=?, result_json=?, updated_at=? WHERE id=? AND run_id=?')
+        .run(String(patch.actionStatus || 'done'), JSON.stringify(evidence || {}), nowIso(), String(actionId || ''), String(id));
+      if (Number(a.changes || 0) !== 1) {
+        this.db.exec('ROLLBACK');
+        return { ok: false, reason: 'action-receipt-write-failed', run: this.getRun(id) };
+      }
+      this.db.exec('COMMIT');
+      return { ok: true, run: this.getRun(id), action: this.getAction(actionId), reason: '' };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    }
+  }
+
+  applyCiRefreshIfCurrent(id, seq, sha, patch = {}, evidence = null) {
+    return this.applyCiRefreshWithActionIfCurrent(id, seq, sha, patch, evidence, '');
   }
 
   acceptRunIfCurrent(id, sha, resultJson, { requireCi = true } = {}) {

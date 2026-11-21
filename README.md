@@ -98,7 +98,7 @@ git clone https://github.com/bojing951-hash/ai-workbench.git
 cd ai-workbench
 git checkout "$SHA"
 test "$(git rev-parse HEAD)" = "$SHA"
-npm ci
+npm install --ignore-scripts --no-audit --no-fund
 node scripts/install-acceptance-e2e.mjs
 npm start
 ```

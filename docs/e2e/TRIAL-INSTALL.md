@@ -9,7 +9,7 @@ cd ai-workbench
 git checkout "$SHA"
 test "$(git rev-parse HEAD)" = "$SHA"
 
-npm ci
+npm install --ignore-scripts --no-audit --no-fund
 npm test
 node scripts/install-acceptance-e2e.mjs
 

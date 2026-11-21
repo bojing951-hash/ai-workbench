@@ -26,3 +26,11 @@ WHERE id=? RETURNING ci_refresh_seq
 
 Fixed evidence: `demo/evidence/ci-refresh-cross-process/run.json`
 (`atomicSeq.duplicates = 0`, 300 distinct sequences).
+
+## Receipt consistency
+
+The fixed test also writes the CI action receipt in the same SQLite transaction
+as the Run. If the CI action row is removed before the response is released,
+the whole transaction rolls back: `applied=false`,
+`reason=action-receipt-write-failed`, Run stays `CI_PASSED`, and no CI action
+row is recreated. Evidence: `demo/evidence/ci-refresh-cross-process/run.json`.

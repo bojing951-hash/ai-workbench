@@ -2502,21 +2502,24 @@ export class Orchestrator {
     ev.currentDraft = draftCurrent;
     const passed = ev.status === 'passed' && String(run.verified_sha || '') === String(sha || '');
     ev.refreshSeq = refreshSeq; ev.refreshStartedSha = sha;
-    const apply = this.store.applyCiRefreshIfCurrent(runId, refreshSeq, sha, {
+    const apply = this.store.applyCiRefreshWithActionIfCurrent(runId, refreshSeq, sha, {
       verificationStatus: passed ? 'CI_PASSED' : (ev.status === 'failed' ? 'CI_FAILED' : (run.verification_status || 'LOCAL_VERIFIED')),
       ciStatus: ev.status === 'passed' ? 'passed' : ev.status === 'failed' ? 'failed' : (ev.status === 'pending' ? 'pending' : ev.status),
       ciUrl: ev.runs.find((r) => r.htmlUrl)?.htmlUrl || '',
       ciCheckedAt: nowIso(),
-    }, { ...ev, sha, runId });
+      actionStatus: ev.status === 'pending' ? 'running' : 'done',
+    }, { ...ev, sha, runId }, ci.id);
     const current = this.store.getRun(runId);
     if (!apply.ok) {
-      const reason = current?.status === RunStatus.ACCEPTED ? 'run-already-accepted'
-        : Number(current?.ci_refresh_seq || 0) !== Number(refreshSeq) ? 'out-of-order'
-          : (current?.status !== RunStatus.AWAITING_ACCEPTANCE ? `run-${current?.status || 'missing'}` : 'stale-ci-write');
+      let reason = apply.reason || '';
+      if (!reason || reason === 'stale-or-not-awaiting') {
+        reason = current?.status === RunStatus.ACCEPTED ? 'run-already-accepted'
+          : Number(current?.ci_refresh_seq || 0) !== Number(refreshSeq) ? 'out-of-order'
+            : (current?.status !== RunStatus.AWAITING_ACCEPTANCE ? `run-${current?.status || 'missing'}` : 'stale-ci-write');
+      }
       this.emit({ runId, type: 'ci_refresh_stale', level: 'warn', message: `忽略过期 CI 刷新（${reason}，seq=${refreshSeq}）`, data: { reason, refreshSeq, currentSeq: current?.ci_refresh_seq, status: current?.status } });
       return { ok: false, applied: false, reason, refreshSeq, status: current?.verification_status || '', currentStatus: current?.status || '', evidence: current?.result_json?.ciEvidence || null, runs };
     }
-    this.store.updateAction(ci.id, { status: ev.status === 'pending' ? 'running' : 'done', result: { ...ev } });
     this.emit({ runId, type: 'ci_update', message: `GitHub Actions 状态刷新：${ev.status}${ev.mismatched.length ? '（存在异 SHA run，拒绝通过）' : ''}${ev.missingChecks.length ? '（缺必需检查：' + ev.missingChecks.join('、') + '）' : ''}`, data: { status: ev.status, requiredSha: sha, mismatched: ev.mismatched, missingChecks: ev.missingChecks, refreshSeq } });
     return { ok: true, applied: true, conclusion: ev.conclusion, status: ev.status, requiredSha: sha, mismatched: ev.mismatched, missingChecks: ev.missingChecks, runs, evidence: ev, refreshSeq };
   }
