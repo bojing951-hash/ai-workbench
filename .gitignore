@@ -48,3 +48,6 @@ demo/evidence/loop-quality-gate/
 
 demo/evidence/loop-cancel-publish/
 demo/evidence/loop-quality-gate/
+
+demo/evidence/loop-revoke-publish/
+demo/evidence/loop-crash-recovery/
