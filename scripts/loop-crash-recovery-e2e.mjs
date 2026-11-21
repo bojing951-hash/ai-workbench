@@ -80,6 +80,7 @@ try{
  const finalRun0=runs0.find(r=>r.result_json?.productAcceptance==='PASS')||runs0[0];
  const actions0=finalRun0?st0.listActions(finalRun0.id):[];
  const attemptsBefore=finalRun0?finalRun0.id&&(st0.listTasks({runId:finalRun0.id}).reduce((n,t)=>n+st0.listAttempts(t.id).length,0)):0;
+ const auditHttpBefore=auditLog.length;
  const auditsBefore=finalRun0?st0.listTasks({runId:finalRun0.id}).reduce((n,t)=>n+st0.listAudits(t.id).length,0):0;
  assert.ok(actions0.some(a=>a.type==='github-pr'&&a.status==='done'),'Draft action must be done before crash');
  assert.ok(!actions0.some(a=>a.type==='github-ci'),'CI action must be absent before crash');
@@ -97,24 +98,48 @@ try{
    while(Date.now()<end){const st=await api(portB,token,'GET',`/api/runs/${finalRun0.id}`);runNow=st.data?.data;if(runNow?.verification_status==='CI_PASSED')break;await sleep(400);}
    assert.equal(runNow?.verification_status,'CI_PASSED',JSON.stringify(runNow?.stop_reason||runNow));
    const loopNow=(await api(portB,token,'GET',`/api/loops/${loopId}`)).data.data;
-   assert.ok(['completed','running'].includes(loopNow.status),loopNow.status);
+   assert.equal(loopNow.status,'completed',loopNow.status);
    const acc=await api(portB,token,'POST',`/api/runs/${finalRun0.id}/accept`,{});
    assert.equal(acc.status,200,JSON.stringify(acc));
    const st1=openStore(dbPath);
    const runs1=st1.listRuns().filter(r=>r.project_id===projectId);
    const attemptsAfter=finalRun0.id?st1.listTasks({runId:finalRun0.id}).reduce((n,t)=>n+st1.listAttempts(t.id).length,0):0;
+ const auditHttpAfter=auditLog.length;
    const auditsAfter=finalRun0.id?st1.listTasks({runId:finalRun0.id}).reduce((n,t)=>n+st1.listAudits(t.id).length,0):0;
    const actions1=st1.listActions(finalRun0.id);
    st1.close();
    assert.equal(runs1.length,runs0.length,'recovery must not create new Runs');
    assert.equal(attemptsAfter,attemptsBefore,'recovery must not rerun coding');
    assert.equal(auditsAfter,auditsBefore,'recovery must not rerun product audit');
+   assert.equal(auditHttpAfter,auditHttpBefore,'recovery must not issue product audit HTTP requests');
    assert.equal(prCreates,1,'exactly one Draft');
    assert.ok(actions1.some(a=>a.type==='github-ci'),'CI action must be persisted');
    const candidateSha=process.env.CANDIDATE_SHA||spawnSync('git',['rev-parse','HEAD'],{cwd:process.cwd(),encoding:'utf8'}).stdout.trim();
-   const evidenceDir=path.resolve(process.env.LOOP_CRASH_EVIDENCE_DIR||'demo/evidence/loop-crash-recovery');
+   // 验收后再重启一次：幂等，无新增 Run/Attempt/Audit/Draft。
+   let childB2=0; try { childB2=Number(JSON.parse(fs.readFileSync(path.join(root,'data/supervisor/state.json'),'utf8')).childPid||0); } catch { /* ignore */ }
+   try { supB.kill('SIGKILL'); } catch { /* ignore */ } if (childB2) { try { process.kill(childB2,'SIGKILL'); } catch { /* ignore */ } }
+   await sleep(500);
+   const portC=await freePort();
+   const supC=spawn(NODE,[path.join(REPO,'supervisor/workbench-supervisor.mjs'),'--root',root,'--port',String(portC),'--max-restarts','2'],{cwd:root,env:{...env,WORKBENCH_PORT:String(portC)},stdio:['ignore',fs.openSync(path.join(root,'supC.log'),'a'),fs.openSync(path.join(root,'supC.log'),'a')]});
+   try {
+     assert.ok(await waitHealth(portC,120000),fs.readFileSync(path.join(root,'supC.log'),'utf8'));
+     const loopAfterRestart=(await api(portC,token,'GET',`/api/loops/${loopId}`)).data.data;
+     const runAfterRestart=(await api(portC,token,'GET',`/api/runs/${finalRun0.id}`)).data.data;
+     const st2=openStore(dbPath);
+     const runs2=st2.listRuns().filter(r=>r.project_id===projectId);
+     const attempts2=st2.listTasks({runId:finalRun0.id}).reduce((n,t)=>n+st2.listAttempts(t.id).length,0);
+     const audits2=st2.listTasks({runId:finalRun0.id}).reduce((n,t)=>n+st2.listAudits(t.id).length,0);
+     st2.close();
+     assert.equal(loopAfterRestart.status,'completed');
+     assert.equal(runAfterRestart.status,'accepted');
+     assert.equal(runs2.length,runs0.length);
+     assert.equal(attempts2,attemptsBefore);
+     assert.equal(audits2,auditsBefore);
+     assert.equal(prCreates,1);
+     const evidenceDir=path.resolve(process.env.LOOP_CRASH_EVIDENCE_DIR||'demo/evidence/loop-crash-recovery');
    fs.mkdirSync(evidenceDir,{recursive:true});
-   fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-crash-recovery',candidateSha,projectId,loopId,runId:finalRun0.id,prCreates,draftActionDone:true,ciActionAbsentBeforeCrash:true,attemptsBefore,attemptsAfter,auditsBefore,auditsAfter,runsBefore:runs0.length,runsAfter:runs1.length,verificationStatus:runNow.verification_status,loopStatus:loopNow.status,acceptedStatus:acc.data.data.status,acceptedSha:acc.data.data.result_json?.acceptedSha,at:new Date().toISOString()},null,2));
+   fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-crash-recovery',candidateSha,projectId,loopId,runId:finalRun0.id,prCreates,draftActionDone:true,ciActionAbsentBeforeCrash:true,attemptsBefore,attemptsAfter,auditsBefore,auditsAfter,auditHttpBefore,auditHttpAfter,runsBefore:runs0.length,runsAfter:runs1.length,verificationStatus:runNow.verification_status,loopStatus:loopNow.status,acceptedStatus:acc.data.data.status,acceptedSha:acc.data.data.result_json?.acceptedSha,secondRestart:{loopStatus:loopAfterRestart.status,runStatus:runAfterRestart.status,runs:runs2.length,attempts:attempts2,audits:audits2},at:new Date().toISOString()},null,2));
    console.log(JSON.stringify({ok:true,evidence:path.relative(REPO,path.join(evidenceDir,'run.json')),prCreates,attemptsBefore,attemptsAfter,auditsBefore,auditsAfter,acceptedSha:acc.data.data.result_json?.acceptedSha}));
+ } finally { try{supC.kill('SIGKILL');}catch{}; try{const s3=JSON.parse(fs.readFileSync(path.join(root,'data/supervisor/state.json'),'utf8'));if(s3.childPid)process.kill(s3.childPid,'SIGKILL');}catch{} }
  } finally { try{supB.kill('SIGKILL');}catch{}; try{const s2=JSON.parse(fs.readFileSync(path.join(root,'data/supervisor/state.json'),'utf8'));if(s2.childPid)process.kill(s2.childPid,'SIGKILL');}catch{} }
 }finally { try{sup.kill('SIGTERM')}catch{};await sleep(400);try{const s=JSON.parse(fs.readFileSync(path.join(root,'data/supervisor/state.json'),'utf8'));if(s.childPid>0)process.kill(s.childPid,'SIGTERM')}catch{};mock.close(); ghApi.close();}

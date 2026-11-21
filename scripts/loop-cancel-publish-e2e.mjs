@@ -97,9 +97,11 @@ try{
  assert.equal(snap.status, 'cancelled', 'Loop must remain cancelled');
  const cancelledRun = (await api(port,token,'GET',`/api/runs/${currentRun.id}`)).data.data;
  assert.equal(cancelledRun.status, 'cancelled');
+ const accCancel=await api(port,token,'POST',`/api/runs/${currentRun.id}/accept`,{});
+ assert.notEqual(accCancel.status,200,'cancelled run must not be acceptable');
  const candidateSha = process.env.CANDIDATE_SHA || spawnSync('git',['rev-parse','HEAD'],{cwd:process.cwd(),encoding:'utf8'}).stdout.trim();
  const evidenceDir = path.resolve(process.env.LOOP_CANCEL_EVIDENCE_DIR || 'demo/evidence/loop-cancel-publish');
  fs.mkdirSync(evidenceDir,{recursive:true});
- fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-cancel-during-publish',candidateSha,projectId,loopId,loopStatus:snap.status,runId:currentRun.id,runStatus:cancelledRun.status,prCreates,bareRefPushed:!!doGit(['rev-parse','--verify','--quiet','refs/heads/'+('wb/plan-'+currentRun.id.slice(-6))],bare)},null,2));
- console.log(JSON.stringify({ok:true,candidateSha,loopStatus:snap.status,runStatus:cancelledRun.status,prCreates}));
+ fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-cancel-during-publish',candidateSha,projectId,loopId,loopStatus:snap.status,runId:currentRun.id,runStatus:cancelledRun.status,acceptStatus:accCancel.status,prCreates,bareRefPushed:!!doGit(['rev-parse','--verify','--quiet','refs/heads/'+('wb/plan-'+currentRun.id.slice(-6))],bare)},null,2));
+ console.log(JSON.stringify({ok:true,candidateSha,loopStatus:snap.status,runStatus:cancelledRun.status,acceptStatus:accCancel.status,prCreates}));
 }finally { try{sup.kill('SIGTERM')}catch{};await sleep(400);try{const s=JSON.parse(fs.readFileSync(path.join(root,'data/supervisor/state.json'),'utf8'));if(s.childPid>0)process.kill(s.childPid,'SIGTERM')}catch{};mock.close(); ghApi.close();}

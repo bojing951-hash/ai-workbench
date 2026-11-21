@@ -47,6 +47,7 @@ const mock = http.createServer(async (req, res) => {
     return send(200, [{ number: 7, html_url: 'https://example.invalid/pr/7', state: 'open', draft: existingDraft, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref, sha: existingSha, repo: { full_name: 'fixture/repo' } } }]);
   }
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { creates += 1; draftCreated += 1; draftExists = true; const body=JSON.parse(bodyText||'{}'); return send(201, { number: 8, html_url: 'https://example.invalid/pr/8', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head), repo: { full_name: 'fixture/repo' } } }); }
+  if (u.pathname === '/repos/fixture/repo/pulls/7' && req.method === 'GET') return send(200, { number: 7, html_url: 'https://example.invalid/pr/7', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: branch, sha: planHead, repo: { full_name: 'fixture/repo' } } });
   if (u.pathname === '/repos/fixture/repo/actions/runs') {
     const sha = u.searchParams.get('head_sha') || '';
     return send(200, { workflow_runs: [{ id: 1, name: 'ci', status: 'completed', conclusion: 'success', head_sha: ciShaOverride || sha, html_url: 'https://example.invalid/ci/1' }] });

@@ -97,9 +97,11 @@ try{
  assert.notEqual(snap.status, 'completed', 'revoked Loop must not be completed');
  const liveProject=(await api(port,token,'GET','/api/state')).data.data.projects.find(p=>p.id===projectId);
  assert.equal(Number(liveProject.remote_push_authorized),0);
+ const accRevoke=await api(port,token,'POST',`/api/runs/${currentRun.id}/accept`,{});
+ assert.notEqual(accRevoke.status,200,'revoked run must not be acceptable');
  const candidateSha = process.env.CANDIDATE_SHA || spawnSync('git',['rev-parse','HEAD'],{cwd:process.cwd(),encoding:'utf8'}).stdout.trim();
  const evidenceDir = path.resolve(process.env.LOOP_REVOKE_EVIDENCE_DIR || 'demo/evidence/loop-revoke-publish');
  fs.mkdirSync(evidenceDir,{recursive:true});
- fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-revoke-during-publish',candidateSha,projectId,loopId,loopStatus:snap.status,runId:currentRun.id,prCreates,remotePushAuthorized:Number(liveProject.remote_push_authorized),branchPushed:!!doGit(['rev-parse','--verify','--quiet','refs/heads/'+('wb/plan-'+currentRun.id.slice(-6))],bare)},null,2));
+ fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-revoke-during-publish',candidateSha,projectId,loopId,loopStatus:snap.status,runId:currentRun.id,prCreates,remotePushAuthorized:Number(liveProject.remote_push_authorized),acceptStatus:accRevoke.status,branchPushed:!!doGit(['rev-parse','--verify','--quiet','refs/heads/'+('wb/plan-'+currentRun.id.slice(-6))],bare)},null,2));
  console.log(JSON.stringify({ok:true,candidateSha,loopStatus:snap.status,prCreates,remotePushAuthorized:Number(liveProject.remote_push_authorized)}));
 }finally { try{sup.kill('SIGTERM')}catch{};await sleep(400);try{const s=JSON.parse(fs.readFileSync(path.join(root,'data/supervisor/state.json'),'utf8'));if(s.childPid>0)process.kill(s.childPid,'SIGTERM')}catch{};mock.close(); ghApi.close();}

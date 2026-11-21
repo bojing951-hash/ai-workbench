@@ -54,7 +54,7 @@ for (const group of groups) {
     try {
       const e = JSON.parse(fs.readFileSync('demo/evidence/loop-revoke-publish/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
-      ok = e.candidateSha === head && e.prCreates === 0 && e.remotePushAuthorized === 0 && e.loopStatus !== 'completed';
+      ok = e.candidateSha === head && e.prCreates === 0 && e.remotePushAuthorized === 0 && e.loopStatus !== 'completed' && e.acceptStatus !== 200;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6o-loop-revoke-publish-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-revoke-publish/run.json' });
@@ -70,7 +70,7 @@ for (const group of groups) {
     try {
       const e = JSON.parse(fs.readFileSync('demo/evidence/loop-crash-recovery/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
-      ok = e.candidateSha === head && e.prCreates === 1 && e.attemptsBefore === e.attemptsAfter && e.auditsBefore === e.auditsAfter && e.runsBefore === e.runsAfter && e.verificationStatus === 'CI_PASSED' && e.acceptedStatus === 'accepted';
+      ok = e.candidateSha === head && e.prCreates === 1 && e.attemptsBefore === e.attemptsAfter && e.auditsBefore === e.auditsAfter && e.runsBefore === e.runsAfter && e.verificationStatus === 'CI_PASSED' && e.acceptedStatus === 'accepted' && e.loopStatus === 'completed' && e.auditHttpBefore === e.auditHttpAfter && e.secondRestart?.loopStatus === 'completed' && e.secondRestart?.runStatus === 'accepted' && e.secondRestart?.runs === e.runsBefore;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6p-loop-crash-recovery-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-crash-recovery/run.json' });
@@ -86,10 +86,26 @@ for (const group of groups) {
     try {
       const e = JSON.parse(fs.readFileSync('demo/evidence/loop-cancel-publish/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
-      ok = e.candidateSha === head && e.loopStatus === 'cancelled' && e.runStatus === 'cancelled' && e.prCreates === 0;
+      ok = e.candidateSha === head && e.loopStatus === 'cancelled' && e.runStatus === 'cancelled' && e.prCreates === 0 && e.acceptStatus !== 200;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6m-loop-cancel-publish-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-cancel-publish/run.json' });
+  }
+}
+// 直接取消父 Loop（不取消 Run）：发布等待期间 GET 挂起，零 Draft POST、/accept 拒绝。
+{
+  const run = spawnSync(process.execPath, ['scripts/loop-cancel-loop-e2e.mjs'], { encoding: 'utf8', timeout: 420_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6q-loop-cancel-direct', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1000) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/loop-cancel-direct-publish/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      ok = e.candidateSha === head && e.loopStatus === 'cancelled' && e.prCreates === 0 && e.acceptStatus !== 200;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6q-loop-cancel-direct-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-cancel-direct-publish/run.json' });
   }
 }
 // 质量门缺证终态：零 Draft、零发布分支、Loop blocked。
@@ -183,7 +199,7 @@ for (const group of groups) {
       const e = JSON.parse(fs.readFileSync('demo/evidence/ci-evidence/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
       const r = e.results || {};
-      ok = e.candidateSha === head && r.sameShaGreen === 'accepted' && r.redRejected === true && r.pendingToGreen === 'accepted' && r.missingCheckRejected === true && r.foreignShaRejected === true && r.staleCiPassedRejected === true && r.auditedShaPushed?.remote === e.planHead && r.auditedShaPushed?.remote !== r.auditedShaPushed?.drift;
+      ok = e.candidateSha === head && r.sameShaGreen === 'accepted' && r.redRejected === true && r.pendingToGreen === 'accepted' && r.missingCheckRejected === true && r.foreignShaRejected === true && r.staleCiPassedRejected === true && r.draftHeadChangedRejected === true && r.sameDraftSameShaAccepted === true && r.auditedShaPushed?.remote === e.planHead && r.auditedShaPushed?.remote !== r.auditedShaPushed?.drift;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6k-ci-evidence-accept-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/ci-evidence/run.json' });

@@ -2476,6 +2476,25 @@ export class Orchestrator {
     const requiredChecks = Array.isArray(project?.config_json?.required_checks) ? project.config_json.required_checks : (project?.config_json?.required_checks ? parseList(project.config_json.required_checks) : []);
     const ev = this.evaluateCiEvidence(runs, sha, requiredChecks);
     ev.source = 'refresh';
+    // 当前 Draft 必须仍指向同一审计 SHA；PR head 变化时旧 SHA 的绿不得通过。
+    const prAction = actions.filter((a) => a.type === 'github-pr' && a.status === 'done').at(-1);
+    const prNumber = prAction?.result_json?.pr?.number;
+    let draftCurrent = null;
+    if (prNumber) {
+      try {
+        const full = await gh.getPullRequest(this.config, owner, repo, prNumber);
+        const baseRepo = full?.base?.repo?.full_name || '';
+        const headRepo = full?.head?.repo?.full_name || '';
+        const currentHead = String(full?.head?.sha || '');
+        draftCurrent = { number: prNumber, headSha: currentHead, draft: full?.draft, state: full?.state, base: full?.base?.ref, head: full?.head?.ref, baseRepo, headRepo };
+        const expectedRepo = `${owner}/${repo}`;
+        if (currentHead !== sha) { ev.status = 'failed'; ev.conclusion = 'failure'; ev.draftMismatch = { expectedSha: sha, currentHeadSha: currentHead, pr: prNumber }; }
+        else if (full?.draft !== true || full?.state !== 'open' || (baseRepo && baseRepo !== expectedRepo) || (headRepo && headRepo !== expectedRepo)) { ev.status = 'failed'; ev.conclusion = 'failure'; ev.draftMismatch = { expectedSha: sha, currentHeadSha: currentHead, pr: prNumber, reason: 'draft/state/repo mismatch' }; }
+      } catch (err) {
+        ev.status = 'failed'; ev.conclusion = 'failure'; ev.draftMismatch = { expectedSha: sha, pr: prNumber, reason: String(err?.message || err).slice(0, 300) };
+      }
+    }
+    ev.currentDraft = draftCurrent;
     const passed = ev.status === 'passed' && String(run.verified_sha || '') === String(sha || '');
     this.store.updateAction(ci.id, { status: ev.status === 'pending' ? 'running' : 'done', result: { ...ev } });
     if (run.status === RunStatus.AWAITING_ACCEPTANCE) {
@@ -2873,11 +2892,23 @@ export class Orchestrator {
               verified_sha: sha,
               verification_status: ciPassed2 ? 'CI_PASSED' : (publish.ci?.status === 'failed' ? 'CI_FAILED' : (after.verification_status || 'LOCAL_VERIFIED')),
             });
+            if (ciPassed2 && run.result_json?.loopId) {
+              const lp = this.store.getLoop(run.result_json.loopId);
+              if (lp && lp.status === 'running') this.store.updateLoop(lp.id, { status: 'completed', stop_reason: '恢复：同一 Draft 的必需 CI 已通过，完成 Loop', current_run_id: '' });
+            }
             recovered.push({ runId, window: 'ci-action-rebuild', pr: prAction.result_json.pr.number, ci: publish.ci?.status || null });
           } catch (err) { blocked.push({ runId, reason: String(err?.message || err).slice(0, 500) }); }
           continue;
         }
-        try { const ci = await this.refreshCi(run.id); recovered.push({ runId, window: 'ci-refresh', pr: prAction.result_json.pr.number, status: ci.status || ci.conclusion }); }
+        try {
+          const ci = await this.refreshCi(run.id);
+          const afterCi = this.store.getRun(run.id);
+          if (afterCi?.verification_status === 'CI_PASSED' && run.result_json?.loopId) {
+            const lp = this.store.getLoop(run.result_json.loopId);
+            if (lp && lp.status === 'running') this.store.updateLoop(lp.id, { status: 'completed', stop_reason: '恢复：同一 Draft 的必需 CI 已通过，完成 Loop', current_run_id: '' });
+          }
+          recovered.push({ runId, window: 'ci-refresh', pr: prAction.result_json.pr.number, status: ci.status || ci.conclusion });
+        }
         catch (err) { blocked.push({ runId, reason: String(err?.message || err).slice(0, 500) }); }
         continue;
       }

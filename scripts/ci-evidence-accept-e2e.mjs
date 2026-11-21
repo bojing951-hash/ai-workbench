@@ -22,13 +22,14 @@ git(['init', '-q', '-b', 'main']); git(['config', 'user.name', 'fixture']); git(
 fs.writeFileSync(path.join(worktree, 'a.txt'), 'base\n'); git(['add', '-A']); git(['commit', '-qm', 'base']); spawnSync('git', ['init', '--bare', '-q', bare]); git(['remote', 'add', 'origin', bare]);
 fs.writeFileSync(path.join(worktree, 'a.txt'), 'final\n'); git(['add', '-A']); git(['commit', '-qm', 'final']); const planHead = git(['rev-parse', 'HEAD']);
 const runId = 'run_cievidence01'; const branch = `wb/plan-${runId.slice(-6)}`; git(['branch', branch, planHead]); git(['push', '-q', 'origin', branch]);
-let mode = 'green'; let foreign = false; let checkName = 'build'; let pendingOnce = false;
+let mode = 'green'; let foreign = false; let checkName = 'build'; let pendingOnce = false; let draftHeadSha = planHead;
 const mock = http.createServer(async (req, res) => {
   let bodyText=''; for await (const c of req) bodyText+=c;
   const u = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') return send(200, []);
+  if (u.pathname === '/repos/fixture/repo/pulls/31' && req.method === 'GET') return send(200, { number: 31, html_url: 'https://example.invalid/pr/31', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: 'wb/plan', sha: draftHeadSha, repo: { full_name: 'fixture/repo' } } });
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { const body=JSON.parse(bodyText||'{}'); return send(201, { number: 31, html_url: 'https://example.invalid/pr/31', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head), repo: { full_name: 'fixture/repo' } } }); }
   if (u.pathname === '/repos/fixture/repo/actions/runs') {
     const sha = u.searchParams.get('head_sha') || '';
@@ -79,6 +80,20 @@ try {
   store.updateRun(run6id, { verified_sha: planHead, result_json: { planHead } });
   assert.throws(() => orch.acceptRun(run6id, {}), /CI_PASSED 缺少|CI_EVIDENCE_MISSING/); results.staleCiPassedRejected = true;
   // 7) 审计 SHA 推送源：本地 ref 被推进后，远端仍只收到审计 SHA。
+  // 6b) 当前 Draft head 已变化：旧 SHA 的绿不得通过，/accept 拒绝。
+  const run8id = 'run_cidraft00008'; mkRun(run8id);
+  store.createAction({ id: 'pr_' + run8id, runId: run8id, type: 'github-pr', status: 'done', payload: { owner: 'fixture', repo: 'repo', head: 'wb/plan', base: 'main', sha: planHead }, result: { pr: { number: 31, url: 'https://example.invalid/pr/31', draft: true, head: 'wb/plan', base: 'main', sha: planHead }, sha: planHead } });
+  draftHeadSha = 'a'.repeat(40); mode = 'green'; checkName = 'build';
+  const r8 = await orch.refreshCi(run8id);
+  assert.equal(store.getRun(run8id).verification_status, 'CI_FAILED', JSON.stringify(r8));
+  assert.ok(r8.evidence?.draftMismatch?.currentHeadSha === draftHeadSha);
+  assert.throws(() => orch.acceptRun(run8id, {}), /CI_FAILED|不能验收/); results.draftHeadChangedRejected = true;
+  // 同一 Draft 同一 SHA：刷新通过、/accept 正常。
+  const run9id = 'run_cidraft00009'; mkRun(run9id);
+  store.createAction({ id: 'pr_' + run9id, runId: run9id, type: 'github-pr', status: 'done', payload: { owner: 'fixture', repo: 'repo', head: 'wb/plan', base: 'main', sha: planHead }, result: { pr: { number: 31, url: 'https://example.invalid/pr/31', draft: true, head: 'wb/plan', base: 'main', sha: planHead }, sha: planHead } });
+  draftHeadSha = planHead;
+  const r9 = await orch.refreshCi(run9id); assert.equal(r9.status, 'passed', JSON.stringify(r9));
+  assert.equal(orch.acceptRun(run9id, {}).status, 'accepted'); results.sameDraftSameShaAccepted = true;
   const run7id = 'run_cipush00007'; const p7 = store.createProject({ id: 'proj_push', name: 'push', localPath: worktree, defaultBranch: 'main', testCommand: 'true', agentKind: 'custom', auditProvider: 'openai', remotePushAuthorized: true, ciRequired: false, config: { publish: true } });
   const plan7 = store.createPlan({ id: 'plan_push', projectId: p7.id, runId: run7id, goal: 'push', title: 'push' });
   store.createRun({ id: run7id, projectId: p7.id, planId: plan7.id, goal: 'push', status: 'awaiting_acceptance', verificationStatus: 'LOCAL_VERIFIED' });

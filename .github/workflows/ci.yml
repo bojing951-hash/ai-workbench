@@ -72,6 +72,7 @@ jobs:
             demo/evidence/github-restart-recovery
             demo/evidence/loop-rest-publish
             demo/evidence/loop-cancel-publish
+            demo/evidence/loop-cancel-direct-publish
             demo/evidence/loop-revoke-publish
             demo/evidence/loop-crash-recovery
             demo/evidence/loop-quality-gate
