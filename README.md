@@ -88,6 +88,24 @@
 | 断点恢复 | 进程崩溃/重启后自动识别中断运行，保留计划分支与已完成任务，从断点继续 |
 | 实时可视化 | Web 工作台：项目 / 任务流水线 / Agent / 实时事件 / 独立审计结论 / 成本 / PR / CI |
 
+## 固定版本试用（v3.3.0）
+
+发布回执会给出完整候选 SHA。把回执中的 SHA 填入下面命令后可直接复制执行：
+
+```bash
+SHA="<完整 40 位候选 SHA>"
+git clone https://github.com/bojing951-hash/ai-workbench.git
+cd ai-workbench
+git checkout "$SHA"
+test "$(git rev-parse HEAD)" = "$SHA"
+npm ci
+node scripts/install-acceptance-e2e.mjs
+npm start
+```
+
+`install-acceptance-e2e.mjs` 会在干净树安装、启动 Supervisor、完成离线首个
+Draft 与同 SHA 验收，证据写入 `demo/evidence/install-acceptance/run.json`。
+
 ## 2. 快速开始
 
 **环境要求**：macOS / Linux（Windows 未验证），Node.js ≥ 24，Git；本机已安装并登录 DSH 或 Claude Code 之一（至少一个 Coding Agent 可用）。

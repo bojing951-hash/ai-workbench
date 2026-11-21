@@ -809,8 +809,9 @@ export class Store {
   }
 
   beginCiRefresh(id) {
-    const r = this.db.prepare('UPDATE runs SET ci_refresh_seq=COALESCE(ci_refresh_seq,0)+1, updated_at=? WHERE id=?').run(nowIso(), String(id));
-    return Number(r.changes || 0) > 0 ? Number(this.getRun(id)?.ci_refresh_seq || 0) : 0;
+    // 单条 UPDATE ... RETURNING 原子取号：不能先递增再另读，否则两个进程可拿到同一序号。
+    const row = this.db.prepare('UPDATE runs SET ci_refresh_seq=COALESCE(ci_refresh_seq,0)+1, updated_at=? WHERE id=? RETURNING ci_refresh_seq').get(nowIso(), String(id));
+    return Number(row?.ci_refresh_seq || 0);
   }
 
   applyCiRefreshIfCurrent(id, seq, sha, patch = {}, evidence = null) {

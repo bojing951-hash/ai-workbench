@@ -44,6 +44,39 @@ for (const group of groups) {
   if (!ok) hardFailure = true;
   results.push({ name: '6a-independent-b506', status: ok ? 'PASS' : 'FAIL', code: independent.status, output: `${independent.stdout || ''}${independent.stderr || ''}`.slice(-800) });
 }
+// 双进程 CI 刷新：原子取号；新失败先落库后迟到旧成功不覆盖 Run/CI action；新绿可验收。
+{
+  const run = spawnSync(process.execPath, ['scripts/ci-refresh-cross-process-e2e.mjs'], { encoding: 'utf8', timeout: 300_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6t-ci-refresh-cross-process', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1200) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/ci-refresh-cross-process/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      const r = e.results || {};
+      ok = e.candidateSha === head && r.atomicSeq?.duplicates === 0 && r.atomicSeq?.distinct === 300 && r.outOfOrder?.newStatus === 'CI_FAILED' && r.outOfOrder?.staleApplied === false && r.outOfOrder?.staleReason === 'out-of-order' && r.outOfOrder?.ciActionStatus === 'failed' && Number(r.outOfOrder?.seqA) !== Number(r.outOfOrder?.seqB) && r.outOfOrder?.acceptStatus === 400 && r.outOfOrder?.acceptedShaAbsent === true && r.outOfOrder?.acceptedAtAbsent === true && r.outOfOrder?.acceptedEvents === 0 && r.greenAccepted?.status === 'accepted' && r.greenAccepted?.acceptedSha === e.planHead;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6t-ci-refresh-cross-process-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/ci-refresh-cross-process/run.json' });
+  }
+}
+// 固定 SHA 干净克隆安装：实际 checkout、npm install、npm start /api/health、离线首个 Draft/验收同 SHA。
+{
+  const run = spawnSync(process.execPath, ['scripts/fixed-sha-trial-e2e.mjs'], { encoding: 'utf8', timeout: 420_000 });
+  let ok = run.status === 0;
+  if (!ok) hardFailure = true;
+  results.push({ name: '6u-fixed-sha-trial', status: ok ? 'PASS' : 'FAIL', code: run.status, output: `${run.stdout || ''}${run.stderr || ''}`.slice(-1200) });
+  if (ok) {
+    try {
+      const e = JSON.parse(fs.readFileSync('demo/evidence/fixed-sha-trial/run.json', 'utf8'));
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      ok = e.candidateSha === head && e.actualCheckout === head && e.installExitCode === 0 && e.health?.status === 200 && e.firstDraft?.creates === 1 && !!e.acceptedSha && e.acceptedSha === e.productSha;
+    } catch { ok = false; }
+    if (!ok) hardFailure = true;
+    results.push({ name: '6u-fixed-sha-trial-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/fixed-sha-trial/run.json' });
+  }
+}
 // CI 刷新顺序：验收后过期刷新不覆盖 accepted；同 SHA 乱序旧响应不覆盖较新失败，新绿可再验收。
 {
   const run = spawnSync(process.execPath, ['scripts/ci-refresh-order-e2e.mjs'], { encoding: 'utf8', timeout: 300_000 });
