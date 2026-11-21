@@ -807,6 +807,12 @@ export class Store {
       .map((r) => parseRow(r, { budget_json: {}, spent_json: {}, result_json: {} }));
   }
 
+  acceptRunIfAwaiting(id, resultJson) {
+    const now = nowIso();
+    const r = this.db.prepare("UPDATE runs SET status='accepted', stop_reason='', result_json=?, ended_at=?, updated_at=? WHERE id=? AND status='awaiting_acceptance'").run(JSON.stringify(resultJson || {}), now, now, String(id));
+    return { ok: Number(r.changes || 0) > 0, run: this.getRun(id) };
+  }
+
   updateRun(id, patch) {
     const cur = this.getRun(id);
     if (!cur) return null;

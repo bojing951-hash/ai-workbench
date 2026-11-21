@@ -3208,18 +3208,31 @@ export class Orchestrator {
       }
     }
     if (!verifiedSha) throw new PolicyError('COMMIT_NOT_BOUND', '验收必须绑定真实 commit SHA，运行没有记录 verified_sha');
-    const updated = this.store.updateRun(runId, {
-      status: RunStatus.ACCEPTED,
-      stop_reason: '',
-      result_json: {
-        ...(run.result_json || {}),
-        acceptedAt: nowIso(),
-        acceptedSha: verifiedSha,
-        acceptedVerification: verification,
-        localOnlyAccepted: verification === 'LOCAL_VERIFIED',
-        merged: false,
-      },
-    });
+    // 远端 Draft 查询期间可能发生取消：更新前重读并 CAS，取消优先。
+    const liveRun = this.store.getRun(runId);
+    if (!liveRun || liveRun.status !== RunStatus.AWAITING_ACCEPTANCE) {
+      throw new PolicyError('RUN_NOT_READY', `验收期间 Run 状态已变化（${liveRun?.status || 'missing'}），拒绝验收`);
+    }
+    if (liveRun.result_json?.loopId) {
+      const liveLoop = this.store.getLoop(liveRun.result_json.loopId);
+      if (liveLoop && ['cancelled', 'blocked', 'failed'].includes(liveLoop.status)) {
+        throw new PolicyError('LOOP_NOT_ACTIVE', `父 Loop 状态为 ${liveLoop.status}，拒绝验收`);
+      }
+    }
+    const acceptedJson = {
+      ...(liveRun.result_json || {}),
+      acceptedAt: nowIso(),
+      acceptedSha: verifiedSha,
+      acceptedVerification: verification,
+      localOnlyAccepted: verification === 'LOCAL_VERIFIED',
+      merged: false,
+    };
+    const cas = this.store.acceptRunIfAwaiting(runId, acceptedJson);
+    if (!cas.ok) {
+      const nowRun = this.store.getRun(runId);
+      throw new PolicyError('RUN_STATE_CHANGED', `验收提交时 Run 状态已变化（${nowRun?.status || 'missing'}），拒绝验收`);
+    }
+    const updated = cas.run;
     this.emit({
       runId,
       projectId: run.project_id,

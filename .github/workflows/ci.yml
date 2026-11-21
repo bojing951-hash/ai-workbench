@@ -74,6 +74,7 @@ jobs:
             demo/evidence/loop-cancel-publish
             demo/evidence/loop-cancel-direct-publish
             demo/evidence/loop-revoke-publish
+            demo/evidence/accept-concurrency-cli
             demo/evidence/loop-crash-recovery
             demo/evidence/loop-quality-gate
             demo/evidence/ci-evidence

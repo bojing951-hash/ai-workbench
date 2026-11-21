@@ -493,8 +493,9 @@ async function main() {
   if (cmd === 'accept') {
     const runId = args._[1];
     if (!runId) throw new Error('用法：workbench accept <runId>');
-    const run = orchestrator.acceptRun(runId);
-    console.log(`已验收：${run.id}（工作台未合并主分支）`);
+    const run = await orchestrator.acceptRun(runId);
+    if (!run || run.status !== 'accepted') throw new Error(`验收未确认（状态 ${run?.status || 'missing'}）`);
+    console.log(`已验收：${run.id} SHA=${run.result_json?.acceptedSha || run.verified_sha || ''}（工作台未合并主分支）`);
     return;
   }
 

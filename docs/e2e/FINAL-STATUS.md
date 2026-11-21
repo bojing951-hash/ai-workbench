@@ -171,3 +171,5 @@
 - 2026-11-21: 新增最后 PR GET 期间直接取消父 Loop（零 Draft、/accept 拒绝）、重启后 Loop completed/Run accepted/二次重启幂等且审计 HTTP 零增量、待续 CI 下当前 Draft head 变化拒绝旧 SHA；全部接入 accept:freeze/CI。
 
 - 2026-11-21: /accept 改为重新读取当前 Draft 并与刷新/恢复共用身份规则；CI 已绿后 Draft head 变化、CI pending 时 base 变化（head SHA 相同）均拒绝验收；记录拒绝原因、PR GET 次数与请求 SHA；新增直接取消父 Loop 专项。
+
+- 2026-11-21: /accept 改为异步等待远端 Draft 且 CAS 更新，取消优先；等待期间取消 Run 时 cancel 200、accept 409、最终 cancelled、无 acceptedSha/成功事件；父 Loop 取消拒绝验收。CLI accept 等待异步结果，正例打印真实 Run ID/SHA 并持久化，缺失/不合格非零。
