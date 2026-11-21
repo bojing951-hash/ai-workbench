@@ -18,7 +18,7 @@ const git = (args, cwd = worktree) => { const r = spawnSync('git', args, { cwd, 
 git(['init', '-q', '-b', 'main']); git(['config', 'user.name', 'fixture']); git(['config', 'user.email', 'fixture@example.invalid']);
 fs.writeFileSync(path.join(worktree, 'a.txt'), 'base\n'); git(['add', '-A']); git(['commit', '-qm', 'base']);
 const planHead = git(['rev-parse', 'HEAD']);
-let pullStartedResolve = null; let releasePull = null; let pullStarted = Promise.resolve(); let delayNextPull = false;
+let pullStartedResolve = null; let releasePull = null; let pullStarted = Promise.resolve(); let delayNextPull = false; let ciConclusion = 'success';
 const mock = http.createServer(async (req, res) => {
   for await (const _ of req) { /* drain */ }
   const u = new URL(req.url, 'http://x'); const send = (c, o) => { res.writeHead(c, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
@@ -26,6 +26,7 @@ const mock = http.createServer(async (req, res) => {
     if (delayNextPull) { delayNextPull = false; pullStartedResolve(); await new Promise((r) => { releasePull = r; }); }
     return send(200, { number: 31, html_url: 'https://example.invalid/pr/31', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: 'wb/plan', sha: planHead, repo: { full_name: 'fixture/repo' } } });
   }
+  if (u.pathname === '/repos/fixture/repo/actions/runs') return send(200, { workflow_runs: [{ id: 1, name: 'ci', status: 'completed', conclusion: ciConclusion, head_sha: planHead, html_url: 'https://example.invalid/ci/1' }] });
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
   return send(404, { message: 'not found' });
 });
@@ -44,7 +45,7 @@ const ciEvidence = { status: 'passed', conclusion: 'success', sha: planHead, req
 function seedRun(id, { loopId = '', verification = 'CI_PASSED', withPr = true } = {}) {
   const run = store.createRun({ id, projectId: project.id, planId: plan.id, goal: 'accept', status: 'awaiting_acceptance', verificationStatus: verification });
   store.updateRun(id, { verified_sha: planHead, result_json: { planHead, loopId, productAcceptance: loopId ? 'PASS' : undefined, productPlanHead: loopId ? planHead : undefined, ciEvidence: verification === 'CI_PASSED' ? ciEvidence : null } });
-  if (withPr) store.createAction({ id: 'pr_' + id, runId: id, type: 'github-pr', status: 'done', payload: { owner: 'fixture', repo: 'repo', head: 'wb/plan', base: 'main', sha: planHead }, result: { pr: { number: 31, url: 'https://example.invalid/pr/31', draft: true, head: 'wb/plan', base: 'main', sha: planHead }, sha: planHead } });
+  if (withPr) { store.createAction({ id: 'pr_' + id, runId: id, type: 'github-pr', status: 'done', payload: { owner: 'fixture', repo: 'repo', head: 'wb/plan', base: 'main', sha: planHead }, result: { pr: { number: 31, url: 'https://example.invalid/pr/31', draft: true, head: 'wb/plan', base: 'main', sha: planHead }, sha: planHead } }); store.createAction({ id: 'ci_' + id, runId: id, type: 'github-ci', status: 'done', payload: { owner: 'fixture', repo: 'repo', sha: planHead }, result: { status: 'passed', conclusion: 'success', runs: [{ id: 1, name: 'ci', status: 'completed', conclusion: 'success', headSha: planHead }], sha: planHead } }); }
   return run;
 }
 const port = await freePort();
@@ -66,6 +67,24 @@ try {
   assert.equal(store.getRun(runCancel).status, 'cancelled');
   assert.equal(store.getRun(runCancel).result_json?.acceptedSha, undefined);
   assert.ok(!store.listEvents({ runId: runCancel }).some((e) => e.type === 'run_accepted'));
+  // 1b) /accept 等待 Draft 时正式 ci-refresh 写成 CI_FAILED，旧验收必须拒绝。
+  const runCiFail = 'run_accept_cifail'; seedRun(runCiFail);
+  ciConclusion = 'failure'; delayNextPull = true; pullStarted = new Promise((r) => { pullStartedResolve = r; });
+  const acceptCiPromise = fetch(`http://127.0.0.1:${port}/api/runs/${runCiFail}/accept`, { method: 'POST', headers: { 'x-workbench-token': 'accept-token', 'content-type': 'application/json' }, body: '{}' });
+  await pullStarted;
+  const refresh = await api(port, 'POST', `/api/runs/${runCiFail}/ci-refresh`);
+  assert.equal(refresh.status, 200, JSON.stringify(refresh));
+  assert.equal(store.getRun(runCiFail).verification_status, 'CI_FAILED');
+  releasePull();
+  const acceptCiHttp = await acceptCiPromise; const acceptCiStatus = acceptCiHttp.status; let acceptCiBody = null; try { acceptCiBody = await acceptCiHttp.json(); } catch { /* ignore */ }
+  assert.notEqual(acceptCiStatus, 200, JSON.stringify(acceptCiBody));
+  const runCiFailNow = store.getRun(runCiFail);
+  assert.equal(runCiFailNow.status, 'awaiting_acceptance');
+  assert.equal(runCiFailNow.verification_status, 'CI_FAILED');
+  assert.equal(runCiFailNow.result_json?.acceptedSha, undefined);
+  assert.equal(store.listEvents({ runId: runCiFail }).filter((e) => e.type === 'run_accepted').length, 0);
+  results.staleCiDuringAccept = { refreshStatus: refresh.status, acceptStatus: acceptCiStatus, acceptBody: acceptCiBody?.error?.code || null, finalStatus: runCiFailNow.status, verification: runCiFailNow.verification_status, acceptedShaAbsent: true, successEventCount: 0 };
+  ciConclusion = 'success';
   // 2) 父 Loop 已取消 → 拒绝验收。
   const loop = store.createLoop({ id: 'loop_cancelled', projectId: project.id, goal: 'g', mode: 'queue', maxRounds: 1, queue: [], status: 'cancelled' });
   const runLoop = 'run_accept_loopcancelled'; seedRun(runLoop, { loopId: loop.id });

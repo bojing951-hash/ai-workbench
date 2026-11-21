@@ -48,13 +48,13 @@ const mock=http.createServer(async(req,res)=>{
 });
 await new Promise(r=>mock.listen(0,'127.0.0.1',r));
 
-let prCreates = 0; let pausedPullResolve = null; let releasePull = null; const pausedPull = new Promise((r) => { pausedPullResolve = r; });
+let prCreates = 0; let pullLookups = 0; let pausedPullResolve = null; let releasePull = null; const pausedPull = new Promise((r) => { pausedPullResolve = r; });
 const ghApi = http.createServer(async (req, res) => {
   let bodyText=''; for await (const c of req) bodyText+=c;
   const u = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (u.pathname === '/repos/fixture/repo') return send(200, { default_branch: 'main' });
-  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') { pausedPullResolve(); await new Promise((r) => { releasePull = r; }); return send(200, []); }
+  if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'GET') { pullLookups += 1; pausedPullResolve(); await new Promise((r) => { releasePull = r; }); return send(200, []); }
   if (u.pathname === '/repos/fixture/repo/pulls' && req.method === 'POST') { prCreates += 1; const body = bodyText ? JSON.parse(bodyText) : {}; return send(201, { number: 21, html_url: 'https://example.invalid/pr/21', state: 'open', draft: true, base: { ref: 'main', repo: { full_name: 'fixture/repo' } }, head: { ref: body.head || '', sha: remoteBranchSha(body.head) } }); }
   if (u.pathname === '/repos/fixture/repo/actions/runs') { const sha = u.searchParams.get('head_sha') || ''; return send(200, { workflow_runs: [{ id: 21, name: 'ci', status: 'completed', conclusion: 'success', head_sha: sha, html_url: 'https://example.invalid/ci/21' }] }); }
   return send(404, { message: 'not found' });
@@ -102,6 +102,6 @@ try{
  const candidateSha = process.env.CANDIDATE_SHA || spawnSync('git',['rev-parse','HEAD'],{cwd:process.cwd(),encoding:'utf8'}).stdout.trim();
  const evidenceDir = path.resolve(process.env.LOOP_CANCEL_EVIDENCE_DIR || 'demo/evidence/loop-cancel-publish');
  fs.mkdirSync(evidenceDir,{recursive:true});
- fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-cancel-during-publish',candidateSha,projectId,loopId,loopStatus:snap.status,runId:currentRun.id,runStatus:cancelledRun.status,acceptStatus:accCancel.status,prCreates,bareRefPushed:!!doGit(['rev-parse','--verify','--quiet','refs/heads/'+('wb/plan-'+currentRun.id.slice(-6))],bare)},null,2));
- console.log(JSON.stringify({ok:true,candidateSha,loopStatus:snap.status,runStatus:cancelledRun.status,acceptStatus:accCancel.status,prCreates}));
+ fs.writeFileSync(path.join(evidenceDir,'run.json'),JSON.stringify({kind:'loop-cancel-during-publish',candidateSha,projectId,loopId,loopStatus:snap.status,runId:currentRun.id,runStatus:cancelledRun.status,acceptStatus:accCancel.status,draftPostCount:prCreates,prLookupCount:pullLookups,bareRefPushed:!!doGit(['rev-parse','--verify','--quiet','refs/heads/'+('wb/plan-'+currentRun.id.slice(-6))],bare)},null,2));
+ console.log(JSON.stringify({ok:true,candidateSha,loopStatus:snap.status,runStatus:cancelledRun.status,acceptStatus:accCancel.status,draftPostCount:prCreates,prLookupCount:pullLookups}));
 }finally { try{sup.kill('SIGTERM')}catch{};await sleep(400);try{const s=JSON.parse(fs.readFileSync(path.join(root,'data/supervisor/state.json'),'utf8'));if(s.childPid>0)process.kill(s.childPid,'SIGTERM')}catch{};mock.close(); ghApi.close();}

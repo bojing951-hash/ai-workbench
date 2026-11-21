@@ -2381,8 +2381,6 @@ export class Orchestrator {
       }
       if (!pr) {
         // GET/PR 查找之后、实际 POST 之前紧邻重读权限与状态。
-        const finalGuard = this.publishStillAuthorized(run.id, project.id, planHead, 'pre-draft-post');
-        if (!finalGuard.ok) throw new Error(finalGuard.reason);
         const plan = this.store.getPlan(run.plan_id);
         pr = await gh.createPullRequest(this.config, {
           owner, repo,
@@ -2391,6 +2389,11 @@ export class Orchestrator {
           base: baseBranch,
           body: this.buildPrBody(run, project, tasks, planHead),
           draft: true,
+          skipLookup: true,
+          preflight: async () => {
+            const finalGuard = this.publishStillAuthorized(run.id, project.id, planHead, 'pre-draft-post');
+            if (!finalGuard.ok) throw new Error(finalGuard.reason);
+          },
         });
         const created = this.validateDraftIdentity(pr, { owner, repo, baseBranch, planBranch, planHead });
         if (!created.ok) throw new Error(`GITHUB_DRAFT_IDENTITY_MISMATCH：创建响应校验失败 ${created.reason}，拒绝记作成功`);
@@ -3213,6 +3216,9 @@ export class Orchestrator {
     if (!liveRun || liveRun.status !== RunStatus.AWAITING_ACCEPTANCE) {
       throw new PolicyError('RUN_NOT_READY', `验收期间 Run 状态已变化（${liveRun?.status || 'missing'}），拒绝验收`);
     }
+    if (verification === 'CI_PASSED' && liveRun.verification_status !== 'CI_PASSED') {
+      throw new PolicyError('CI_EVIDENCE_CHANGED', `验收等待期间 CI 状态变为 ${liveRun.verification_status || 'unknown'}，拒绝验收`);
+    }
     if (liveRun.result_json?.loopId) {
       const liveLoop = this.store.getLoop(liveRun.result_json.loopId);
       if (liveLoop && ['cancelled', 'blocked', 'failed'].includes(liveLoop.status)) {
@@ -3227,10 +3233,13 @@ export class Orchestrator {
       localOnlyAccepted: verification === 'LOCAL_VERIFIED',
       merged: false,
     };
-    const cas = this.store.acceptRunIfAwaiting(runId, acceptedJson);
+    const cas = this.store.acceptRunIfCurrent(runId, verifiedSha, acceptedJson, { requireCi: verification === 'CI_PASSED' });
     if (!cas.ok) {
       const nowRun = this.store.getRun(runId);
-      throw new PolicyError('RUN_STATE_CHANGED', `验收提交时 Run 状态已变化（${nowRun?.status || 'missing'}），拒绝验收`);
+      if (verification === 'CI_PASSED' && nowRun?.verification_status !== 'CI_PASSED') {
+        throw new PolicyError('CI_EVIDENCE_CHANGED', `验收提交时 CI 状态为 ${nowRun?.verification_status || 'unknown'}，拒绝验收`);
+      }
+      throw new PolicyError('RUN_STATE_CHANGED', `验收提交时 Run 状态/证据已变化（${nowRun?.status || 'missing'}），拒绝验收`);
     }
     const updated = cas.run;
     this.emit({

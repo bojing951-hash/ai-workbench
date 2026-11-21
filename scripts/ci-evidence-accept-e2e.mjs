@@ -44,7 +44,7 @@ const config = getConfig({ paths: { root, dataDir: path.join(root, 'data'), dbPa
 const store = openStore(config.paths.dbPath);
 const project = store.createProject({ id: 'proj_ci', name: 'ci', localPath: worktree, defaultBranch: 'main', testCommand: 'true', agentKind: 'custom', auditProvider: 'openai', remotePushAuthorized: true, ciRequired: true, config: { publish: true, required_checks: ['build'] } });
 const plan = store.createPlan({ id: 'plan_ci', projectId: project.id, runId, goal: 'ci', title: 'ci' });
-const mkRun = (id) => { const run = store.createRun({ id, projectId: project.id, planId: plan.id, goal: 'ci', status: 'awaiting_acceptance', verificationStatus: 'LOCAL_VERIFIED' }); store.updateRun(id, { verified_sha: planHead, result_json: { planHead, loopId: 'loop_ci', productAcceptance: 'PASS', productPlanHead: planHead } }); return store.createAction({ id: 'ci_' + id, runId: id, type: 'github-ci', status: 'done', payload: { owner: 'fixture', repo: 'repo', sha: planHead } }); };
+const mkRun = (id) => { const run = store.createRun({ id, projectId: project.id, planId: plan.id, goal: 'ci', status: 'awaiting_acceptance', verificationStatus: 'LOCAL_VERIFIED' }); store.updateRun(id, { verified_sha: planHead, result_json: { planHead } }); return store.createAction({ id: 'ci_' + id, runId: id, type: 'github-ci', status: 'done', payload: { owner: 'fixture', repo: 'repo', sha: planHead } }); };
 const orch = new Orchestrator({ config, store, bus: new EventBus() });
 const results = {};
 try {

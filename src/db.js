@@ -807,9 +807,20 @@ export class Store {
       .map((r) => parseRow(r, { budget_json: {}, spent_json: {}, result_json: {} }));
   }
 
-  acceptRunIfAwaiting(id, resultJson) {
+  acceptRunIfCurrent(id, sha, resultJson, { requireCi = true } = {}) {
     const now = nowIso();
-    const r = this.db.prepare("UPDATE runs SET status='accepted', stop_reason='', result_json=?, ended_at=?, updated_at=? WHERE id=? AND status='awaiting_acceptance'").run(JSON.stringify(resultJson || {}), now, now, String(id));
+    const ciClause = requireCi
+      ? `AND json_extract(result_json,'$.ciEvidence.status')='passed'
+         AND json_extract(result_json,'$.ciEvidence.sha')=?
+         AND json_extract(result_json,'$.ciEvidence.requiredSha')=?
+         AND COALESCE(json_array_length(json_extract(result_json,'$.ciEvidence.mismatched')),0)=0
+         AND COALESCE(json_array_length(json_extract(result_json,'$.ciEvidence.missingChecks')),0)=0`
+      : '';
+    const loopClause = `AND (COALESCE(json_extract(result_json,'$.loopId'),'')='' OR EXISTS (SELECT 1 FROM loops WHERE loops.id=json_extract(runs.result_json,'$.loopId') AND loops.status NOT IN ('cancelled','blocked','failed')))`;
+    const sql = `UPDATE runs SET status='accepted', stop_reason='', result_json=?, ended_at=?, updated_at=? WHERE id=? AND status='awaiting_acceptance' AND verified_sha=? ${ciClause} ${loopClause}`;
+    const args = [JSON.stringify(resultJson || {}), now, now, String(id), String(sha || '')];
+    if (requireCi) args.push(String(sha || ''), String(sha || ''));
+    const r = this.db.prepare(sql).run(...args);
     return { ok: Number(r.changes || 0) > 0, run: this.getRun(id) };
   }
 

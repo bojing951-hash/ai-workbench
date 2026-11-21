@@ -98,12 +98,16 @@ export async function ensureRepo(config, { name, private: isPrivate = true, desc
   return { owner, repo: name, created: true, htmlUrl: created.html_url, cloneUrl: created.clone_url, defaultBranch: created.default_branch || 'main' };
 }
 
-export async function createPullRequest(config, { owner, repo, title, head, base, body, draft = true }) {
-  // 幂等：同 head 的 open PR 已存在则复用
-  const open = await api(config, 'GET', `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(owner + ':' + head)}`);
-  if (Array.isArray(open) && open.length > 0) {
-    return { ...open[0], number: open[0].number, url: open[0].html_url, reused: true };
+export async function createPullRequest(config, { owner, repo, title, head, base, body, draft = true, skipLookup = false, preflight = null }) {
+  // 幂等：同 head 的 open PR 已存在则复用。调用方已做查询时可 skipLookup，
+  // 并在最后一次异步查询后、实际 POST 前执行 preflight 授权复核。
+  if (!skipLookup) {
+    const open = await api(config, 'GET', `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(owner + ':' + head)}`);
+    if (Array.isArray(open) && open.length > 0) {
+      return { ...open[0], number: open[0].number, url: open[0].html_url, reused: true };
+    }
   }
+  if (preflight) await preflight();
   const pr = await api(config, 'POST', `/repos/${owner}/${repo}/pulls`, {
     title,
     head,

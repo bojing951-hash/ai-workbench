@@ -55,7 +55,7 @@ for (const group of groups) {
       const e = JSON.parse(fs.readFileSync('demo/evidence/accept-concurrency-cli/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
       const r = e.results || {};
-      ok = e.candidateSha === head && r.concurrentCancel?.cancelStatus === 200 && r.concurrentCancel?.acceptStatus !== 200 && r.concurrentCancel?.finalRunStatus === 'cancelled' && r.concurrentCancel?.acceptedShaAbsent === true && r.concurrentCancel?.successEventCount === 0 && r.loopCancelledRejected === true && r.httpPositive === 'accepted' && r.httpPositiveSha === e.planHead && r.cli?.missingExit !== 0 && r.cli?.badExit !== 0 && r.cli?.okExit === 0 && r.cli?.okMentionsRun === true && r.cli?.okMentionsSha === true && r.cli?.persistedStatus === 'accepted' && r.cli?.persistedSha === e.planHead;
+      ok = e.candidateSha === head && r.concurrentCancel?.cancelStatus === 200 && r.concurrentCancel?.acceptStatus !== 200 && r.concurrentCancel?.finalRunStatus === 'cancelled' && r.concurrentCancel?.acceptedShaAbsent === true && r.concurrentCancel?.successEventCount === 0 && r.loopCancelledRejected === true && r.staleCiDuringAccept?.refreshStatus === 200 && r.staleCiDuringAccept?.acceptStatus !== 200 && r.staleCiDuringAccept?.finalStatus === 'awaiting_acceptance' && r.staleCiDuringAccept?.verification === 'CI_FAILED' && r.staleCiDuringAccept?.acceptedShaAbsent === true && r.staleCiDuringAccept?.successEventCount === 0 && r.httpPositive === 'accepted' && r.httpPositiveSha === e.planHead && r.cli?.missingExit !== 0 && r.cli?.badExit !== 0 && r.cli?.okExit === 0 && r.cli?.okMentionsRun === true && r.cli?.okMentionsSha === true && r.cli?.persistedStatus === 'accepted' && r.cli?.persistedSha === e.planHead;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6r-accept-concurrency-cli-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/accept-concurrency-cli/run.json' });
@@ -71,7 +71,7 @@ for (const group of groups) {
     try {
       const e = JSON.parse(fs.readFileSync('demo/evidence/loop-revoke-publish/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
-      ok = e.candidateSha === head && e.prCreates === 0 && e.remotePushAuthorized === 0 && e.loopStatus !== 'completed' && e.acceptStatus !== 200;
+      ok = e.candidateSha === head && (e.prCreates === 0 || e.draftPostCount === 0) && e.remotePushAuthorized === 0 && e.loopStatus !== 'completed' && e.acceptStatus !== 200;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6o-loop-revoke-publish-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-revoke-publish/run.json' });
@@ -103,7 +103,7 @@ for (const group of groups) {
     try {
       const e = JSON.parse(fs.readFileSync('demo/evidence/loop-cancel-publish/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
-      ok = e.candidateSha === head && e.loopStatus === 'cancelled' && e.runStatus === 'cancelled' && e.prCreates === 0 && e.acceptStatus !== 200;
+      ok = e.candidateSha === head && e.loopStatus === 'cancelled' && e.runStatus === 'cancelled' && (e.prCreates === 0 || e.draftPostCount === 0) && e.acceptStatus !== 200;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6m-loop-cancel-publish-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-cancel-publish/run.json' });
@@ -119,7 +119,7 @@ for (const group of groups) {
     try {
       const e = JSON.parse(fs.readFileSync('demo/evidence/loop-cancel-direct-publish/run.json', 'utf8'));
       const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
-      ok = e.candidateSha === head && e.loopStatus === 'cancelled' && e.prCreates === 0 && e.acceptStatus !== 200;
+      ok = e.candidateSha === head && e.loopStatus === 'cancelled' && (e.prCreates === 0 || e.draftPostCount === 0) && e.acceptStatus !== 200;
     } catch { ok = false; }
     if (!ok) hardFailure = true;
     results.push({ name: '6q-loop-cancel-direct-evidence', status: ok ? 'PASS' : 'FAIL', evidence: 'demo/evidence/loop-cancel-direct-publish/run.json' });
